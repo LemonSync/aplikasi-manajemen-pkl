@@ -1,0 +1,1042 @@
+// ============================================================================
+// Prisma Schema — Sistem Manajemen PKL
+// Database: MySQL 8
+// ----------------------------------------------------------------------------
+// Konvensi:
+//  - id: CHAR(36) UUID (dihilangkan default-nya di level DB, diisi app) -> pakai cuid()
+//  - Semua tabel punya createdAt & updatedAt
+//  - Soft delete via `deletedAt` untuk entitas yang butuh histori
+//  - Penghapusan data master dilindungi (restrict) agar histori aman
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+/// 6 role pengguna sistem
+enum Role {
+  SISWA
+  KETUA
+  GURU_PEMBIMBING
+  ADMIN
+  DUDI
+  KEPALA_SEKOLAH
+  SUPER_ADMIN
+}
+
+/// Fase / state machine siswa
+enum StudentPhase {
+  PRA_PKL      // Fase 1: pra-pendaftaran
+  NON_PKL      // Fase 2: pengajuan & persetujuan (belum aktif)
+  PKL_AKTIF    // Fase 3: masa PKL aktif
+  PKL_SELESAI  // Fase 4: pasca-PKL
+}
+
+/// Status gelombang (batching) — reusable antar angkatan
+enum CohortStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+/// Status kelompok PKL
+enum GroupStatus {
+  DRAFT
+  AKTIF
+  SELESAI
+  DIBUBARKAN
+}
+
+/// Status kehadiran harian
+enum AttendanceStatus {
+  HADIR
+  IZIN
+  SAKIT
+  ALPHA
+}
+
+/// Jenis dokumen yang dikelola sistem
+enum DocumentType {
+  SURAT_PERMOHONAN        // Fase 1: surat permohonan ke perusahaan
+  SURAT_PENGANTAR         // Fase 1: surat pengantar dari sekolah ke perusahaan
+  SURAT_PENERIMAAN        // Fase 2: bukti surat balasan dari perusahaan
+  SURAT_PERNYATAAN        // Fase 2: surat pernyataan (bermaterai manual)
+  SURAT_PENUGASAN         // Fase 3: penugasan guru pembimbing
+  LAPORAN_AKHIR           // Fase 4: laporan akhir siswa
+  SURAT_PENARIKAN         // Fase 4: surat penarikan siswa
+  LAINNYA
+}
+
+/// Status siklus hidup dokumen (termasuk verifikasi admin & materai)
+enum DocumentStatus {
+  DRAFT
+  DIUNGGAH                 // file sudah diupload user
+  MENUNGGU_VERIFIKASI      // menunggu review admin
+  DISETUJUI
+  DITOLAK                  // disertai alasan
+}
+
+/// Status generik persetujuan (ajuan, laporan, dsb.)
+enum ApprovalStatus {
+  MENUNGGU
+  DISETUJUI
+  DITOLAK
+}
+
+/// Status pengaduan siswa
+enum ComplaintStatus {
+  TERBUKA
+  DIPROSES
+  SELESAI
+}
+
+/// Status lowongan kerja (loker) dari DUDI
+enum JobVacancyStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+/// Status pengajuan pendaftaran PKL (Fase 1 -> 2)
+enum RegistrationStatus {
+  DRAFT       // siswa masih mengisi form
+  DIAJUKAN    // form dikirim & surat permohonan di-generate
+  DISETUJUI   // admin menyetujui ajuan
+  DITOLAK     // admin menolak (disertai alasan)
+}
+
+// ============================================================================
+// USERS & AUTH
+// ============================================================================
+
+/// Akun tunggal (1 user = 1 akun). `identifier` = NISN (siswa) / NIP (guru) / username (lainnya)
+model User {
+  id           String  @id @default(cuid())
+  username     String  @unique                // untuk semua role non-siswa/guru
+  identifier   String? @unique                // NISN / NIP (unique global)
+  email        String? @unique
+  passwordHash String
+  role         Role
+  isActive     Boolean @default(true)
+  mustChangePassword Boolean @default(false)
+
+  // Fase khusus siswa
+  phase        StudentPhase?
+
+  // Relasi konteks (opsional per role)
+  cohortId     String?
+  cohort       Cohort? @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+
+  lastLoginAt  DateTime?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  // Relasi profil
+  studentProfile  StudentProfile?
+  teacherProfile  TeacherProfile?
+  companyMentor   CompanyMentor?
+
+  refreshTokens   RefreshToken[]
+  signedLetters   GeneratedLetter[] @relation("LetterSigner")
+
+  groupMemberships     GroupMember[]
+  dudiGroupAssignments GroupDudiMentor[]
+  supervisedGroups     GroupSupervisor[]
+  attendances          Attendance[]
+  verifiedAttendances  Attendance[] @relation("AttendanceVerifier")
+  journals             Journal[]
+  verifiedJournals     Journal[]            @relation("JournalDudiVerifier")
+  complaints           Complaint[]        @relation("ComplaintAuthor")
+  complaintReplies     ComplaintReply[]   @relation("ComplaintReplyAuthor")
+  visits               Visit[]            @relation("VisitSupervisor")
+  uploadedDocuments    Document[]         @relation("DocumentOwner")
+  documentFiles        DocumentFile[]
+  approvals            Approval[]         @relation("ApprovalActor")
+  grades               Grade[]            @relation("GradeStudent")
+  givenGrades          Grade[]            @relation("GradeGiver")
+  feedbacks            Feedback[]         @relation("FeedbackAuthor")
+  announcements        Announcement[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  jobVacancies         JobVacancy[]       @relation("JobVacancyAuthor")
+  settingsUpdated      SystemSetting[]    @relation("SettingUpdatedBy")
+  registrationLeaders  Registration[]     @relation("RegistrationLeader")
+  registrationReviews  Registration[]     @relation("RegistrationReviewer")
+  registrationMembers  RegistrationMember[] @relation("RegistrationMemberUser")
+  initialCredential    InitialCredential?
+
+  @@index([role])
+  @@index([cohortId])
+  @@index([phase])
+  @@map("users")
+}
+
+/// Kredensial awal yang dienkripsi. Hanya dipakai agar akun KETUA sementara
+/// dapat membagikan akun SISWA yang diprovisioning; password tidak disimpan plaintext.
+model InitialCredential {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedPassword String   @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("initial_credentials")
+}
+
+/// Refresh token untuk rotation & revoke (multi-device)
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  userAgent  String?  @db.VarChar(255)
+  ipAddress  String?  @db.VarChar(64)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// MASTER DATA
+// ============================================================================
+
+/// Gelombang PKL (batching) — reusable antar angkatan
+model Cohort {
+  id          String       @id @default(cuid())
+  name        String       @unique               // e.g. "Gelombang 1 - 2024/2025"
+  academicYear String?     @db.VarChar(20)       // e.g. "2024/2025"
+  startDate   DateTime?
+  endDate     DateTime?
+  status      CohortStatus @default(DRAFT)
+  description String?      @db.Text
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  users         User[]
+  classes       Class[]
+  groups        Group[]
+  documents     Document[]
+  generatedLetters GeneratedLetter[]
+  announcements Announcement[]
+  registrations Registration[]
+  phaseSchedules PhaseSchedule[]
+  studentRegistries StudentRegistry[]
+
+  @@index([status])
+  @@map("cohorts")
+}
+
+/// Jurusan / kompetensi keahlian
+model Major {
+  id        String   @id @default(cuid())
+  code      String   @unique        // e.g. "RPL", "TKJ"
+  name      String                  // e.g. "Rekayasa Perangkat Lunak"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes          Class[]
+  studentProfiles  StudentProfile[]
+  groups           Group[]
+  registrations    Registration[]
+  studentRegistries StudentRegistry[]
+
+  @@map("majors")
+}
+
+/// Master siswa dari import sekolah. Ini bukan akun login; menjadi sumber
+/// kebenaran untuk validasi NISN, nama, kelas, jurusan, dan gelombang.
+model StudentRegistry {
+  id        String   @id @default(cuid())
+  nisn      String   @unique @db.VarChar(10)
+  fullName  String
+  className String   @db.VarChar(60)
+  cohortId  String
+  cohort    Cohort   @relation(fields: [cohortId], references: [id], onDelete: Restrict)
+  majorId   String?
+  major     Major?   @relation(fields: [majorId], references: [id], onDelete: SetNull)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cohortId])
+  @@index([className])
+  @@map("student_registries")
+}
+
+/// Kelas (belongs to cohort, punya jurusan)
+model Class {
+  id        String   @id @default(cuid())
+  name      String                  // e.g. "XII RPL 1"
+  grade     String?  @db.VarChar(10) // e.g. "XII"
+  cohortId  String
+  cohort    Cohort   @relation(fields: [cohortId], references: [id], onDelete: Restrict)
+  majorId   String?
+  major     Major?   @relation(fields: [majorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentProfiles StudentProfile[]
+
+  @@unique([cohortId, name])
+  @@index([cohortId])
+  @@index([majorId])
+  @@map("classes")
+}
+
+/// Bidang industri perusahaan (master)
+model Industry {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies Company[]
+
+  @@map("industries")
+}
+
+/// Pengaturan sistem key-value (bobot nilai, dsb.)
+model SystemSetting {
+  key         String   @id                  // e.g. "grade.weight.dudi"
+  value       String   @db.Text             // disimpan sebagai string (JSON bila perlu)
+  type        String   @default("string")   // string | number | boolean | json
+  description String?  @db.Text
+  updatedById String?
+  updatedBy   User?    @relation("SettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// ============================================================================
+// PROFIL PENGGUNA
+// ============================================================================
+
+/// Profil siswa
+model StudentProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName    String
+  nisn        String   @unique
+  classId     String?
+  class       Class?   @relation(fields: [classId], references: [id], onDelete: SetNull)
+  majorId     String?
+  major       Major?   @relation(fields: [majorId], references: [id], onDelete: SetNull)
+  phone       String?  @db.VarChar(30)
+  address     String?  @db.Text
+  gender      String?  @db.VarChar(10)
+  birthDate   DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parentData  ParentData?
+
+  @@index([classId])
+  @@index([majorId])
+  @@map("student_profiles")
+}
+
+/// Data orang tua/wali siswa (untuk surat pernyataan)
+model ParentData {
+  id               String         @id @default(cuid())
+  studentProfileId String         @unique
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  fatherName       String?
+  fatherJob        String?
+  fatherPhone      String?        @db.VarChar(30)
+  motherName       String?
+  motherJob        String?
+  motherPhone      String?        @db.VarChar(30)
+  guardianName     String?
+  guardianJob      String?
+  guardianPhone    String?        @db.VarChar(30)
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("parent_data")
+}
+
+/// Profil guru pembimbing
+model TeacherProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName  String
+  nip       String   @unique
+  phone     String?  @db.VarChar(30)
+  majorId   String?
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("teacher_profiles")
+}
+
+// ============================================================================
+// DUDI (Dunia Usaha & Industri)
+// ============================================================================
+
+/// Perusahaan mitra (DUDI)
+model Company {
+  id         String    @id @default(cuid())
+  name       String
+  address    String?   @db.Text
+  industryId String?
+  industry   Industry? @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  phone      String?   @db.VarChar(30)
+  email      String?
+  city       String?
+  isActive   Boolean   @default(true)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  mentors      CompanyMentor[]
+  groups       Group[]
+  visits       Visit[]
+  jobVacancies JobVacancy[]
+
+  @@index([industryId])
+  @@map("companies")
+}
+
+/// Akun pendamping dari pihak perusahaan (DUDI). Dibuat oleh Admin.
+model CompanyMentor {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName  String
+  position  String?
+  phone     String?  @db.VarChar(30)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@map("company_mentors")
+}
+
+// ============================================================================
+// KELOMPOK & PENEMPATAN
+// ============================================================================
+
+/// Kelompok PKL. Aturan: 1 kelompok = 1 jurusan (tipe_lintas kelas boleh).
+model Group {
+  id         String      @id @default(cuid())
+  name       String
+  code       String      @unique               // kode ringkas untuk referensi
+  cohortId   String
+  cohort     Cohort      @relation(fields: [cohortId], references: [id], onDelete: Restrict)
+  companyId  String?                            // perusahaan tujuan (hasil approval)
+  company    Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  majorId    String?                            // jurusan kelompok (semua anggota harus sama)
+  major      Major?      @relation(fields: [majorId], references: [id], onDelete: Restrict)
+  status     GroupStatus @default(DRAFT)
+  startDate  DateTime?
+  endDate    DateTime?
+  registrationId String?  @unique             // kelompok ini dibentuk dari pendaftaran mana
+  registration   Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  deletedAt  DateTime?
+
+  members      GroupMember[]
+  supervisors  GroupSupervisor[]
+  dudiMentors  GroupDudiMentor[]
+  placements   GroupPlacement[]
+  attendances  Attendance[]     @relation("AttendanceGroup")
+  journals     Journal[]
+  complaints   Complaint[]
+  visits       Visit[]
+
+  @@index([cohortId])
+  @@index([companyId])
+  @@index([status])
+  @@map("groups")
+}
+
+/// Penugasan pembimbing DUDI per kelompok. Tepat satu `isPrimary` dipakai
+/// sebagai penilai akhir; semua DUDI yang ditugaskan dapat verifikasi harian.
+model GroupDudiMentor {
+  id          String   @id @default(cuid())
+  groupId     String
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  dudiUserId  String
+  dudi        User     @relation(fields: [dudiUserId], references: [id], onDelete: Cascade)
+  isPrimary   Boolean  @default(false)
+  assignedAt  DateTime @default(now())
+
+  @@unique([groupId, dudiUserId])
+  @@index([dudiUserId])
+  @@map("group_dudi_mentors")
+}
+
+/// Keanggotaan siswa pada kelompok
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt  DateTime @default(now())
+  isLeader  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+/// Guru pembimbing suatu kelompok (many-to-many guru <-> kelompok)
+model GroupSupervisor {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isPrimary Boolean  @default(false)
+  assignedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_supervisors")
+}
+
+/// Penempatan/placement detail (opsional, untuk multi-periode dalam 1 kelompok)
+model GroupPlacement {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  companyId String?
+  startDate DateTime?
+  endDate   DateTime?
+  note      String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId])
+  @@map("group_placements")
+}
+
+// ============================================================================
+// PENDAFTARAN (FASE 1)
+// ============================================================================
+
+/// Pendaftaran PKL oleh ketua kelompok (Fase 1: Pra-Pendaftaran).
+/// Menyimpan snapshot detail perusahaan tujuan + anggota kelompok yang diinput manual.
+model Registration {
+  id            String             @id @default(cuid())
+  code          String             @unique            // kode pengajuan ringkas (mis. REG-2024-0001)
+  groupName     String                                 // usulan nama kelompok
+  cohortId      String
+  cohort        Cohort             @relation(fields: [cohortId], references: [id], onDelete: Restrict)
+  leaderId      String                                 // ketua pengaju (siswa)
+  leader        User               @relation("RegistrationLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  majorId       String?            // jurusan kelompok (semua anggota sama)
+  major         Major?             @relation(fields: [majorId], references: [id], onDelete: SetNull)
+
+  // Detail perusahaan tujuan (snapshot input siswa)
+  companyName     String
+  companyAddress  String           @db.Text
+  companyIndustry String?                              // bidang industri (bisa match master Industry)
+  companyPhone    String?          @db.VarChar(30)
+  companyCity     String?
+  companyWebsite  String?          @db.VarChar(255)  // alamat web perusahaan (jika ada)
+  companyContacts Json?                              // daftar no. kontak (WA) yang bisa dihubungi
+
+  status        RegistrationStatus @default(DRAFT)
+  note          String?            @db.Text            // catatan/alasan penolakan admin
+
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedBy    User?              @relation("RegistrationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt    DateTime?
+
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  deletedAt     DateTime?
+
+  members       RegistrationMember[]
+  document      Document?
+  group         Group?
+
+  @@index([cohortId])
+  @@index([leaderId])
+  @@index([status])
+  @@map("registrations")
+}
+
+/// Jadwal tanggal masa per fase untuk sebuah gelombang.
+/// Hanya diatur oleh SUPER_ADMIN & KEPALA_SEKOLAH. Dipakai untuk menentukan fase aktif.
+model PhaseSchedule {
+  id        String       @id @default(cuid())
+  cohortId  String
+  cohort    Cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  phase     StudentPhase
+  startDate DateTime?
+  endDate   DateTime?
+
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([cohortId, phase])
+  @@index([cohortId])
+  @@map("phase_schedules")
+}
+
+/// Anggota kelompok yang diinput pada form pendaftaran (sebelum jadi Group resmi).
+model RegistrationMember {
+  id             String       @id @default(cuid())
+  registrationId String
+  registration   Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  // identitas anggota (boleh user terdaftar maupun input baru)
+  userId         String?                                   // bila sudah punya akun
+  user           User?        @relation("RegistrationMemberUser", fields: [userId], references: [id], onDelete: SetNull)
+  fullName       String
+  nisn           String?      @db.VarChar(30)
+  className      String?      @db.VarChar(60)              // kelas (teks bebas saat pendaftaran)
+  phone          String?      @db.VarChar(30)
+  address        String?      @db.Text
+  isLeader       Boolean      @default(false)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([registrationId])
+  @@index([userId])
+  @@map("registration_members")
+}
+
+// ============================================================================
+// ABSENSI, JURNAL, PENGADUAN, KUNJUNGAN
+// ============================================================================
+
+/// Absensi harian. 1 siswa = 1 absen per hari (unique group+user+tanggal).
+/// Tidak boleh dirapel: tanggal harus = hari ini (server-side), immutable setelah dibuat.
+model Attendance {
+  id           String           @id @default(cuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId      String?
+  group        Group?           @relation("AttendanceGroup", fields: [groupId], references: [id], onDelete: SetNull)
+  date         DateTime         @db.Date
+  status       AttendanceStatus @default(HADIR)
+  activity     String?          @db.Text   // pelaksanaan kegiatan saat absen
+
+  checkInAt    DateTime?
+  checkInLat   Decimal?         @db.Decimal(10, 7)
+  checkInLong  Decimal?         @db.Decimal(10, 7)
+  checkInNote  String?          @db.Text
+
+  checkOutAt   DateTime?
+  checkOutLat  Decimal?         @db.Decimal(10, 7)
+  checkOutLong Decimal?         @db.Decimal(10, 7)
+  checkOutNote String?          @db.Text
+
+  // Konfirmasi DUDI (guru pembimbing/admin bisa melihat, tapi hanya DUDI yang konfirmasi)
+  verifiedById String?
+  verifiedBy   User?            @relation("AttendanceVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt   DateTime?
+
+  isAnomaly    Boolean          @default(false)  // flag jika lokasi mencurigakan
+  anomalyNote  String?          @db.Text
+
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([userId, date])
+  @@index([groupId])
+  @@index([date])
+  @@index([status])
+  @@map("attendances")
+}
+
+/// Jurnal kegiatan harian siswa
+model Journal {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId      String?
+  group        Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  date         DateTime @db.Date
+  activity     String   @db.Text
+  result       String?  @db.Text
+  obstacles    String?  @db.Text
+  supervisorNote String? @db.Text
+  dudiVerifiedAt DateTime?
+  dudiVerifiedById String?
+  dudiVerifiedBy User? @relation("JournalDudiVerifier", fields: [dudiVerifiedById], references: [id], onDelete: SetNull)
+  dudiVerificationNote String? @db.Text
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([date])
+  @@index([dudiVerifiedById])
+  @@map("journals")
+}
+
+/// Pengaduan / laporan masalah dari siswa
+model Complaint {
+  id        String          @id @default(cuid())
+  authorId  String
+  author    User            @relation("ComplaintAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  groupId   String?
+  group     Group?          @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  subject   String
+  body      String          @db.Text
+  status    ComplaintStatus @default(TERBUKA)
+
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  replies   ComplaintReply[]
+
+  @@index([authorId])
+  @@index([groupId])
+  @@index([status])
+  @@map("complaints")
+}
+
+/// Balasan pengaduan (guru/DUDI/admin)
+model ComplaintReply {
+  id          String    @id @default(cuid())
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User      @relation("ComplaintReplyAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  body        String    @db.Text
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([complaintId])
+  @@map("complaint_replies")
+}
+
+/// Kunjungan/monitoring guru ke perusahaan
+model Visit {
+  id            String   @id @default(cuid())
+  supervisorId  String
+  supervisor    User     @relation("VisitSupervisor", fields: [supervisorId], references: [id], onDelete: Restrict)
+  groupId       String?
+  group         Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  companyId     String?
+  company       Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  scheduledAt   DateTime
+  visitedAt     DateTime?
+  note          String?  @db.Text
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([supervisorId])
+  @@index([groupId])
+  @@index([companyId])
+  @@map("visits")
+}
+
+// ============================================================================
+// DOKUMEN & SURAT
+// ============================================================================
+
+/// Dokumen milik user (surat permohonan, penerimaan, pernyataan, laporan, dll.)
+model Document {
+  id         String         @id @default(cuid())
+  ownerId    String
+  owner      User           @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  cohortId   String?
+  cohort     Cohort?        @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  registrationId String?    @unique
+  registration   Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  type       DocumentType
+  status     DocumentStatus @default(DRAFT)
+  title      String?
+  note       String?        @db.Text        // catatan / alasan penolakan
+  verifiedById String?
+  verifiedAt DateTime?
+
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  files      DocumentFile[]
+
+  @@index([ownerId])
+  @@index([type])
+  @@index([status])
+  @@index([cohortId])
+  @@map("documents")
+}
+
+/// File/versi dalam sebuah dokumen (mendukung revisi)
+model DocumentFile {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedById String?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  originalName String
+  storedPath   String                       // path relatif di storage (di luar webroot)
+  mimeType     String?  @db.VarChar(120)
+  sizeBytes    Int?
+  version      Int      @default(1)
+  isActive     Boolean  @default(true)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([documentId])
+  @@map("document_files")
+}
+
+/// Penandatangan surat (kepala sekolah) — mendukung pergantian pejabat
+model LetterSignatory {
+  id        String   @id @default(cuid())
+  name      String
+  nip       String?  @db.VarChar(40)
+  position  String   @default("Kepala Sekolah")
+  isActive  Boolean  @default(true)
+  startDate DateTime?
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  letters   GeneratedLetter[]
+
+  @@map("letter_signatories")
+}
+
+/// Surat yang di-generate sistem (snapshot tanda tangan per surat)
+model GeneratedLetter {
+  id           String           @id @default(cuid())
+  cohortId     String?
+  cohort       Cohort?          @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  type         DocumentType
+  number       String?          @db.VarChar(80)  // nomor surat
+  subject      String?
+  // Snapshot tanda tangan (agar tidak berubah saat pejabat berganti)
+  signerName   String
+  signerNip    String?          @db.VarChar(40)
+  signerId     String?
+  signer       User?            @relation("LetterSigner", fields: [signerId], references: [id], onDelete: SetNull)
+  signatoryId  String?
+  signatory    LetterSignatory? @relation(fields: [signatoryId], references: [id], onDelete: SetNull)
+  pdfPath      String?                            // hasil generate PDF
+  payload      Json?                              // data yang dipakai saat generate
+  relatedGroupId String?
+
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([cohortId])
+  @@index([type])
+  @@map("generated_letters")
+}
+
+// ============================================================================
+// PERSETUJUAN / APPROVAL
+// ============================================================================
+
+/// Log persetujuan generik (ajuan pendaftaran, laporan akhir, dsb.)
+model Approval {
+  id         String         @id @default(cuid())
+  entityType String         @db.VarChar(60)   // e.g. "DOCUMENT", "GROUP", "REPORT"
+  entityId   String         @db.VarChar(40)
+  actorId    String?
+  actor      User?          @relation("ApprovalActor", fields: [actorId], references: [id], onDelete: SetNull)
+  status     ApprovalStatus @default(MENUNGGU)
+  note       String?        @db.Text
+  actedAt    DateTime?
+
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@map("approvals")
+}
+
+// ============================================================================
+// PENILAIAN & FEEDBACK
+// ============================================================================
+
+/// Nilai PKL. Nilai akhir = 100% dari DUDI (sesuai keputusan). Nilai guru = catatan.
+model Grade {
+  id            String   @id @default(cuid())
+  studentId     String
+  student       User     @relation("GradeStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  groupId       String?
+  giverId       String?
+  giver         User?    @relation("GradeGiver", fields: [giverId], references: [id], onDelete: SetNull)
+  giverRole     Role
+
+  // Komponen nilai DUDI (mis. 0-100)
+  scoreDudi     Decimal? @db.Decimal(5, 2)
+  scoreGuidance Decimal? @db.Decimal(5, 2)  // nilai bimbingan guru (catatan, bukan penambah)
+  finalScore    Decimal? @db.Decimal(5, 2)  // = scoreDudi (100%)
+  predicate     String?  @db.VarChar(2)     // A/B/C/D
+
+  note          String? @db.Text
+
+  aspects       GradeAspect[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([groupId])
+  @@map("grades")
+}
+
+/// Indikator nilai per penilaian DUDI (form penilaian per aspek).
+model GradeAspect {
+  id        String   @id @default(cuid())
+  gradeId   String
+  grade     Grade    @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+  label     String   @db.VarChar(120)
+  score     Decimal  @db.Decimal(5, 2)
+  createdAt DateTime @default(now())
+
+  @@index([gradeId])
+  @@map("grade_aspects")
+}
+
+/// Feedback dari DUDI untuk siswa/kelompok
+model Feedback {
+  id        String   @id @default(cuid())
+  authorId  String
+  author    User     @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  studentId String?
+  groupId   String?
+  body      String   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([authorId])
+  @@index([studentId])
+  @@index([groupId])
+  @@map("feedbacks")
+}
+
+// ============================================================================
+// LOKER, PENGUMUMAN, NOTIFIKASI, AUDIT
+// ============================================================================
+
+/// Info lowongan kerja dari DUDI
+model JobVacancy {
+  id          String           @id @default(cuid())
+  authorId    String
+  author      User             @relation("JobVacancyAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  title       String
+  description String           @db.Text
+  requirements String?         @db.Text
+  location    String?
+  status      JobVacancyStatus @default(DRAFT)
+  publishedAt DateTime?
+  closedAt    DateTime?
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([companyId])
+  @@index([status])
+  @@map("job_vacancies")
+}
+
+/// Pengumuman (mis. hasil pembentukan kelompok)
+model Announcement {
+  id        String   @id @default(cuid())
+  cohortId  String?
+  cohort    Cohort?  @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  title     String
+  body      String   @db.Text
+  isPinned  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cohortId])
+  @@map("announcements")
+}
+
+/// Notifikasi in-app
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String?  @db.Text
+  type      String?  @db.VarChar(60)
+  link      String?  @db.VarChar(255)
+  readAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([readAt])
+  @@map("notifications")
+}
+
+/// Audit log untuk aksi kritikal
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String   @db.VarChar(80)   // e.g. "APPROVE_GROUP", "GENERATE_LETTER"
+  entityType String?  @db.VarChar(60)
+  entityId   String?  @db.VarChar(40)
+  metadata   Json?
+  ipAddress  String?  @db.VarChar(64)
+  userAgent  String?  @db.VarChar(255)
+
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
