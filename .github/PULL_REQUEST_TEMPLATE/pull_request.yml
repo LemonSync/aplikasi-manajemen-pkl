@@ -1,0 +1,269 @@
+name: Pull Request
+description: Submit a change to the Sistem Manajemen PKL project
+title: "[PR] "
+labels:
+  - review
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Pull Request
+
+        Terima kasih telah berkontribusi pada Sistem Manajemen PKL.
+
+        Pastikan perubahan yang dibuat telah mengikuti `CONTRIBUTING.md` sebelum mengirimkan Pull Request.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Jelaskan secara singkat perubahan yang dibuat dan alasan perubahan tersebut.
+      placeholder: |
+        Jelaskan perubahan yang dibuat dan tujuan dari perubahan tersebut.
+    validations:
+      required: true
+
+  - type: input
+    id: related-issue
+    attributes:
+      label: Related Issue
+      description: Masukkan nomor Issue jika Pull Request ini berkaitan dengan Issue tertentu.
+      placeholder: "#123"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: change-type
+    attributes:
+      label: Type of Change
+      description: Pilih jenis perubahan yang paling sesuai.
+      multiple: true
+      options:
+        - New feature
+        - Bug fix
+        - Refactoring
+        - Performance improvement
+        - Documentation
+        - Tests
+        - Chore / maintenance
+        - Breaking change
+    validations:
+      required: true
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: Changes
+      description: Jelaskan perubahan utama yang dilakukan.
+      placeholder: |
+        - Menambahkan ...
+        - Memperbaiki ...
+        - Mengubah ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database-changes
+    attributes:
+      label: Database Changes
+      description: Apakah Pull Request ini memengaruhi database atau Prisma schema?
+      options:
+        - No database changes
+        - Prisma schema changed
+        - New migration added
+        - Seed data changed
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: database-details
+    attributes:
+      label: Database Details
+      description: Jelaskan perubahan database jika ada.
+      placeholder: |
+        Jelaskan migration atau perubahan schema yang dilakukan.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: api-changes
+    attributes:
+      label: API Changes
+      description: Apakah terdapat perubahan pada API?
+      options:
+        - No API changes
+        - New endpoint
+        - Modified endpoint
+        - Removed endpoint
+        - Request/response format changed
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-details
+    attributes:
+      label: API Details
+      description: Jelaskan perubahan API jika ada.
+      placeholder: |
+        Contoh:
+        POST /api/students
+        GET /api/students/:id
+    validations:
+      required: false
+
+  - type: dropdown
+    id: frontend-changes
+    attributes:
+      label: Frontend Changes
+      description: Pilih perubahan frontend yang dilakukan.
+      multiple: true
+      options:
+        - No frontend changes
+        - New page
+        - New component
+        - UI modification
+        - State management change
+        - Routing change
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend-changes
+    attributes:
+      label: Backend Changes
+      description: Pilih perubahan backend yang dilakukan.
+      multiple: true
+      options:
+        - No backend changes
+        - New endpoint
+        - Controller changes
+        - Service changes
+        - Repository changes
+        - Authentication / authorization changes
+    validations:
+      required: true
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing
+      description: Jelaskan pengujian yang telah dilakukan.
+      placeholder: |
+        Automated tests:
+        - Backend typecheck
+        - Frontend typecheck
+        - Frontend build
+
+        Manual testing:
+        - Login
+        - Student registration
+        - Attendance
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: automated-tests
+    attributes:
+      label: Automated Tests
+      options:
+        - label: Backend typecheck passed
+        - label: Frontend typecheck passed
+        - label: Frontend build passed
+        - label: Unit tests passed
+        - label: Integration tests passed
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Tambahkan screenshot atau screen recording jika perubahan memengaruhi UI.
+      placeholder: |
+        Drag and drop screenshots here.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security and Privacy
+      description: Pastikan tidak ada informasi sensitif yang masuk ke repository.
+      options:
+        - label: No credentials or secrets added
+          required: true
+        - label: No personal data added
+          required: true
+        - label: No production data added
+          required: true
+        - label: No sensitive information exposed
+          required: true
+
+  - type: textarea
+    id: security-details
+    attributes:
+      label: Security Details
+      description: Jelaskan perubahan yang berkaitan dengan authentication, authorization, permissions, atau security.
+      placeholder: |
+        Tidak ada perubahan terkait security.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: documentation
+    attributes:
+      label: Documentation
+      description: Apakah dokumentasi perlu diperbarui?
+      options:
+        - Documentation is not required
+        - README updated
+        - API documentation updated
+        - Architecture documentation updated
+        - Other documentation updated
+    validations:
+      required: true
+
+  - type: textarea
+    id: breaking-changes
+    attributes:
+      label: Breaking Changes
+      description: Jelaskan perubahan yang dapat menyebabkan fitur atau API sebelumnya menjadi tidak kompatibel.
+      placeholder: |
+        Tidak ada breaking changes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-notes
+    attributes:
+      label: Additional Notes
+      description: Tambahkan informasi lain yang perlu diketahui reviewer.
+      placeholder: |
+        Informasi tambahan untuk reviewer.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Contribution Checklist
+      description: Pastikan seluruh ketentuan berikut telah dipenuhi.
+      options:
+        - label: I have read and followed CONTRIBUTING.md.
+          required: true
+        - label: My changes follow the project's coding conventions.
+          required: true
+        - label: I have tested my changes locally.
+          required: true
+        - label: I have not committed credentials, secrets, or sensitive data.
+          required: true
+        - label: I have not committed real student or user data.
+          required: true
+        - label: I have checked the impact of my changes on existing functionality.
+          required: true
+        - label: I have updated the relevant documentation.
+          required: true
+        - label: My commits follow the project's commit convention.
+          required: true
+        - label: This Pull Request is ready for review.
+          required: true
