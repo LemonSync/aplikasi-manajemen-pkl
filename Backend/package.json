@@ -40,7 +40,7 @@
     "jsonwebtoken": "^9.0.2",
     "jszip": "^3.10.2",
     "morgan": "^1.10.0",
-    "multer": "^2.3.0",
+    "multer": "^2.4.0",
     "mysql2": "^3.11.5",
     "pdfkit": "^0.15.2",
     "pizzip": "^3.2.0",
