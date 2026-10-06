@@ -66,7 +66,7 @@ sehingga tidak perlu konfigurasi CORS tambahan saat development.
 > **Wajib ganti password default segera setelah login pertama.**
 
 ## Dokumentasi
-- Arsitektur & User Flow → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Arsitektur & User Flow → [`./ARCHITECTURE.md`](./ARCHITECTURE.md)
 - Skema Database / ERD → [`docs/ERD.md`](docs/ERD.md)
 - Kontrak API → [`docs/API_SPEC.md`](docs/API_SPEC.md)
 - Analisis Edge Case & Keamanan → [`docs/EDGE_CASES.md`](docs/EDGE_CASES.md)

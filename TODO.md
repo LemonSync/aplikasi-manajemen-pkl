@@ -1,6 +1,6 @@
 # TODO.md — Sistem Manajemen PKL SMKN 9 Medan
 
-> Dibuat berdasarkan `prompt.txt` + audit kode.
+> Dibuat berdasarkan audit kode.
 > Status: ✅ Selesai | 🔧 Perlu Fix | ⬜ Belum Dikerjakan
 
 ---
@@ -296,7 +296,7 @@
 
 ---
 
-## Quick Reference: Alur Lengkap dari `prompt.txt`
+## Quick Reference: Alur Lengkap
 
 ```
 Fase 1: PRA-PENDAFTARAN-PKL
@@ -355,7 +355,7 @@ Fase 4: PASCA-PKL
 
 ## Auto-Generate Akun DUDI (2026-10-02)
 
-Spec `prompt.txt:45` + revisi: akun DUDI dibuat **bersamaan dengan akun siswa di Fase 2** (surat penerimaan disetujui), memakai **username & password acak** — tanpa input nama/no. HP mentor di Fase 1, karena siswa menyerahkan akunnya ke pembimbing perusahaan saat masa PKL.
+Spec revisi: akun DUDI dibuat **bersamaan dengan akun siswa di Fase 2** (surat penerimaan disetujui), memakai **username & password acak** — tanpa input nama/no. HP mentor di Fase 1, karena siswa menyerahkan akunnya ke pembimbing perusahaan saat masa PKL.
 
 - [x] `studentWorkflow.service.ensureDudiAccount()`: saat provisioning Fase 2 → buat user `Role.DUDI` username acak `DUDI<6-digit>`, password acak, `mustChangePassword`, `CompanyMentor` (`fullName = "Mentor <nama perusahaan>"`, tanpa HP), `InitialCredential`, lalu `autoAssignDudiMentors` (primary)
 - [x] Idempoten/aman lintas gelombang: bila perusahaan sudah punya akun mentor, pembuatan dilewati (hanya penugasan ke kelompok)
@@ -677,6 +677,7 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] **5 view tanpa scoping sekarang ikut konteks:** VerifyPenerimaanView, VerifyDaftarUlangView, DocumentsView (`documentService.list(status, type, cohortId)`), ComplaintMonitorView (`complaintService.list({ cohortId })`), UsersView (client-side: `inActiveCohort = !u.cohortId || u.cohortId === activeCohortId` → akun staf null-cohort selalu tampil, siswa/ketua difilter per gelombang; count tab dari base sama)
 - [x] Tidak diubah: AuditLogs, Companies, Industri (data master global); MasterSiswa/Groups form/Registrations create-form tetap punya pilihan gelombang sendiri bila butuh input lintas gelombang
 - [x] Verifikasi: npx tsc --noEmit (backend) + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-cohort-scoping.ts` **9/9 assertion OK** (skema query + document list + complaint list per cohort, tanpa cohortId = semua) lalu dihapus
+<<<<<<< HEAD
 
 ## UI/UX Refresh: Sharp, Modal, Loading (2026-10-04)
 
@@ -718,3 +719,5 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] **Dashboard redesign**: hero card gelap (gradient blur indigo) berisi sapaan + badge role/fase/gelombang, 3 kartu statistik berikon berwarna (status/role/fase), peringatan password default dengan ikon
 - [x] StatusBadge & view lain otomatis ikut upgrade via class global (badge uppercase micro, tabel baru); tetap **border radius 0** + semua animasi loading sebelumnya
 - [x] Verifikasi: npx vue-tsc --noEmit + npx vite build hijau (181 modul, chunk AppIcon terbentuk)
+=======
+>>>>>>> d8cd88c55daa2f8f8af5391a6120a69658f13a6b
