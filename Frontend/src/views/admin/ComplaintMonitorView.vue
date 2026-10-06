@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { complaintService, type ComplaintRecord } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 
 const complaints = ref<ComplaintRecord[]>([]);
@@ -10,9 +13,13 @@ const cohortStore = useCohortStore();
 const loading = ref(true);
 const error = ref('');
 const statusFilter = ref('');
-const expandId = ref<string | null>(null);
-const replyBody = ref('');
 const busy = ref(false);
+const replyBody = ref('');
+const activeId = ref<string | null>(null);
+
+const active = computed<ComplaintRecord | null>(
+  () => complaints.value.find((c) => c.id === activeId.value) ?? null
+);
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -30,12 +37,8 @@ const load = async (): Promise<void> => {
   }
 };
 
-const toggle = async (id: string): Promise<void> => {
-  if (expandId.value === id) {
-    expandId.value = null;
-    return;
-  }
-  expandId.value = id;
+const open = async (id: string): Promise<void> => {
+  activeId.value = id;
   replyBody.value = '';
   try {
     const detail = await complaintService.detail(id);
@@ -46,13 +49,12 @@ const toggle = async (id: string): Promise<void> => {
   }
 };
 
-const sendReply = async (id: string): Promise<void> => {
-  if (!replyBody.value.trim()) return;
+const sendReply = async (): Promise<void> => {
+  if (!activeId.value || !replyBody.value.trim()) return;
   busy.value = true;
-  error.value = '';
   try {
-    const detail = await complaintService.reply(id, replyBody.value);
-    const idx = complaints.value.findIndex((c) => c.id === id);
+    const detail = await complaintService.reply(activeId.value, replyBody.value);
+    const idx = complaints.value.findIndex((c) => c.id === activeId.value);
     if (idx >= 0) complaints.value[idx] = detail;
     replyBody.value = '';
   } catch (e) {
@@ -62,12 +64,12 @@ const sendReply = async (id: string): Promise<void> => {
   }
 };
 
-const closeComplaint = async (id: string): Promise<void> => {
+const closeComplaint = async (): Promise<void> => {
+  if (!activeId.value) return;
   busy.value = true;
-  error.value = '';
   try {
-    const detail = await complaintService.close(id);
-    const idx = complaints.value.findIndex((c) => c.id === id);
+    const detail = await complaintService.close(activeId.value);
+    const idx = complaints.value.findIndex((c) => c.id === activeId.value);
     if (idx >= 0) complaints.value[idx] = detail;
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -89,13 +91,12 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
+    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-lg font-semibold text-gray-800">Monitor Pengaduan Siswa</h2>
+        <h2 class="text-lg font-semibold text-gray-800">Pengaduan Siswa</h2>
         <div class="flex items-center gap-2">
-          <span class="text-xs text-gray-400">Gelombang aktif di header</span>
           <select v-model="statusFilter" class="input w-auto" @change="load">
             <option value="">Semua Status</option>
             <option value="TERBUKA">Terbuka</option>
@@ -106,51 +107,69 @@ watch(
         </div>
       </div>
 
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
-      <div v-else class="space-y-3">
-        <div v-for="c in complaints" :key="c.id" class="rounded-lg border border-gray-200 p-4">
-          <div class="flex items-center justify-between gap-3">
-            <button class="text-left" @click="toggle(c.id)">
-              <span class="font-medium text-gray-800">{{ c.subject }}</span>
-              <span class="ml-2 text-xs text-gray-400">
-                {{ c.author?.studentProfile?.fullName ?? c.author?.username ?? '-' }} · {{ new Date(c.createdAt).toLocaleDateString('id-ID') }}
-                <template v-if="c.group"> · {{ c.group.name }}</template>
-              </span>
-            </button>
-            <StatusBadge :status="c.status" />
+      <SkeletonTable v-if="loading" :rows="6" :cols="4" />
+      <div v-else class="divide-y divide-gray-100">
+        <button
+          v-for="c in complaints"
+          :key="c.id"
+          class="flex w-full items-center justify-between gap-3 px-1 py-3 text-left hover:bg-gray-50"
+          @click="open(c.id)"
+        >
+          <div class="min-w-0">
+            <p class="truncate font-medium text-gray-800">{{ c.subject }}</p>
+            <p class="truncate text-xs text-gray-400">
+              {{ c.author?.studentProfile?.fullName ?? c.author?.username ?? '-' }}
+              · {{ new Date(c.createdAt).toLocaleDateString('id-ID') }}
+              <template v-if="c.group"> · {{ c.group.name }}</template>
+            </p>
           </div>
-          <p class="mt-1 text-sm text-gray-600">{{ c.body }}</p>
-
-          <div v-if="expandId === c.id" class="mt-3 border-t border-gray-100 pt-3">
-            <div v-for="r in c.replies ?? []" :key="r.id" class="mb-2 rounded bg-gray-50 px-3 py-2">
-              <p class="text-xs font-medium text-gray-500">{{ r.author?.username ?? 'Petugas' }}</p>
-              <p class="text-sm text-gray-700">{{ r.body }}</p>
-            </div>
-            <p v-if="(c.replies ?? []).length === 0" class="text-xs text-gray-400">Belum ada balasan.</p>
-
-            <div v-if="c.status !== 'SELESAI'" class="mt-3 flex gap-2">
-              <input
-                v-model="replyBody"
-                class="input"
-                placeholder="Tulis balasan untuk siswa…"
-                @keyup.enter="sendReply(c.id)"
-              />
-              <button class="btn-primary" :disabled="busy || !replyBody.trim()" @click="sendReply(c.id)">
-                Kirim
-              </button>
-            </div>
-            <button
-              v-if="c.status !== 'SELESAI'"
-              class="mt-2 text-xs text-red-600 hover:underline"
-              :disabled="busy"
-              @click="closeComplaint(c.id)"
-            >
-              Tutup pengaduan
-            </button>
-          </div>
-        </div>
+          <StatusBadge :status="c.status" />
+        </button>
         <p v-if="complaints.length === 0" class="py-4 text-center text-gray-400">Belum ada pengaduan.</p>
       </div>
     </div>
+
+    <Modal :open="!!activeId" :title="active?.subject ?? 'Pengaduan'" size="lg" :busy="busy" @close="activeId = null">
+      <template v-if="active">
+        <div class="mb-4 flex items-center justify-between text-sm text-gray-500">
+          <span>
+            {{ active.author?.studentProfile?.fullName ?? active.author?.username ?? '-' }}
+            · {{ new Date(active.createdAt).toLocaleDateString('id-ID') }}
+          </span>
+          <StatusBadge :status="active.status" />
+        </div>
+        <p class="mb-4 whitespace-pre-wrap text-sm text-gray-700">{{ active.body }}</p>
+
+        <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Balasan</div>
+        <div class="mb-4 space-y-2">
+          <div v-for="r in active.replies ?? []" :key="r.id" class="border border-gray-200 bg-gray-50 px-3 py-2">
+            <p class="text-xs font-medium text-gray-500">{{ r.author?.username ?? 'Petugas' }}</p>
+            <p class="text-sm text-gray-700">{{ r.body }}</p>
+          </div>
+          <p v-if="(active.replies ?? []).length === 0" class="text-xs text-gray-400">Belum ada balasan.</p>
+        </div>
+
+        <div v-if="active.status !== 'SELESAI'" class="flex gap-2">
+          <input
+            v-model="replyBody"
+            class="input"
+            placeholder="Tulis balasan…"
+            @keyup.enter="sendReply"
+          />
+          <button class="btn-primary shrink-0" :disabled="busy || !replyBody.trim()" @click="sendReply">
+            <LoadingSpinner v-if="busy" inline />
+            Kirim
+          </button>
+        </div>
+      </template>
+      <LoadingSpinner v-else />
+
+      <template #footer>
+        <button v-if="active && active.status !== 'SELESAI'" class="btn-danger" :disabled="busy" @click="closeComplaint">
+          Tutup
+        </button>
+        <button class="btn-secondary" :disabled="busy" @click="activeId = null">Tutup</button>
+      </template>
+    </Modal>
   </div>
 </template>

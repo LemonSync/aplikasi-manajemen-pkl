@@ -55,7 +55,7 @@ onMounted(load);
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Data Orang Tua / Wali</h2>
       <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
+      <div v-if="loading" class="loading" />
 
       <div v-else class="space-y-6">
         <div>

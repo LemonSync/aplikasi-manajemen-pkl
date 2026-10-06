@@ -3,6 +3,9 @@ import { computed, onMounted, ref } from 'vue';
 import { userManageService, cohortService, companyService, type UserRecord, type CohortRecord, type StudentPklData } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 
 const TABS = [
@@ -225,12 +228,15 @@ onMounted(load);
     <div class="card">
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-800">Manajemen User</h2>
-        <button class="btn-primary" @click="showForm = !showForm">{{ showForm ? 'Batal' : 'Tambah User' }}</button>
+        <button class="btn-primary" @click="showForm = true">Tambah User</button>
       </div>
-      <div v-if="error" class="mb-3 mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-      <div v-if="success" class="mb-3 mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
+      <div v-if="error" class="mb-3 mt-3 bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
+      <div v-if="success" class="mb-3 mt-3 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
+    </div>
 
-      <div v-if="showForm" class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <!-- Modal Tambah User -->
+    <Modal :open="showForm" title="Tambah User" size="md" :busy="saving" @close="showForm = false">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div><label class="label">Role</label>
           <select v-model="form.role" class="input">
             <option value="SISWA">Siswa</option>
@@ -248,39 +254,42 @@ onMounted(load);
           <div v-if="form.role === 'GURU_PEMBIMBING'"><label class="label">NIP</label><input v-model="form.nip" class="input" /></div>
           <div v-if="form.role === 'SISWA'"><label class="label">Gelombang</label>
             <select v-model="form.cohortId" class="input">
-              <option value="">- Pilih Gelombang -</option>
+              <option value="">— Pilih —</option>
               <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </div>
           <div v-if="form.role === 'DUDI'"><label class="label">Perusahaan</label>
             <select v-model="form.companyId" class="input">
-              <option value="">- Pilih Perusahaan -</option>
+              <option value="">— Pilih —</option>
               <option v-for="c in companies" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </div>
         </template>
-        <div v-if="form.role === 'KETUA'" class="sm:col-span-3">
-          <div class="rounded-lg bg-blue-50 p-4 mb-3">
-            <p class="text-sm text-blue-700">Username dan password akan dibuat otomatis oleh sistem. Admin cukup berikan kredensial kepada siswa setelah akun dibuat.</p>
-          </div>
+        <div v-if="form.role === 'KETUA'" class="sm:col-span-2">
+          <p class="mb-3 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+            Kredensial dibuat otomatis — berikan ke siswa setelah akun dibuat.
+          </p>
           <div>
             <label class="label">Gelombang</label>
             <select v-model="form.cohortId" class="input" required>
-              <option value="">- Pilih Gelombang -</option>
+              <option value="">— Pilih —</option>
               <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </div>
         </div>
       </div>
-      <button
-        v-if="showForm"
-        class="btn-primary mt-4"
-        :disabled="saving || (form.role !== 'KETUA' && (!form.username || !form.password))"
-        @click="submit"
-      >
-        {{ saving ? 'Menyimpan...' : 'Simpan' }}
-      </button>
-    </div>
+      <template #footer>
+        <button class="btn-secondary" :disabled="saving" @click="showForm = false">Batal</button>
+        <button
+          class="btn-primary"
+          :disabled="saving || (form.role !== 'KETUA' && (!form.username || !form.password))"
+          @click="submit"
+        >
+          <LoadingSpinner v-if="saving" inline />
+          {{ saving ? 'Menyimpan…' : 'Simpan' }}
+        </button>
+      </template>
+    </Modal>
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Daftar User</h2>
@@ -305,7 +314,7 @@ onMounted(load);
         </button>
       </div>
 
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead>
         <tbody>
@@ -326,23 +335,16 @@ onMounted(load);
       </table>
     </div>
 
-    <!-- Modal Data PKL Siswa (Fase 1 & Fase 2) -->
-    <div v-if="showStudentData" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div class="card max-h-[90vh] w-full max-w-3xl space-y-4 overflow-y-auto">
-        <div class="flex items-start justify-between">
-          <div>
-            <h3 class="text-lg font-semibold text-gray-800">Data PKL Siswa</h3>
-            <p v-if="studentData" class="text-sm text-gray-500">
-              {{ studentData.fase2?.profile.fullName ?? studentData.fase1?.member.fullName ?? studentData.user.username }}
-              <span class="font-mono">({{ studentData.user.username }})</span>
-            </p>
-          </div>
-          <button class="btn-secondary" @click="closeStudentData">Tutup</button>
-        </div>
+    <!-- Modal Data PKL Siswa -->
+    <Modal :open="!!showStudentData" title="Data PKL Siswa" size="xl" @close="closeStudentData">
+      <p v-if="studentData" class="mb-4 text-sm text-gray-500">
+        {{ studentData.fase2?.profile.fullName ?? studentData.fase1?.member.fullName ?? studentData.user.username }}
+        <span class="font-mono">({{ studentData.user.username }})</span>
+      </p>
 
-        <div v-if="loadingStudentData" class="py-6 text-center text-sm text-gray-500">Memuat data...</div>
+      <LoadingSpinner v-if="loadingStudentData" />
 
-        <div v-else-if="studentData" class="space-y-5">
+      <div v-else-if="studentData" class="space-y-5">
           <!-- Ringkasan akun -->
           <div class="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
             <span>Role: <strong>{{ studentData.user.role }}</strong></span>
@@ -354,8 +356,8 @@ onMounted(load);
           <!-- FASE 1 -->
           <section>
             <h4 class="mb-2 font-semibold text-gray-800">Fase 1 — Pendaftaran Awal</h4>
-            <p v-if="!studentData.fase1" class="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-              Belum ada data. Siswa ini belum melalui pendaftaran Fase 1 (akun dibuat manual / belum terdaftar).
+            <p v-if="!studentData.fase1" class="bg-gray-50 px-3 py-2 text-sm text-gray-500">
+              Belum ada data Fase 1.
             </p>
             <div v-else class="space-y-3">
               <div class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg bg-gray-50 p-3 text-sm sm:grid-cols-2">
@@ -395,8 +397,8 @@ onMounted(load);
           <!-- FASE 2 -->
           <section>
             <h4 class="mb-2 font-semibold text-gray-800">Fase 2 — Daftar Ulang</h4>
-            <p v-if="!studentData.fase2" class="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
-              Belum ada data. Siswa ini belum membuat akun lewat proses daftar ulang Fase 2.
+            <p v-if="!studentData.fase2" class="bg-gray-50 px-3 py-2 text-sm text-gray-500">
+              Belum ada data Fase 2.
             </p>
             <div v-else class="space-y-3">
               <div class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg bg-gray-50 p-3 text-sm sm:grid-cols-2">
@@ -438,78 +440,68 @@ onMounted(load);
             </div>
           </section>
         </div>
-      </div>
-    </div>
+      <template #footer>
+        <button class="btn-secondary" @click="closeStudentData">Tutup</button>
+      </template>
+    </Modal>
 
     <!-- Modal Reset Password -->
-    <div v-if="showResetPassword" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 w-full max-w-md space-y-4">
-        <h3 class="text-lg font-semibold text-gray-800">Reset Password</h3>
-        <p class="text-sm text-gray-600">
-          Reset password untuk <strong>{{ showResetPassword.username }}</strong>
-          <span v-if="showResetPassword.studentProfile?.fullName"> ({{ showResetPassword.studentProfile.fullName }})</span>
-        </p>
+    <Modal :open="!!showResetPassword" title="Reset Password" size="sm" :busy="saving" @close="cancelResetPassword">
+      <p class="text-sm text-gray-600">
+        Reset password untuk <strong>{{ showResetPassword?.username }}</strong>
+        <span v-if="showResetPassword?.studentProfile?.fullName"> ({{ showResetPassword.studentProfile.fullName }})</span>
+      </p>
 
-        <div v-if="resetPasswordResult" class="rounded-lg bg-emerald-50 p-4">
-          <p class="text-sm font-medium text-emerald-800">Password baru:</p>
-          <p class="mt-1 font-mono text-lg font-bold text-emerald-700">{{ resetPasswordResult }}</p>
-          <p class="mt-1 text-xs text-emerald-600">Berikan password ini ke siswa. Siswa akan diminta ganti password saat login pertama.</p>
-        </div>
-
-        <div class="flex justify-end gap-3">
-          <button class="btn-secondary" :disabled="saving" @click="cancelResetPassword">Tutup</button>
-          <button class="btn-primary" :disabled="saving" @click="doResetPassword(true)">
-            {{ saving ? 'Generating...' : 'Generate Random' }}
-          </button>
-        </div>
+      <div v-if="resetPasswordResult" class="mt-4 bg-emerald-50 p-4">
+        <p class="text-sm font-medium text-emerald-800">Password baru:</p>
+        <p class="mt-1 font-mono text-lg font-bold text-emerald-700">{{ resetPasswordResult }}</p>
+        <p class="mt-1 text-xs text-emerald-600">Siswa diminta ganti password saat login pertama.</p>
       </div>
-    </div>
+
+      <template #footer>
+        <button class="btn-secondary" :disabled="saving" @click="cancelResetPassword">Tutup</button>
+        <button class="btn-primary" :disabled="saving" @click="doResetPassword(true)">
+          <LoadingSpinner v-if="saving" inline />
+          {{ saving ? 'Generating…' : 'Generate Random' }}
+        </button>
+      </template>
+    </Modal>
 
     <!-- Modal Kredensial KETUA Baru -->
-    <div v-if="newAccountResult" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 w-full max-w-md space-y-4">
-        <h3 class="text-lg font-semibold text-gray-800">Akun Ketua Berhasil Dibuat</h3>
-        <p class="text-sm text-gray-600">Berikan kredensial berikut kepada siswa:</p>
-
-        <div class="rounded-lg bg-emerald-50 p-4 space-y-2">
-          <div>
-            <p class="text-xs text-emerald-600">Username:</p>
-            <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult.username }}</p>
-          </div>
-          <div>
-            <p class="text-xs text-emerald-600">Password:</p>
-            <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult.password }}</p>
-          </div>
+    <Modal :open="!!newAccountResult" title="Akun Ketua Dibuat" size="sm" @close="newAccountResult = null">
+      <div class="bg-emerald-50 p-4 space-y-2">
+        <div>
+          <p class="text-xs text-emerald-600">Username:</p>
+          <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult?.username }}</p>
         </div>
-
-        <p class="text-xs text-gray-500">Siswa akan diminta ganti password saat login pertama.</p>
-
-        <div class="flex justify-end">
-          <button class="btn-primary" @click="newAccountResult = null">Tutup</button>
+        <div>
+          <p class="text-xs text-emerald-600">Password:</p>
+          <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult?.password }}</p>
         </div>
       </div>
-    </div>
+      <p class="mt-3 text-xs text-gray-500">Siswa diminta ganti password saat login pertama.</p>
+      <template #footer>
+        <button class="btn-primary" @click="newAccountResult = null">Tutup</button>
+      </template>
+    </Modal>
 
     <!-- Modal Hapus User -->
-    <div v-if="confirmDelete" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 w-full max-w-md space-y-4">
-        <h3 class="text-lg font-semibold text-gray-800">Hapus User</h3>
-        <p class="text-sm text-gray-600">
-          Apakah Anda yakin ingin menghapus akun <strong>{{ confirmDelete.username }}</strong>?
-          <br />
-          <span v-if="confirmDelete.studentProfile?.fullName || confirmDelete.teacherProfile?.fullName" class="text-gray-500">
-            ({{ confirmDelete.studentProfile?.fullName ?? confirmDelete.teacherProfile?.fullName }})
-          </span>
-          <br />
-          Aksi ini tidak dapat dibatalkan.
-        </p>
-        <div class="flex justify-end gap-3">
-          <button class="btn-secondary" :disabled="saving" @click="cancelDelete">Batal</button>
-          <button class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50" :disabled="saving" @click="doDelete">
-            {{ saving ? 'Menghapus...' : 'Ya, Hapus' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Modal :open="!!confirmDelete" title="Hapus User" size="sm" :busy="saving" @close="cancelDelete">
+      <p class="text-sm text-gray-600">
+        Hapus akun <strong>{{ confirmDelete?.username }}</strong>?
+        <span v-if="confirmDelete?.studentProfile?.fullName || confirmDelete?.teacherProfile?.fullName" class="text-gray-500">
+          ({{ confirmDelete?.studentProfile?.fullName ?? confirmDelete?.teacherProfile?.fullName }})
+        </span>
+        <br />
+        <span class="font-medium text-red-600">Tidak dapat dibatalkan.</span>
+      </p>
+      <template #footer>
+        <button class="btn-secondary" :disabled="saving" @click="cancelDelete">Batal</button>
+        <button class="btn-danger" :disabled="saving" @click="doDelete">
+          <LoadingSpinner v-if="saving" inline />
+          {{ saving ? 'Menghapus…' : 'Hapus' }}
+        </button>
+      </template>
+    </Modal>
   </div>
 </template>

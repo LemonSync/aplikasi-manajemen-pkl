@@ -83,7 +83,7 @@ onMounted(load);
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Absensi Hari Ini</h2>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <template v-else>
         <div v-if="hasSubmitted" class="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div class="rounded-lg border border-gray-200 p-3">

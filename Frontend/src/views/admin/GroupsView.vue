@@ -14,6 +14,8 @@ import {
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
 interface MemberInfo {
   userId: string;
@@ -339,16 +341,16 @@ watch(
         </div>
       </div>
       <button class="btn-primary mt-4" :disabled="creating || !form.name || !form.registrationId" @click="create">
-        {{ creating ? 'Menyimpan...' : 'Bentuk Kelompok' }}
+        <LoadingSpinner v-if="creating" inline />
+        {{ creating ? 'Menyimpan…' : 'Bentuk Kelompok' }}
       </button>
     </div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <h2 class="text-lg font-semibold text-gray-800">Daftar Kelompok</h2>
-        <p class="text-sm text-gray-500">Gelombang mengikuti pilihan di header.</p>
       </div>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>
@@ -381,14 +383,14 @@ watch(
     </div>
 
     <!-- Modal Detail Kelompok -->
-    <div v-if="showDetail" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-800">Detail Kelompok: {{ showDetail.name }}</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="closeDetail">&times;</button>
-        </div>
-
-        <div v-if="loadingDetail" class="text-sm text-gray-500">Memuat detail...</div>
+    <Modal
+      :open="!!showDetail"
+      :title="`Detail Kelompok: ${showDetail?.name ?? ''}`"
+      size="xl"
+      :busy="savingSupervisors || savingDudi || generatingLetter !== ''"
+      @close="closeDetail"
+    >
+        <div v-if="loadingDetail" class="loading" />
 
         <template v-else-if="detailData">
           <div class="grid grid-cols-2 gap-3 text-sm">
@@ -401,17 +403,14 @@ watch(
           <!-- Guru Pembimbing -->
           <div class="border-t pt-3">
             <h4 class="mb-2 font-medium text-gray-700">Guru Pembimbing</h4>
-            <p class="mb-2 text-xs text-gray-500">
-              Guru pembimbing wajib ditetapkan sebelum surat penugasan dapat digenerate.
-            </p>
             <div v-if="teachers.length === 0" class="text-sm text-amber-600">
-              Belum ada akun Guru Pembimbing. Buat terlebih dahulu pada menu Pengguna.
+              Belum ada akun Guru Pembimbing.
             </div>
             <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <label
                 v-for="t in teachers"
                 :key="t.id"
-                class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                class="flex items-center gap-2 border border-gray-200 px-3 py-2 text-sm"
               >
                 <input
                   type="checkbox"
@@ -422,7 +421,8 @@ watch(
               </label>
             </div>
             <button class="btn-primary mt-2" :disabled="savingSupervisors || supervisorIds.length === 0" @click="saveSupervisors">
-              {{ savingSupervisors ? 'Menyimpan...' : 'Simpan Guru Pembimbing' }}
+              <LoadingSpinner v-if="savingSupervisors" inline />
+              {{ savingSupervisors ? 'Menyimpan…' : 'Simpan Guru Pembimbing' }}
             </button>
           </div>
 
@@ -431,11 +431,11 @@ watch(
             <h4 class="mb-2 font-medium text-gray-700">Surat PKL</h4>
             <div class="flex flex-wrap items-end gap-3">
               <div class="w-48">
-                <label class="label">Nomor Surat (opsional)</label>
-                <input v-model="letterNumber" class="input" placeholder="Nomor surat" />
+                <label class="label">Nomor Surat</label>
+                <input v-model="letterNumber" class="input" placeholder="Opsional" />
               </div>
               <div v-if="supervisorIds.length > 1" class="w-56">
-                <label class="label">Guru Pembimbing (Surat Penugasan)</label>
+                <label class="label">Penugasan Surat</label>
                 <select v-model="assignmentSupervisorId" class="input">
                   <option v-for="t in teachers.filter((x) => supervisorIds.includes(x.id))" :key="t.id" :value="t.id">
                     {{ t.fullName }}
@@ -449,7 +449,8 @@ watch(
                 :disabled="generatingLetter !== ''"
                 @click="generateLetter('PENGANTAR')"
               >
-                {{ generatingLetter === 'PENGANTAR' ? 'Menggenerate...' : 'Generate Surat Pengantar' }}
+                <LoadingSpinner v-if="generatingLetter === 'PENGANTAR'" inline />
+                Pengantar
               </button>
               <button
                 class="btn-primary"
@@ -457,16 +458,17 @@ watch(
                 :title="supervisorIds.length === 0 ? 'Tetapkan guru pembimbing dahulu' : ''"
                 @click="generateLetter('PENUGASAN')"
               >
-                {{ generatingLetter === 'PENUGASAN' ? 'Menggenerate...' : 'Generate Surat Penugasan' }}
+                <LoadingSpinner v-if="generatingLetter === 'PENUGASAN'" inline />
+                Penugasan
               </button>
             </div>
 
             <div class="mt-4">
               <div class="mb-2 flex items-center justify-between">
-                <p class="text-sm font-medium text-gray-700">Surat Terbit Kelompok Ini</p>
+                <p class="text-sm font-medium text-gray-700">Surat Terbit</p>
                 <button class="text-sm text-primary-600 hover:underline" @click="loadGroupLetters(detailData.id)">Muat Ulang</button>
               </div>
-              <div v-if="lettersLoading" class="text-sm text-gray-500">Memuat…</div>
+              <div v-if="lettersLoading" class="loading" />
               <table v-else class="w-full text-sm">
                 <thead>
                   <tr class="text-left text-gray-500">
@@ -486,7 +488,7 @@ watch(
                     </td>
                   </tr>
                   <tr v-if="groupLetters.length === 0">
-                    <td colspan="4" class="py-3 text-center text-gray-400">Belum ada surat diterbitkan.</td>
+                    <td colspan="4" class="py-3 text-center text-gray-400">Belum ada surat.</td>
                   </tr>
                 </tbody>
               </table>
@@ -495,22 +497,23 @@ watch(
 
           <!-- Info DUDI -->
           <div v-if="detailData.company?.mentors && detailData.company.mentors.length > 0" class="border-t pt-3">
-            <h4 class="mb-1 font-medium text-gray-700">Penugasan DUDI Permanen</h4>
-            <p class="mb-2 text-xs text-gray-500">Mentor perusahaan otomatis ditugaskan saat kelompok dibuat. Ubah di sini bila perlu.</p>
+            <h4 class="mb-1 font-medium text-gray-700">Penugasan DUDI</h4>
             <div v-for="mentor in detailData.company.mentors" :key="mentor.userId" class="mb-2 flex items-center gap-3 text-sm">
               <input type="checkbox" :checked="dudiAssignments.some(x => x.dudiUserId === mentor.userId)" @change="toggleDudi(mentor.userId, ($event.target as HTMLInputElement).checked)" />
               <span>{{ mentor.fullName }} <span class="font-mono text-gray-500">({{ mentor.user?.username ?? '-' }})</span></span>
               <label v-if="dudiAssignments.some(x => x.dudiUserId === mentor.userId)" class="ml-auto"><input type="radio" name="primaryDudi" :checked="dudiAssignments.find(x => x.dudiUserId === mentor.userId)?.isPrimary" @change="setPrimaryDudi(mentor.userId)" /> Utama</label>
             </div>
-            <button class="btn-primary mt-2" :disabled="savingDudi" @click="saveDudiAssignments">{{ savingDudi ? 'Menyimpan...' : 'Simpan Penugasan DUDI' }}</button>
+            <button class="btn-primary mt-2" :disabled="savingDudi" @click="saveDudiAssignments">
+              <LoadingSpinner v-if="savingDudi" inline />
+              {{ savingDudi ? 'Menyimpan…' : 'Simpan Penugasan DUDI' }}
+            </button>
           </div>
           <div v-else class="border-t pt-3">
-            <p class="text-sm text-amber-600">Belum ada akun DUDI yang ditautkan ke perusahaan ini.</p>
+            <p class="text-sm text-amber-600">Akun DUDI belum ditautkan ke perusahaan ini.</p>
           </div>
 
           <div class="border-t pt-3">
-            <h4 class="mb-2 font-medium text-gray-700">Anggota Kelompok ({{ detailData.members?.length ?? 0 }})</h4>
-            <p class="mb-2 text-xs text-gray-500">Klik "Buat Password" untuk generate password baru bagi anggota.</p>
+            <h4 class="mb-2 font-medium text-gray-700">Anggota ({{ detailData.members?.length ?? 0 }})</h4>
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-gray-500">
@@ -523,8 +526,8 @@ watch(
               <tbody>
                 <tr v-for="m in detailData.members ?? []" :key="m.userId" class="border-t">
                   <td>
-                    <span v-if="m.isLeader" class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Ketua</span>
-                    <span v-else class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Anggota</span>
+                    <span v-if="m.isLeader" class="badge bg-amber-100 text-amber-700">Ketua</span>
+                    <span v-else class="badge bg-gray-100 text-gray-600">Anggota</span>
                   </td>
                   <td>{{ m.user?.studentProfile?.fullName ?? m.user?.username ?? '-' }}</td>
                   <td class="font-mono">{{ m.user?.username ?? '-' }}</td>
@@ -539,27 +542,28 @@ watch(
             </table>
           </div>
         </template>
-      </div>
-    </div>
+    </Modal>
 
     <!-- Modal Hapus Kelompok -->
-    <div v-if="confirmDelete" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 w-full max-w-md space-y-4">
-        <h3 class="text-lg font-semibold text-gray-800">Hapus Kelompok</h3>
-        <p class="text-sm text-gray-600">
-          Apakah Anda yakin ingin menghapus kelompok <strong>{{ confirmDelete.name }}</strong> ({{ confirmDelete.code }})?
-          <br /><br />
-          <span class="font-medium text-red-600">Semua akun anggota kelompok ini juga akan dihapus.</span>
-          <br />
-          Aksi ini tidak dapat dibatalkan.
-        </p>
-        <div class="flex justify-end gap-3">
-          <button class="btn-secondary" :disabled="creating" @click="cancelDelete">Batal</button>
-          <button class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50" :disabled="creating" @click="doDelete">
-            {{ creating ? 'Menghapus...' : 'Ya, Hapus Semua' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      :open="!!confirmDelete"
+      title="Hapus Kelompok"
+      size="sm"
+      :busy="creating"
+      @close="cancelDelete"
+    >
+      <p class="text-sm text-gray-600">
+        Hapus <strong>{{ confirmDelete?.name }}</strong> ({{ confirmDelete?.code }})?
+        <br /><br />
+        <span class="font-medium text-red-600">Semua akun anggota juga dihapus. Tidak dapat dibatalkan.</span>
+      </p>
+      <template #footer>
+        <button class="btn-secondary" :disabled="creating" @click="cancelDelete">Batal</button>
+        <button class="btn-danger" :disabled="creating" @click="doDelete">
+          <LoadingSpinner v-if="creating" inline />
+          {{ creating ? 'Menghapus…' : 'Hapus Semua' }}
+        </button>
+      </template>
+    </Modal>
   </div>
 </template>

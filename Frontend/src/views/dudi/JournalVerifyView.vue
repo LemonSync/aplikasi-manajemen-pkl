@@ -32,7 +32,7 @@ onMounted(load);
     <section class="card">
       <h2 class="mb-1 text-lg font-semibold text-gray-800">Konfirmasi Jurnal Siswa</h2>
       <p class="mb-4 text-sm text-gray-500">Hanya jurnal dari kelompok di perusahaan Anda yang ditampilkan.</p>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead><tr><th>Tanggal</th><th>Siswa</th><th>Kelompok</th><th>Kegiatan</th><th>Status</th><th></th></tr></thead>
         <tbody>

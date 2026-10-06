@@ -79,7 +79,7 @@ onMounted(load);
       <p class="mb-4 text-sm text-gray-500">
         Konfirmasi kehadiran harian siswa yang menjalankan PKL di perusahaan Anda.
       </p>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>

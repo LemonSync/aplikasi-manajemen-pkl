@@ -89,16 +89,11 @@ watch(
     <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Jadwal Masa Fase PKL per Gelombang</h2>
-      <p class="mb-4 text-sm text-gray-500">
-        Atur tanggal mulai &amp; selesai untuk setiap masa: pra-pendaftaran, pendaftaran ulang,
-        PKL, dan pasca-PKL. Fase yang sedang aktif (sesuai tanggal hari ini) akan ditampilkan
-        sebagai panduan siswa dan admin.
-      </p>
+      <h2 class="mb-2 text-lg font-semibold text-gray-800">Jadwal Fase PKL</h2>
 
       <div class="mb-4">
         <span class="label">Gelombang</span>
-        <p class="text-sm font-medium text-gray-700">{{ activeCohortName }} (dipilih di header)</p>
+        <p class="text-sm font-medium text-gray-700">{{ activeCohortName }}</p>
       </div>
 
       <div v-if="currentPhase" class="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
@@ -106,7 +101,7 @@ watch(
         <strong>{{ PHASES.find((p) => p.value === currentPhase)?.label ?? currentPhase }}</strong>
       </div>
 
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>

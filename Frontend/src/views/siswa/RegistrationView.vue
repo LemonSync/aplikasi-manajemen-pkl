@@ -267,7 +267,7 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="loading" class="card text-sm text-gray-500">Memuat data...</div>
+    <div v-if="loading" class="loading" />
 
     <template v-else>
       <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>

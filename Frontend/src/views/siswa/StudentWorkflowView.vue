@@ -250,7 +250,7 @@ onMounted(load);
 
 <template>
   <div v-if="loading" class="mx-auto max-w-4xl space-y-6">
-    <div class="card text-sm text-gray-500">Memuat status workflow...</div>
+    <div class="loading" />
   </div>
 
   <div v-else-if="error && !status" class="mx-auto max-w-4xl space-y-6">

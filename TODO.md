@@ -677,3 +677,44 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] **5 view tanpa scoping sekarang ikut konteks:** VerifyPenerimaanView, VerifyDaftarUlangView, DocumentsView (`documentService.list(status, type, cohortId)`), ComplaintMonitorView (`complaintService.list({ cohortId })`), UsersView (client-side: `inActiveCohort = !u.cohortId || u.cohortId === activeCohortId` → akun staf null-cohort selalu tampil, siswa/ketua difilter per gelombang; count tab dari base sama)
 - [x] Tidak diubah: AuditLogs, Companies, Industri (data master global); MasterSiswa/Groups form/Registrations create-form tetap punya pilihan gelombang sendiri bila butuh input lintas gelombang
 - [x] Verifikasi: npx tsc --noEmit (backend) + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-cohort-scoping.ts` **9/9 assertion OK** (skema query + document list + complaint list per cohort, tanpa cohortId = semua) lalu dihapus
+
+## UI/UX Refresh: Sharp, Modal, Loading (2026-10-04)
+
+**Permintaan:** border radius 0, animasi loading, semua proses lihat/buka/form pakai modal, trim teks yang tidak berguna.
+
+- [x] **Design system** (`assets/styles/main.css`): `* { border-radius: 0 !important }` global (override semua `rounded-*` di template lama); class komponen dibersihkan (btn/card/input/badge tanpa rounded); keyframes `fade-in`/`slide-up`/`spin`; class baru `.loading` (spinner CSS border), `.skeleton` (pulse), `.modal-overlay`/`.modal-panel` (animasi + ukuran sm/md/lg/xl), `.route-progress`
+- [x] **Komponen baru:** `components/Modal.vue` (Teleport, ESC + klik backdrop, header/body/footer slot, prop busy, animasi slide-up), `components/LoadingSpinner.vue` (SVG spinner, inline/centered), `components/SkeletonTable.vue` (baris skeleton tabel)
+- [x] **AppLayout:** progress bar animasi saat pindah halaman; header dirapikan (label "Gelombang" & suffix status dihapus, phase label di user info dihapus); modal Ganti Password → `<Modal>` + spinner di tombol simpan
+- [x] **LoginView:** spinner SVG di tombol Masuk saat loading
+- [x] **Loading sweep (~25 view):** semua `Memuat...` text → `.loading` spinner CSS / `SkeletonTable` / `LoadingSpinner` (admin, siswa, guru, dudi)
+- [x] **Modal-ization (semua proses lihat/buka/form):**
+  - AttendanceMonitorView: drill-down inline 3 level (kelas→kelompok→rincian siswa) → **2 modal berlapis** (modal kelas berisi tabel kelompok+siswa; klik siswa → modal rincian absensi + peta lokasi)
+  - GradeRecapView: drill-down inline → modal per kelas (kelompok + tabel nilai)
+  - ComplaintMonitorView: expand inline → modal detail + balasan + tutup pengaduan
+  - DocumentsView / VerifyDaftarUlangView / VerifyPenerimaanView: verifikasi inline di tabel (input catatan di baris) → **klik baris → modal review** (info + catatan + Setujui/Tolak + Unduh; VerifyPenerimaan: modal juga memuat detail kelompok & perusahaan via getDetail)
+  - AuditLogsView: klik baris → modal detail (metadata JSON pretty-print)
+  - CompaniesView: form tambah inline card → modal + tombol "Tambah"
+  - AnnouncementsView: form inline → modal "Buat"
+  - CohortsView: form edit/tambah inline → modal
+  - StudentsView: form Tambah User inline → modal; 4 modal ad-hoc (Data PKL, Reset Password, Kredensial Ketua, Hapus) → `<Modal>` component
+  - GroupsView: modal Detail Kelompok + Hapus → `<Modal>` component
+  - RegistrationsView: modal Detail → `<Modal>` component
+  - StudentRegistryView: modal Pemetaan Excel + Tambah Siswa → `<Modal>` component
+- [x] **Trim teks verbose:** paragraf penjelasan panjang dihapus/dipendekkan (RegistrationsView, VerifyPenerimaan/VerifyDaftarUlang "Surat balasan dari perusahaan…", GroupsView, PhaseScheduleView "Atur tanggal mulai…", StudentRegistryView warning hapus baris + hint "dipilih di header", ComplaintMonitorView "Gelombang aktif di header", DashboardView welcome, UsersView empty-state & hint KETUA); label "(dipilih di header)" dihapus
+- [x] **Attendance summary fix ikut gelombang (bonus):** `attendanceService.summary` FE signature + panggilan di AttendanceMonitorView kini kirim `cohortId` (backend sudah mendukung) — kartu summary konsisten dengan tabel
+- [x] Catatan: `npm run lint` frontend gagal **sebelum perubahan ini** — ESLint 9 butuh `eslint.config.js` (project masih pakai format lama); bukan regresi dari sesi ini
+- [x] Verifikasi: npx vue-tsc --noEmit + npx vite build hijau (179 modul, chunk Modal/LoadingSpinner/SkeletonTable terbentuk)
+
+## UI/UX Redesign: Tema Ink + Sidebar Baru (2026-10-04)
+
+**Permintaan:** desain ulang lebih bagus dengan style sendiri — tema bebas, tetap loading + border radius 0, sidebar kurang cantik.
+
+- [x] **Palette baru** (`tailwind.config.js`): primary → **indigo** (bukan biru), skala warna **ink** (slate gelap) untuk sidebar/teks; font **Inter** (600–800) di-load via Google Fonts di `index.html`; judul "Manajemen PKL · SMKN 9 Medan"
+- [x] **Design system** (`main.css`) ulang: btn dengan shadow + active translate (tombol terasa "klik"), kartu `shadow-panel` crisp, input focus indigo, label uppercase micro, **tabel dengan thead uppercase abu + hover baris**, skeleton **shimmer gradient** (bukan pulse), modal overlay blur + header/footer bg-ink-50 + pop shadow, scrollbar tipis, `::selection` indigo, focus ring global, `.route-progress` gradient indigo
+- [x] **`components/AppIcon.vue`** baru: komponen ikon stroke feather-style (28 nama ikon: grid, bell, megaphone, calendar, book, users, briefcase, chart, shield, dll.)
+- [x] **Sidebar baru** (`AppLayout.vue`): latar **ink-900 gelap**, brand block (monogram "P" indigo + nama sekolah), menu **digrup per section** (Beranda / Siswa / Guru / Verifikasi / Data / Sistem / DUDI) dengan label section micro-kaps, tiap item **berikon + hover translate**, **indikator aktif** bar biru di kiri + bg white/10, nav scrollable + footer versi; label dipendekkan ("Surat Penerimaan", "Master Siswa" dst.)
+- [x] **Header baru**: sticky + backdrop-blur putih, judul bold, cohort select ringkas, tombol Ganti Password dengan ikon lock, **user chip** (avatar inisial kotak indigo + nama + role + tombol logout ikon)
+- [x] **Login page redesign**: split panel — kiri gelap (ink-900) berisi brand + headline + 3 fitur berikon + aksen blur indigo; kanan form bersih; brand kecil di mobile
+- [x] **Dashboard redesign**: hero card gelap (gradient blur indigo) berisi sapaan + badge role/fase/gelombang, 3 kartu statistik berikon berwarna (status/role/fase), peringatan password default dengan ikon
+- [x] StatusBadge & view lain otomatis ikut upgrade via class global (badge uppercase micro, tabel baru); tetap **border radius 0** + semua animasi loading sebelumnya
+- [x] Verifikasi: npx vue-tsc --noEmit + npx vite build hijau (181 modul, chunk AppIcon terbentuk)

@@ -112,7 +112,7 @@ onMounted(load);
         keempatnya tidak dapat diubah.
       </p>
 
-      <div v-if="loading" class="text-sm text-gray-500">Memuat data...</div>
+      <div v-if="loading" class="loading" />
       <template v-else>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>

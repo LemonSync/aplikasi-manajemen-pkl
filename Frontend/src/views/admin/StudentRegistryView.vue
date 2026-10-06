@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { studentRegistryService, type StudentRegistryRecord, type StudentRegistryImportResult } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
 const cohortStore = useCohortStore();
 // Mengikuti konteks gelombang global di header.
@@ -257,9 +259,8 @@ watch(
           <h2 class="text-lg font-semibold text-gray-800">Master Siswa ({{ students.length }} data)</h2>
           <button class="btn-primary" @click="openAdd">+ Tambah Siswa</button>
         </div>
-        <p class="text-xs text-gray-500">Menghapus baris menyembunyikan master (pulih via import ulang) sekaligus menghapus permanen akun siswa beserta absensi, nilai, jurnal, surat &amp; keanggotaannya.</p>
       </div>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <div v-else-if="students.length === 0" class="text-sm text-gray-400">Belum ada data. Import Excel atau klik "+ Tambah Siswa".</div>
       <table v-else class="table">
         <thead>
@@ -288,64 +289,53 @@ watch(
     </div>
 
     <!-- Modal Pemetaan Header Kolom Excel -->
-    <div v-if="showMapping" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div class="card w-full max-w-lg space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-800">Pemetaan Kolom Excel</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="closeMapping">&times;</button>
+    <Modal :open="showMapping" title="Pemetaan Kolom Excel" size="md" :busy="importing" @close="closeMapping">
+      <p class="mb-3 text-sm text-gray-500">
+        <span class="font-medium text-gray-700">{{ selectedFile?.name }}</span>
+      </p>
+
+      <div v-if="mapHeaders.length > 0">
+        <p class="label">Header terdeteksi</p>
+        <div class="flex flex-wrap gap-1.5">
+          <span v-for="(h, i) in mapHeaders" :key="i" class="bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{{ h }}</span>
         </div>
+      </div>
 
-        <p class="text-sm text-gray-500">
-          File: <span class="font-medium text-gray-700">{{ selectedFile?.name }}</span><br />
-          Isi nama header kolom di bawah ini sesuai baris pertama file Excel (bisa berbeda antar file).
-        </p>
-
-        <div v-if="mapHeaders.length > 0">
-          <p class="label">Header terdeteksi di file</p>
-          <div class="flex flex-wrap gap-1.5">
-            <span v-for="(h, i) in mapHeaders" :key="i" class="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{{ h }}</span>
-          </div>
-        </div>
-
+      <div class="mt-3 space-y-3">
         <div>
-          <label class="label">Nama header kolom NISN</label>
+          <label class="label">Kolom NISN</label>
           <input v-model="mapForm.nisn" class="input" placeholder="NISN" />
         </div>
         <div>
-          <label class="label">Nama header kolom Nama Siswa</label>
+          <label class="label">Kolom Nama Siswa</label>
           <input v-model="mapForm.fullName" class="input" placeholder="Nama Lengkap" />
         </div>
         <div>
-          <label class="label">Nama header kolom Kelas Siswa</label>
+          <label class="label">Kolom Kelas Siswa</label>
           <input v-model="mapForm.className" class="input" placeholder="Kelas" />
         </div>
         <div>
-          <label class="label">Nama header kolom Jurusan (opsional)</label>
+          <label class="label">Kolom Jurusan (opsional)</label>
           <input v-model="mapForm.majorCode" class="input" placeholder="Jurusan" />
-          <p class="mt-1 text-xs text-gray-400">Kosongkan jika file tidak punya kolom jurusan — jurusan dideteksi otomatis dari kelas.</p>
-        </div>
-
-        <div class="flex justify-end gap-2 border-t pt-3">
-          <button class="btn-secondary" :disabled="importing" @click="closeMapping">Batal</button>
-          <button class="btn-primary" :disabled="importing" @click="confirmImport">
-            {{ importing ? 'Mengimport...' : 'Import Sekarang' }}
-          </button>
+          <p class="mt-1 text-xs text-gray-400">Kosongkan = deteksi otomatis dari kelas.</p>
         </div>
       </div>
-    </div>
+
+      <template #footer>
+        <button class="btn-secondary" :disabled="importing" @click="closeMapping">Batal</button>
+        <button class="btn-primary" :disabled="importing" @click="confirmImport">
+          <LoadingSpinner v-if="importing" inline />
+          {{ importing ? 'Mengimport…' : 'Import' }}
+        </button>
+      </template>
+    </Modal>
 
     <!-- Modal Tambah Siswa -->
-    <div v-if="showAdd" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div class="card w-full max-w-md space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-800">Tambah Siswa ke Master</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="closeAdd">&times;</button>
-        </div>
-
+    <Modal :open="showAdd" title="Tambah Siswa" size="sm" :busy="adding" @close="closeAdd">
+      <div class="space-y-3">
         <div>
           <label class="label">Gelombang</label>
           <p class="text-sm font-medium text-gray-700">{{ activeCohortName }}</p>
-          <p class="mt-1 text-xs text-gray-400">Mengikuti gelombang yang dipilih di header.</p>
         </div>
 
         <div>
@@ -364,19 +354,19 @@ watch(
             <input v-model="addForm.className" class="input" placeholder="XII-RPL-2" />
           </div>
           <div>
-            <label class="label">Jurusan (opsional)</label>
+            <label class="label">Jurusan</label>
             <input v-model="addForm.majorCode" class="input" placeholder="RPL" />
-            <p class="mt-1 text-xs text-gray-400">Kosongkan = deteksi otomatis dari kelas.</p>
           </div>
         </div>
-
-        <div class="flex justify-end gap-2 border-t pt-3">
-          <button class="btn-secondary" :disabled="adding" @click="closeAdd">Batal</button>
-          <button class="btn-primary" :disabled="adding" @click="submitAdd">
-            {{ adding ? 'Menyimpan...' : 'Tambah Siswa' }}
-          </button>
-        </div>
       </div>
-    </div>
+
+      <template #footer>
+        <button class="btn-secondary" :disabled="adding" @click="closeAdd">Batal</button>
+        <button class="btn-primary" :disabled="adding" @click="submitAdd">
+          <LoadingSpinner v-if="adding" inline />
+          {{ adding ? 'Menyimpan…' : 'Tambah Siswa' }}
+        </button>
+      </template>
+    </Modal>
   </div>
 </template>

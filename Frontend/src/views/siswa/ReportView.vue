@@ -82,7 +82,7 @@ onMounted(load);
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Dokumen Laporan Akhir</h2>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>
@@ -112,7 +112,7 @@ onMounted(load);
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Rekap Nilai Saya</h2>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>

@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue';
 import { registrationService, type GroupedRegistration } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 
 const groups = ref<GroupedRegistration[]>([]);
@@ -107,15 +108,11 @@ watch(
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="text-lg font-semibold text-gray-800">Pendaftaran per Kelompok</h2>
-          <p class="text-sm text-gray-500">
-            Pendaftaran digrup otomatis berdasarkan nama kelompok yang sama. Klik Detail untuk melihat data
-            identitas (NISN, nama, no. HP, kelas) dan tempat PKL yang diisi akun ketua saat Fase 1.
-            Data mengikuti gelombang yang dipilih di header.
-          </p>
+          <p class="text-sm text-gray-500">Digrup otomatis berdasarkan nama kelompok.</p>
         </div>
       </div>
 
-      <div v-if="loading" class="text-sm text-gray-500">Memuat...</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
           <tr>
@@ -148,22 +145,22 @@ watch(
     </div>
 
     <!-- Modal Detail Kelompok -->
-    <div v-if="showDetail && detailGroup" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="card mx-4 max-h-[85vh] w-full max-w-4xl space-y-4 overflow-y-auto">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-800">Detail Kelompok: {{ detailGroup.groupName }}</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="closeDetail">&times;</button>
-        </div>
-
+    <Modal
+      :open="showDetail && !!detailGroup"
+      :title="`Detail Kelompok: ${detailGroup?.groupName ?? ''}`"
+      size="xl"
+      @close="closeDetail"
+    >
+      <template v-if="detailGroup">
         <!-- Tempat PKL (diisi ketua saat Fase 1) -->
-        <div class="rounded-lg bg-gray-50 p-3">
-          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Tempat PKL (Fase 1)</h4>
+        <div class="mb-4 bg-gray-50 p-3">
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Tempat PKL</h4>
           <div class="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
             <div><span class="text-gray-500">Perusahaan:</span> {{ detailGroup.companyName }}</div>
             <div><span class="text-gray-500">Kota:</span> {{ detailGroup.companyCity ?? '-' }}</div>
             <div class="sm:col-span-2"><span class="text-gray-500">Alamat:</span> {{ detailGroup.companyAddress }}</div>
             <div><span class="text-gray-500">Bidang Industri:</span> {{ detailGroup.companyIndustry ?? '-' }}</div>
-            <div><span class="text-gray-500">Telepon Perusahaan:</span> {{ detailGroup.companyPhone ?? '-' }}</div>
+            <div><span class="text-gray-500">Telepon:</span> {{ detailGroup.companyPhone ?? '-' }}</div>
             <div><span class="text-gray-500">Website:</span> {{ detailGroup.companyWebsite ?? '-' }}</div>
             <div>
               <span class="text-gray-500">Kontak (WA):</span>
@@ -178,7 +175,7 @@ watch(
         <div
           v-for="r in detailGroup.registrations"
           :key="r.id"
-          class="rounded-lg border border-gray-200 p-3"
+          class="mb-3 border border-gray-200 p-3 last:mb-0"
         >
           <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2 text-sm">
@@ -213,7 +210,7 @@ watch(
           </div>
 
           <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Anggota Kelompok ({{ r.members.length }})
+            Anggota ({{ r.members.length }})
           </h4>
           <table class="w-full text-sm">
             <thead>
@@ -230,10 +227,7 @@ watch(
                 <td class="py-1.5 font-mono text-xs">{{ m.nisn ?? '-' }}</td>
                 <td class="py-1.5">
                   {{ m.fullName }}
-                  <span
-                    v-if="m.isLeader"
-                    class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
-                  >Ketua</span>
+                  <span v-if="m.isLeader" class="ml-1 badge bg-amber-100 text-amber-700">Ketua</span>
                 </td>
                 <td class="py-1.5">{{ m.className ?? '-' }}</td>
                 <td class="whitespace-nowrap py-1.5">{{ m.phone ?? '-' }}</td>
@@ -245,7 +239,7 @@ watch(
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
+      </template>
+    </Modal>
   </div>
 </template>

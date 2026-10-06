@@ -2,6 +2,9 @@
 import { onMounted, ref } from 'vue';
 import { companyService, masterService, type MasterLookups } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
+import Modal from '@/components/Modal.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import SkeletonTable from '@/components/SkeletonTable.vue';
 
 interface CompanyItem {
   id: string;
@@ -18,6 +21,7 @@ const saving = ref(false);
 const error = ref('');
 const success = ref('');
 const search = ref('');
+const showForm = ref(false);
 
 const form = ref({
   name: '',
@@ -42,6 +46,11 @@ const load = async (): Promise<void> => {
   }
 };
 
+const openForm = (): void => {
+  form.value = { name: '', address: '', industryId: '', phone: '', email: '', city: '' };
+  showForm.value = true;
+};
+
 const create = async (): Promise<void> => {
   saving.value = true;
   error.value = '';
@@ -55,8 +64,8 @@ const create = async (): Promise<void> => {
       email: form.value.email || null,
       city: form.value.city || null,
     });
-    success.value = 'Perusahaan berhasil ditambahkan.';
-    form.value = { name: '', address: '', industryId: '', phone: '', email: '', city: '' };
+    success.value = 'Perusahaan ditambahkan.';
+    showForm.value = false;
     await load();
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -70,13 +79,45 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
+    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
+    <div v-if="success" class="bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Tambah Perusahaan (DUDI)</h2>
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-800">Perusahaan (DUDI)</h2>
+        <div class="flex gap-2">
+          <input v-model="search" class="input" placeholder="Cari…" @keyup.enter="load" />
+          <button class="btn-primary" @click="openForm">Tambah</button>
+        </div>
+      </div>
+
+      <SkeletonTable v-if="loading" :rows="6" :cols="4" />
+      <table v-else class="table">
+        <thead>
+          <tr>
+            <th>Nama</th>
+            <th>Industri</th>
+            <th>Kota</th>
+            <th>Alamat</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="c in companies" :key="c.id">
+            <td class="font-medium">{{ c.name }}</td>
+            <td>{{ c.industry?.name ?? '-' }}</td>
+            <td>{{ c.city ?? '-' }}</td>
+            <td class="text-gray-500">{{ c.address ?? '-' }}</td>
+          </tr>
+          <tr v-if="companies.length === 0">
+            <td colspan="4" class="py-4 text-center text-gray-400">Belum ada data.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <Modal :open="showForm" title="Tambah Perusahaan" size="md" :busy="saving" @close="showForm = false">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
+        <div class="sm:col-span-2">
           <label class="label">Nama Perusahaan</label>
           <input v-model="form.name" class="input" required />
         </div>
@@ -104,41 +145,14 @@ onMounted(load);
           <input v-model="form.address" class="input" />
         </div>
       </div>
-      <button class="btn-primary mt-4" :disabled="saving || !form.name" @click="create">
-        {{ saving ? 'Menyimpan…' : 'Tambah Perusahaan' }}
-      </button>
-    </div>
 
-    <div class="card">
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800">Daftar Perusahaan</h2>
-        <div class="flex gap-2">
-          <input v-model="search" class="input" placeholder="Cari perusahaan…" @keyup.enter="load" />
-          <button class="btn-secondary" @click="load">Cari</button>
-        </div>
-      </div>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
-      <table v-else class="table">
-        <thead>
-          <tr>
-            <th>Nama</th>
-            <th>Industri</th>
-            <th>Kota</th>
-            <th>Alamat</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="c in companies" :key="c.id">
-            <td class="font-medium">{{ c.name }}</td>
-            <td>{{ c.industry?.name ?? '-' }}</td>
-            <td>{{ c.city ?? '-' }}</td>
-            <td class="text-gray-500">{{ c.address ?? '-' }}</td>
-          </tr>
-          <tr v-if="companies.length === 0">
-            <td colspan="4" class="py-4 text-center text-gray-400">Belum ada data.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <template #footer>
+        <button class="btn-secondary" :disabled="saving" @click="showForm = false">Batal</button>
+        <button class="btn-primary" :disabled="saving || !form.name" @click="create">
+          <LoadingSpinner v-if="saving" inline />
+          {{ saving ? 'Menyimpan…' : 'Simpan' }}
+        </button>
+      </template>
+    </Modal>
   </div>
 </template>

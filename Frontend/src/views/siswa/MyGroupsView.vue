@@ -57,7 +57,7 @@ onMounted(load);
 
 <template>
   <div class="space-y-4">
-    <div v-if="loading" class="card text-sm text-gray-500">Memuat…</div>
+    <div v-if="loading" class="loading" />
     <div v-else-if="error" class="card text-sm text-red-600">{{ error }}</div>
     <div v-else-if="groups.length === 0" class="card text-sm text-gray-500">
       Anda belum tergabung dalam kelompok PKL mana pun.

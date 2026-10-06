@@ -2,50 +2,208 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Border radius global: 0 (sharp UI) */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
 @layer base {
   html {
     @apply antialiased;
   }
   body {
-    @apply bg-gray-100 text-gray-800;
+    @apply bg-ink-100 font-sans text-ink-800;
+  }
+  ::selection {
+    @apply bg-primary-600 text-white;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+  /* Scrollbar tipis */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.ink.300') transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ink-300;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
   }
 }
 
 @layer components {
+  /* ============ Tombol ============ */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700;
+    @apply btn bg-primary-600 text-white shadow-sm hover:bg-primary-700 hover:shadow-md active:translate-y-px;
   }
   .btn-secondary {
-    @apply btn bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50;
+    @apply btn border border-ink-200 bg-white text-ink-700 hover:border-ink-300 hover:bg-ink-50 active:translate-y-px;
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700 active:translate-y-px;
   }
   .btn-success {
-    @apply btn bg-emerald-600 text-white hover:bg-emerald-700;
+    @apply btn bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:translate-y-px;
   }
+
+  /* ============ Kartu ============ */
   .card {
-    @apply rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200;
+    @apply bg-white p-5 shadow-panel;
   }
+  .card-hover {
+    @apply transition-shadow hover:shadow-panel-hover;
+  }
+
+  /* ============ Form ============ */
   .input {
-    @apply w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100;
+    @apply w-full border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none transition placeholder:text-ink-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100;
   }
   .label {
-    @apply mb-1 block text-sm font-medium text-gray-700;
+    @apply mb-1 block text-[13px] font-semibold uppercase tracking-wide text-ink-600;
   }
+
+  /* ============ Badge status: micro-kaps, rata ============ */
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider;
   }
+
+  /* ============ Tabel ============ */
   .table {
     @apply w-full text-left text-sm;
   }
-  .table th {
-    @apply border-b border-gray-200 px-3 py-2 font-semibold text-gray-600;
+  .table thead th {
+    @apply border-b border-ink-200 bg-ink-50 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-500;
   }
-  .table td {
-    @apply border-b border-gray-100 px-3 py-2;
+  .table tbody td {
+    @apply border-b border-ink-100 px-3 py-2.5 text-ink-700;
   }
+  .table tbody tr {
+    @apply transition-colors;
+  }
+  .table tbody tr:hover {
+    @apply bg-ink-50/60;
+  }
+
+  /* ============ Sidebar ============ */
+  .side-link {
+    @apply relative flex items-center gap-3 px-3 py-2 text-[13px] font-medium text-ink-300 transition-all duration-150 hover:bg-white/5 hover:text-white;
+  }
+  .side-link-active {
+    @apply bg-white/10 text-white;
+  }
+  .side-link-active::before {
+    content: '';
+    @apply absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 bg-primary-400;
+  }
+  .side-section {
+    @apply px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-ink-500;
+  }
+
+  /* ============ Animasi ============ */
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out both;
+  }
+  .animate-slide-up {
+    animation: slide-up 0.25s ease-out both;
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply relative overflow-hidden bg-ink-200;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* ============ Loading spinner ============ */
+  .loading {
+    @apply flex justify-center py-8;
+  }
+  .loading::before {
+    content: '';
+    @apply block h-6 w-6 border-2 border-ink-200 border-t-primary-600;
+    animation: spin 0.7s linear infinite;
+  }
+
+  /* ============ Modal ============ */
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 p-4 backdrop-blur-[2px];
+    animation: fade-in 0.15s ease-out both;
+  }
+  .modal-panel {
+    @apply flex max-h-[90vh] w-full flex-col border border-ink-200 bg-white shadow-pop;
+    animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .modal-panel[data-size='sm'] {
+    @apply max-w-sm;
+  }
+  .modal-panel[data-size='md'] {
+    @apply max-w-lg;
+  }
+  .modal-panel[data-size='lg'] {
+    @apply max-w-2xl;
+  }
+  .modal-panel[data-size='xl'] {
+    @apply max-w-4xl;
+  }
+  .modal-header {
+    @apply flex items-center justify-between border-b border-ink-100 bg-ink-50/70 px-5 py-3.5;
+  }
+  .modal-body {
+    @apply flex-1 overflow-y-auto px-5 py-4;
+  }
+  .modal-footer {
+    @apply flex items-center justify-end gap-3 border-t border-ink-100 bg-ink-50/70 px-5 py-3.5;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Progress bar pindah halaman */
+.route-progress {
+  @apply fixed left-0 top-0 z-[60] h-0.5 bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300;
 }

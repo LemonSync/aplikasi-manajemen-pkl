@@ -80,7 +80,7 @@ onMounted(load);
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Riwayat Jurnal</h2>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
+      <div v-if="loading" class="loading" />
       <div v-else class="space-y-3">
         <div v-for="j in journals" :key="j.id" class="rounded-lg border border-gray-200 p-4">
           <div class="mb-1 flex items-center justify-between">

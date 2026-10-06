@@ -413,7 +413,7 @@ export const attendanceService = {
     const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  async summary(params?: { groupId?: string; from?: string; to?: string }): Promise<Array<{ status: string; _count: number }>> {
+  async summary(params?: { groupId?: string; from?: string; to?: string; cohortId?: string }): Promise<Array<{ status: string; _count: number }>> {
     const { data } = await http.get<ApiResponse<Array<{ status: string; _count: number }>>>('/attendances/summary', { params: params ?? {} });
     return data.data;
   },

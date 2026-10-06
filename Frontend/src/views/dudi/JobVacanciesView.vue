@@ -70,7 +70,7 @@ onMounted(load);
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Daftar Loker</h2>
-      <div v-if="loading" class="text-sm text-gray-500">Memuat…</div>
+      <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead><tr><th>Judul</th><th>Lokasi</th><th>Status</th><th>Tanggal</th></tr></thead>
         <tbody>
