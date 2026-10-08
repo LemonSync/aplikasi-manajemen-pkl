@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { letterService } from '../services/letter.service';
+import { finalReportService } from '../services/finalReport.service';
 import { phaseService } from '../services/phase.service';
 import { studentWorkflowService } from '../services/studentWorkflow.service';
 import { groupRepository } from '../repositories/group.repository';
@@ -23,6 +24,16 @@ import { DocumentType, Role, StudentPhase } from '@prisma/client';
  * Controller Fase 4 — surat penugasan, surat pengantar, surat penarikan + transisi fase.
  */
 export class Phase4Controller {
+  /**
+   * GET /api/phase4/final-report — SISWA: unduh Laporan Hasil PKL kelompoknya
+   * (diterbitkan otomatis satu kali setelah masa PKL selesai).
+   */
+  downloadFinalReport = asyncHandler(async (req: Request, res: Response) => {
+    const { buffer, filename } = await finalReportService.getOrCreateForStudent(req.user!.sub);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(buffer);
+  });
   /** POST /api/phase4/assignment-letter — Admin: generate surat penugasan pembimbing */
   generateAssignmentLetter = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as GeneratePenugasanLetterDTO;

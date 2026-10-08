@@ -5,12 +5,10 @@ import {
   masterService,
   registrationService,
   userManageService,
-  phase4Service,
   pickActiveCohortId,
   type MasterLookups,
   type Registration,
   type UserRecord,
-  type LetterRecord,
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -75,13 +73,6 @@ const teachers = ref<TeacherOption[]>([]);
 const supervisorIds = ref<string[]>([]);
 const savingSupervisors = ref(false);
 
-// Surat per kelompok
-const groupLetters = ref<LetterRecord[]>([]);
-const generatingLetter = ref('');
-const letterNumber = ref('');
-const assignmentSupervisorId = ref('');
-const lettersLoading = ref(false);
-
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
@@ -92,7 +83,9 @@ const load = async (): Promise<void> => {
 
     const [g, regs, teachersData] = await Promise.all([
       groupService.list(cohortStore.activeCohortId ? { cohortId: cohortStore.activeCohortId } : {}),
-      registrationService.list('DISETUJUI'),
+      // Hanya pendaftaran yang belum membentuk kelompok (yang sudah jadi
+      // kelompok tidak boleh dipilih ulang — registrationId Group unik).
+      registrationService.list('DISETUJUI', { withoutGroup: true }),
       userManageService.list({ role: 'GURU_PEMBIMBING' }),
     ]);
     groups.value = g.items as unknown as GroupItem[];
@@ -157,8 +150,6 @@ const openDetail = async (g: GroupItem): Promise<void> => {
     credentials.value = credentialData;
     dudiAssignments.value = detailData.value.dudiMentors?.map((m) => ({ dudiUserId: m.dudiUserId, isPrimary: m.isPrimary })) ?? [];
     supervisorIds.value = detailData.value.supervisors?.map((s) => s.userId) ?? [];
-    assignmentSupervisorId.value = supervisorIds.value[0] ?? '';
-    void loadGroupLetters(g.id);
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -208,63 +199,6 @@ const closeDetail = (): void => {
   credentials.value = null;
   resetPasswordResult.value = null;
   supervisorIds.value = [];
-  groupLetters.value = [];
-  letterNumber.value = '';
-  assignmentSupervisorId.value = '';
-};
-
-// --- Surat kelompok ---
-const loadGroupLetters = async (groupId: string): Promise<void> => {
-  lettersLoading.value = true;
-  try {
-    groupLetters.value = await phase4Service.listLetters({ groupId });
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    lettersLoading.value = false;
-  }
-};
-
-const generateLetter = async (kind: 'PENGANTAR' | 'PENUGASAN'): Promise<void> => {
-  if (!detailData.value) return;
-  generatingLetter.value = kind;
-  error.value = '';
-  success.value = '';
-  try {
-    if (kind === 'PENGANTAR') {
-      await phase4Service.generateIntroductionLetter({
-        groupId: detailData.value.id,
-        number: letterNumber.value || null,
-      });
-      success.value = 'Surat Pengantar PKL berhasil digenerate.';
-    } else {
-      const supervisorId = assignmentSupervisorId.value || supervisorIds.value[0] || '';
-      if (!supervisorId) {
-        error.value = 'Tetapkan guru pembimbing terlebih dahulu untuk Surat Penugasan.';
-        return;
-      }
-      await phase4Service.generateAssignmentLetter({
-        groupId: detailData.value.id,
-        supervisorId,
-        number: letterNumber.value || null,
-      });
-      success.value = 'Surat Penugasan PKL berhasil digenerate.';
-    }
-    letterNumber.value = '';
-    await loadGroupLetters(detailData.value.id);
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    generatingLetter.value = '';
-  }
-};
-
-const downloadLetter = async (letter: LetterRecord): Promise<void> => {
-  try {
-    await phase4Service.downloadLetter(letter);
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  }
 };
 
 const resetPassword = async (userId: string): Promise<void> => {
@@ -387,7 +321,7 @@ watch(
       :open="!!showDetail"
       :title="`Detail Kelompok: ${showDetail?.name ?? ''}`"
       size="xl"
-      :busy="savingSupervisors || savingDudi || generatingLetter !== ''"
+      :busy="savingSupervisors || savingDudi"
       @close="closeDetail"
     >
         <div v-if="loadingDetail" class="loading" />
@@ -426,73 +360,12 @@ watch(
             </button>
           </div>
 
-          <!-- Surat PKL -->
+          <!-- Petunjuk surat -->
           <div class="border-t pt-3">
-            <h4 class="mb-2 font-medium text-gray-700">Surat PKL</h4>
-            <div class="flex flex-wrap items-end gap-3">
-              <div class="w-48">
-                <label class="label">Nomor Surat</label>
-                <input v-model="letterNumber" class="input" placeholder="Opsional" />
-              </div>
-              <div v-if="supervisorIds.length > 1" class="w-56">
-                <label class="label">Penugasan Surat</label>
-                <select v-model="assignmentSupervisorId" class="input">
-                  <option v-for="t in teachers.filter((x) => supervisorIds.includes(x.id))" :key="t.id" :value="t.id">
-                    {{ t.fullName }}
-                  </option>
-                </select>
-              </div>
-            </div>
-            <div class="mt-3 flex flex-wrap gap-2">
-              <button
-                class="btn-primary"
-                :disabled="generatingLetter !== ''"
-                @click="generateLetter('PENGANTAR')"
-              >
-                <LoadingSpinner v-if="generatingLetter === 'PENGANTAR'" inline />
-                Pengantar
-              </button>
-              <button
-                class="btn-primary"
-                :disabled="generatingLetter !== '' || supervisorIds.length === 0"
-                :title="supervisorIds.length === 0 ? 'Tetapkan guru pembimbing dahulu' : ''"
-                @click="generateLetter('PENUGASAN')"
-              >
-                <LoadingSpinner v-if="generatingLetter === 'PENUGASAN'" inline />
-                Penugasan
-              </button>
-            </div>
-
-            <div class="mt-4">
-              <div class="mb-2 flex items-center justify-between">
-                <p class="text-sm font-medium text-gray-700">Surat Terbit</p>
-                <button class="text-sm text-primary-600 hover:underline" @click="loadGroupLetters(detailData.id)">Muat Ulang</button>
-              </div>
-              <div v-if="lettersLoading" class="loading" />
-              <table v-else class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-gray-500">
-                    <th>Tanggal</th>
-                    <th>Jenis</th>
-                    <th>Nomor</th>
-                    <th class="text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="l in groupLetters" :key="l.id" class="border-t">
-                    <td>{{ new Date(l.createdAt).toLocaleDateString('id-ID') }}</td>
-                    <td>{{ l.type }}</td>
-                    <td class="font-mono">{{ l.number ?? '-' }}</td>
-                    <td class="text-right">
-                      <button class="text-primary-600 hover:underline" @click="downloadLetter(l)">Unduh</button>
-                    </td>
-                  </tr>
-                  <tr v-if="groupLetters.length === 0">
-                    <td colspan="4" class="py-3 text-center text-gray-400">Belum ada surat.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <p class="text-sm text-gray-500">
+              Untuk membuat <b>Surat Pengantar / Penugasan / Penarikan</b> dan melihat daftar
+              <b>Surat Terbit</b>, buka menu <b>Surat</b> di sidebar.
+            </p>
           </div>
 
           <!-- Info DUDI -->

@@ -11,6 +11,7 @@ export interface CompanyInput {
   phone?: string | null;
   email?: string | null;
   city?: string | null;
+  website?: string | null;
 }
 
 /**
@@ -40,6 +41,7 @@ export class CompanyService {
       phone: input.phone ?? null,
       email: input.email ?? null,
       city: input.city ?? null,
+      website: input.website ?? null,
       ...(input.industryId ? { industry: { connect: { id: input.industryId } } } : {}),
     });
     await auditService.record({
@@ -60,6 +62,7 @@ export class CompanyService {
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
       ...(input.city !== undefined ? { city: input.city } : {}),
+      ...(input.website !== undefined ? { website: input.website } : {}),
       ...(input.industryId ? { industry: { connect: { id: input.industryId } } } : {}),
     });
   }

@@ -7,6 +7,7 @@ import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const TABS = [
   { key: 'ALL', label: 'Semua' },
@@ -29,9 +30,39 @@ const success = ref('');
 const activeTab = ref<TabKey>('ALL');
 const cohortStore = useCohortStore();
 
+// --- Filter ---
+const search = ref('');
+const statusFilter = ref(''); // '' = semua | AKTIF | NONAKTIF
+const cohortFilter = ref('ACTIVE'); // ACTIVE = gelombang aktif (default) | ALL | <cohortId>
+
+const activeUser = (u: UserRecord): boolean => (statusFilter.value === 'AKTIF' ? u.isActive : statusFilter.value === 'NONAKTIF' ? !u.isActive : true);
+
 // Akun tanpa gelombang (staf: ADMIN/GURU/DUDI global) selalu tampil;
-// akun ber-gelombang (SISWA/KETUA) tampil jika cocok dengan gelombang aktif di header.
-const inActiveCohort = (u: UserRecord): boolean => !u.cohortId || u.cohortId === cohortStore.activeCohortId;
+// akun ber-gelombang (SISWA/KETUA) tampil jika cocok dengan pilihan filter gelombang.
+const inActiveCohort = (u: UserRecord): boolean => {
+  if (cohortFilter.value === 'ALL') return true;
+  if (cohortFilter.value === 'ACTIVE') return !u.cohortId || u.cohortId === cohortStore.activeCohortId;
+  return !u.cohortId || u.cohortId === cohortFilter.value;
+};
+
+const matchesSearch = (u: UserRecord): boolean => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [
+    u.username,
+    u.identifier ?? '',
+    u.email ?? '',
+    u.studentProfile?.fullName ?? '',
+    u.studentProfile?.nisn ?? '',
+    u.teacherProfile?.fullName ?? '',
+    u.teacherProfile?.nip ?? '',
+    u.companyMentor?.fullName ?? '',
+    u.companyMentor?.company?.name ?? '',
+  ]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(q);
+};
 
 const matchesTab = (u: UserRecord, tab: TabKey): boolean => {
   if (tab === 'ALL') return true;
@@ -39,9 +70,13 @@ const matchesTab = (u: UserRecord, tab: TabKey): boolean => {
   return u.role === tab;
 };
 
+const baseFiltered = computed(() =>
+  users.value.filter((u) => inActiveCohort(u) && activeUser(u) && matchesSearch(u))
+);
+
 const counts = computed<Record<TabKey, number>>(() => {
   const out = { ALL: 0, SISWA: 0, ADMIN: 0, GURU_PEMBIMBING: 0, DUDI: 0, KETUA: 0 } as Record<TabKey, number>;
-  for (const u of users.value.filter(inActiveCohort)) {
+  for (const u of baseFiltered.value) {
     out.ALL++;
     if (u.role === 'SISWA') out.SISWA++;
     if (u.role === 'ADMIN' || u.role === 'SUPER_ADMIN') out.ADMIN++;
@@ -53,15 +88,23 @@ const counts = computed<Record<TabKey, number>>(() => {
 });
 
 const filteredUsers = computed(() =>
-  users.value.filter((u) => inActiveCohort(u) && matchesTab(u, activeTab.value))
+  baseFiltered.value.filter((u) => matchesTab(u, activeTab.value))
+);
+
+const hasActiveFilter = computed(
+  () => search.value.trim() !== '' || statusFilter.value !== '' || cohortFilter.value !== 'ACTIVE'
 );
 
 const emptyText = computed(() => {
+  if (hasActiveFilter.value) return 'Tidak ada user yang cocok dengan filter.';
   const tab = TABS.find((t) => t.key === activeTab.value);
   return activeTab.value === 'ALL'
     ? 'Belum ada user.'
     : `Belum ada akun ${tab?.label ?? ''}.`;
 });
+
+const userFullName = (u: UserRecord): string =>
+  u.studentProfile?.fullName ?? u.teacherProfile?.fullName ?? u.companyMentor?.fullName ?? '-';
 
 const showForm = ref(false);
 const form = ref({ username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '', companyId: '' });
@@ -294,6 +337,36 @@ onMounted(load);
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Daftar User</h2>
 
+      <!-- Filter: cari + status + gelombang -->
+      <div class="mb-4 flex flex-wrap items-center gap-3">
+        <div class="relative min-w-64 flex-1">
+          <input
+            v-model="search"
+            class="input pl-9"
+            type="search"
+            placeholder="Cari username, nama, NISN/NIP, atau perusahaan…"
+          />
+          <AppIcon name="search" :size="16" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        </div>
+        <select v-model="statusFilter" class="input w-auto" aria-label="Filter status">
+          <option value="">Semua Status</option>
+          <option value="AKTIF">Aktif</option>
+          <option value="NONAKTIF">Nonaktif</option>
+        </select>
+        <select v-model="cohortFilter" class="input w-auto" aria-label="Filter gelombang">
+          <option value="ACTIVE">Gelombang Aktif</option>
+          <option value="ALL">Semua Gelombang</option>
+          <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+        <button
+          v-if="hasActiveFilter"
+          class="text-sm text-primary-600 hover:underline"
+          @click="search = ''; statusFilter = ''; cohortFilter = 'ACTIVE'"
+        >
+          Reset
+        </button>
+      </div>
+
       <div class="mb-4 flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1">
         <button
           v-for="t in TABS"
@@ -319,8 +392,11 @@ onMounted(load);
         <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead>
         <tbody>
           <tr v-for="u in filteredUsers" :key="u.id">
-            <td>{{ u.username }}</td>
-            <td>{{ u.studentProfile?.fullName ?? u.teacherProfile?.fullName ?? '-' }}</td>
+            <td>
+              <span class="font-mono">{{ u.username }}</span>
+              <p v-if="u.companyMentor" class="text-xs text-gray-400">{{ u.companyMentor.company?.name ?? '' }}</p>
+            </td>
+            <td>{{ userFullName(u) }}</td>
             <td>{{ u.role }}</td>
             <td><StatusBadge :status="u.isActive ? 'AKTIF' : 'NONAKTIF'" /></td>
             <td class="flex gap-2">

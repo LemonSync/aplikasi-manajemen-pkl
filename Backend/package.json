@@ -28,30 +28,30 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "bcryptjs": "^3.0.3",
+    "bcryptjs": "^2.4.3",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
-    "docxtemplater": "^3.71.0",
+    "docxtemplater": "^3.70.0",
     "dotenv": "^16.4.7",
-    "express": "^4.22.3",
+    "express": "^4.21.2",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "jszip": "^3.10.2",
-    "morgan": "^1.12.1",
-    "multer": "^2.4.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.3.0",
     "mysql2": "^3.11.5",
-    "pdfkit": "^0.20.2",
+    "pdfkit": "^0.15.2",
     "pizzip": "^3.2.0",
     "uuid": "^11.0.3",
     "winston": "^3.17.0",
     "xlsx": "^0.18.5",
-    "zod": "^4.6.5"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
-    "@types/bcryptjs": "^3.0.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",
@@ -67,8 +67,8 @@
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.2",
     "prisma": "^5.22.0",
-    "tsx": "^4.23.15",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.11"
+    "vitest": "^2.1.8"
   }
 }

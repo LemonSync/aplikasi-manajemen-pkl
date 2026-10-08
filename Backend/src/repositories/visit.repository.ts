@@ -17,6 +17,18 @@ export class VisitRepository {
     return prisma.visit.findUnique({ where: { id } });
   }
 
+  /** Kunjungan lengkap dengan relasi (untuk response API). */
+  async findWithRelations(id: string): Promise<VisitWithRelations | null> {
+    return prisma.visit.findUnique({
+      where: { id },
+      include: {
+        supervisor: { select: { id: true, username: true } },
+        group: { select: { id: true, name: true } },
+        company: { select: { id: true, name: true } },
+      },
+    });
+  }
+
   async create(data: Prisma.VisitCreateInput): Promise<Visit> {
     return prisma.visit.create({ data });
   }

@@ -1,10 +1,20 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, Visit, VisitStatus, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { visitRepository } from '../repositories/visit.repository';
 import { groupRepository } from '../repositories/group.repository';
 import { auditService } from './audit.service';
-import { ForbiddenError, NotFoundError } from '../errors/AppError';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
+import { readStoredFile, saveBuffer } from '../utils/storage';
+
+/** File foto bukti dari multer (memoryStorage). */
+export interface VisitPhotoFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+}
+
+const PHOTO_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png']);
 
 export interface CreateVisitInput {
   groupId?: string | null;
@@ -72,18 +82,130 @@ export class VisitService {
     return visitRepository.findById(visit.id);
   }
 
-  /** Tandai kunjungan telah dilakukan + catatan hasil. */
-  async markVisited(supervisorId: string, id: string, note?: string, role?: string) {
+  /** Akses: admin bebas; guru hanya kunjungan miliknya sendiri. */
+  private assertAccess(visit: Visit, actorId: string, role?: string): void {
+    const isStaff = role === Role.ADMIN || role === Role.SUPER_ADMIN || role === Role.KEPALA_SEKOLAH;
+    if (!isStaff && visit.supervisorId !== actorId) throw new ForbiddenError(MESSAGES.SCOPE);
+  }
+
+  /** Kunjungan yang sudah SELESAI/BATAL bersifat final dan tidak bisa diubah. */
+  private assertEditable(visit: Visit): void {
+    if (visit.status === VisitStatus.SELESAI || visit.status === VisitStatus.BATAL) {
+      throw new BadRequestError('Kunjungan sudah ditutup dan tidak dapat diubah lagi');
+    }
+  }
+
+  /**
+   * Tandai monitoring SELESAI — wajib menyertakan bukti foto
+   * (JPG/PNG) yang disimpan ke storage + database.
+   */
+  async complete(
+    supervisorId: string,
+    id: string,
+    opts: { note?: string | null; role?: string; file?: VisitPhotoFile }
+  ) {
     const visit = await visitRepository.findById(id);
     if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
-    // Admin boleh menutup kunjungan siapa pun; guru hanya kunjungannya sendiri.
-    const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
-    if (!isAdmin && visit.supervisorId !== supervisorId) throw new ForbiddenError(MESSAGES.SCOPE);
+    this.assertAccess(visit, supervisorId, opts.role);
+    this.assertEditable(visit);
 
-    return visitRepository.update(id, {
+    const file = opts.file;
+    if (!file || file.buffer.length === 0) {
+      throw new BadRequestError('Bukti foto wajib diunggah untuk menandai monitoring selesai');
+    }
+    if (!PHOTO_MIME.has(file.mimetype)) {
+      throw new BadRequestError('Bukti foto harus berupa gambar JPG atau PNG');
+    }
+
+    const ext = file.mimetype === 'image/png' ? 'png' : 'jpg';
+    const filename = `${visit.id}-${Date.now()}.${ext}`;
+    const { relativePath } = saveBuffer('visits', filename, file.buffer);
+
+    await visitRepository.update(id, {
+      status: VisitStatus.SELESAI,
       visitedAt: new Date(),
-      ...(note !== undefined ? { note: note ?? null } : {}),
+      photoPath: relativePath,
+      photoName: file.originalname || filename,
+      ...(opts.note !== undefined ? { note: opts.note ?? null } : {}),
     });
+    return visitRepository.findWithRelations(id);
+  }
+
+  /** Tunda kunjungan — jadwal baru boleh diisi (mundurkan waktu kunjungan). */
+  async postpone(
+    supervisorId: string,
+    id: string,
+    opts: { note?: string | null; scheduledAt?: string | null; role?: string }
+  ) {
+    const visit = await visitRepository.findById(id);
+    if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    this.assertAccess(visit, supervisorId, opts.role);
+    this.assertEditable(visit);
+
+    await visitRepository.update(id, {
+      status: VisitStatus.TERTUNDA,
+      ...(opts.note !== undefined ? { note: opts.note ?? null } : {}),
+      ...(opts.scheduledAt ? { scheduledAt: new Date(opts.scheduledAt) } : {}),
+    });
+    return visitRepository.findWithRelations(id);
+  }
+
+  /** Lanjutkan kembali kunjungan yang tertunda (jadwal baru boleh diisi). */
+  async resume(
+    supervisorId: string,
+    id: string,
+    opts: { scheduledAt?: string | null; role?: string }
+  ) {
+    const visit = await visitRepository.findById(id);
+    if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    this.assertAccess(visit, supervisorId, opts.role);
+    this.assertEditable(visit);
+
+    await visitRepository.update(id, {
+      status: VisitStatus.TERJADWAL,
+      ...(opts.scheduledAt ? { scheduledAt: new Date(opts.scheduledAt) } : {}),
+    });
+    return visitRepository.findWithRelations(id);
+  }
+
+  /** Batal kunjungan (dengan alasan/catatan). */
+  async cancel(supervisorId: string, id: string, opts: { note?: string | null; role?: string }) {
+    const visit = await visitRepository.findById(id);
+    if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    this.assertAccess(visit, supervisorId, opts.role);
+    this.assertEditable(visit);
+
+    await visitRepository.update(id, {
+      status: VisitStatus.BATAL,
+      ...(opts.note !== undefined ? { note: opts.note ?? null } : {}),
+    });
+    return visitRepository.findWithRelations(id);
+  }
+
+  /** Ambil bukti foto monitoring — guru/admin, atau siswa anggota kelompoknya. */
+  async getPhoto(
+    actorId: string,
+    id: string,
+    role: string
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const visit = await visitRepository.findById(id);
+    if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
+
+    if (role === Role.SISWA) {
+      if (!visit.groupId) throw new ForbiddenError(MESSAGES.SCOPE);
+      const member = await prisma.groupMember.findFirst({
+        where: { groupId: visit.groupId, userId: actorId },
+        select: { id: true },
+      });
+      if (!member) throw new ForbiddenError(MESSAGES.SCOPE);
+    } else {
+      this.assertAccess(visit, actorId, role);
+    }
+
+    if (!visit.photoPath) throw new NotFoundError('Foto bukti monitoring belum ada');
+    const buffer = readStoredFile(visit.photoPath);
+    if (!buffer) throw new NotFoundError('File foto tidak ditemukan di storage');
+    return { buffer, filename: visit.photoName || 'bukti-monitoring.jpg' };
   }
 
   /** Kunjungan milik guru. */

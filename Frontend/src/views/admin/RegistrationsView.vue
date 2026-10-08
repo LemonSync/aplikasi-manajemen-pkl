@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { registrationService, type GroupedRegistration } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -13,6 +13,46 @@ const success = ref('');
 
 // Filter gelombang: mengikuti konteks global di header (cohortStore).
 const cohortStore = useCohortStore();
+
+// Filter status tinjauan. Default: belum ditinjau (menunggu verifikasi).
+type StatusFilter = 'DIAJUKAN' | 'DISETUJUI' | 'DITOLAK' | 'SEMUA';
+const statusFilter = ref<StatusFilter>('DIAJUKAN');
+
+const FILTER_TABS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'DIAJUKAN', label: 'Belum Ditinjau' },
+  { value: 'DISETUJUI', label: 'Disetujui' },
+  { value: 'DITOLAK', label: 'Ditolak' },
+  { value: 'SEMUA', label: 'Semua' },
+];
+
+const EMPTY_TEXT: Record<StatusFilter, string> = {
+  DIAJUKAN: 'Tidak ada pendaftaran yang menunggu ditinjau.',
+  DISETUJUI: 'Belum ada pendaftaran yang disetujui.',
+  DITOLAK: 'Tidak ada pendaftaran yang ditolak.',
+  SEMUA: 'Belum ada pendaftaran.',
+};
+
+/** Jumlah pendaftaran per status (lintas gelombang aktif). */
+const statusCounts = computed<Record<StatusFilter, number>>(() => {
+  const counts: Record<StatusFilter, number> = { DIAJUKAN: 0, DISETUJUI: 0, DITOLAK: 0, SEMUA: 0 };
+  for (const g of groups.value) {
+    for (const r of g.registrations) {
+      if (r.status === 'DIAJUKAN') counts.DIAJUKAN += 1;
+      else if (r.status === 'DISETUJUI') counts.DISETUJUI += 1;
+      else if (r.status === 'DITOLAK') counts.DITOLAK += 1;
+      counts.SEMUA += 1;
+    }
+  }
+  return counts;
+});
+
+/** Kelompok yang disaring sesuai tab status; kelompok tanpa kecocokan disembunyikan. */
+const filteredGroups = computed<GroupedRegistration[]>(() => {
+  if (statusFilter.value === 'SEMUA') return groups.value;
+  return groups.value
+    .map((g) => ({ ...g, registrations: g.registrations.filter((r) => r.status === statusFilter.value) }))
+    .filter((g) => g.registrations.length > 0);
+});
 
 const showDetail = ref(false);
 const detailGroup = ref<GroupedRegistration | null>(null);
@@ -33,7 +73,8 @@ const load = async (): Promise<void> => {
 };
 
 const openDetail = (g: GroupedRegistration): void => {
-  detailGroup.value = g;
+  // Selalu tampilkan versi lengkap (semua status), bukan salinan tersaring.
+  detailGroup.value = groups.value.find((x) => x.groupName === g.groupName) ?? g;
   rejectingId.value = null;
   rejectNote.value = '';
   showDetail.value = true;
@@ -110,6 +151,29 @@ watch(
           <h2 class="text-lg font-semibold text-gray-800">Pendaftaran per Kelompok</h2>
           <p class="text-sm text-gray-500">Digrup otomatis berdasarkan nama kelompok.</p>
         </div>
+
+        <!-- Filter status tinjauan -->
+        <div class="flex flex-wrap gap-1 border border-gray-200 p-1">
+          <button
+            v-for="tab in FILTER_TABS"
+            :key="tab.value"
+            class="px-3 py-1.5 text-xs font-semibold transition"
+            :class="
+              statusFilter === tab.value
+                ? 'bg-primary-600 text-white'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+            "
+            @click="statusFilter = tab.value"
+          >
+            {{ tab.label }}
+            <span
+              class="ml-1 font-mono"
+              :class="statusFilter === tab.value ? 'text-primary-100' : 'text-gray-400'"
+            >
+              {{ statusCounts[tab.value] }}
+            </span>
+          </button>
+        </div>
       </div>
 
       <div v-if="loading" class="loading" />
@@ -124,21 +188,27 @@ watch(
           </tr>
         </thead>
         <tbody>
-          <tr v-for="g in groups" :key="g.groupName">
+          <tr v-for="g in filteredGroups" :key="g.groupName">
             <td class="font-medium">{{ g.groupName }}</td>
             <td>{{ g.companyName }}</td>
-            <td>{{ g.approvedCount }}/{{ g.totalCount }} disetujui</td>
+            <td>
+              <span v-if="statusFilter !== 'SEMUA'">
+                {{ g.registrations.length }} ditampilkan ·
+              </span>
+              {{ g.approvedCount }}/{{ g.totalCount }} disetujui
+            </td>
             <td>
               <span v-if="g.approvedCount === g.totalCount" class="text-xs font-medium text-emerald-600">Lengkap</span>
               <span v-else-if="g.approvedCount > 0" class="text-xs font-medium text-amber-600">Sebagian</span>
-              <span v-else class="text-xs text-gray-400">Menunggu</span>
+              <span v-else-if="g.registrations.some((r) => r.status === 'DITOLAK')" class="text-xs font-medium text-red-600">Ditolak</span>
+              <span v-else class="text-xs font-medium text-amber-600">Menunggu</span>
             </td>
             <td class="text-right">
               <button class="text-primary-600 hover:underline" @click="openDetail(g)">Detail</button>
             </td>
           </tr>
-          <tr v-if="groups.length === 0">
-            <td colspan="5" class="py-4 text-center text-gray-400">Belum ada pendaftaran.</td>
+          <tr v-if="filteredGroups.length === 0 && !loading">
+            <td colspan="5" class="py-4 text-center text-gray-400">{{ EMPTY_TEXT[statusFilter] }}</td>
           </tr>
         </tbody>
       </table>

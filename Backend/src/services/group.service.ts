@@ -44,6 +44,7 @@ export class GroupService {
   async create(input: CreateGroupInput, actorId: string, ctx: { ipAddress?: string; userAgent?: string }) {
     let memberUserIds = [...input.memberUserIds];
     let studentLeaderId: string | null = null;
+    let skippedNoNisn = 0;
     let registration: Awaited<ReturnType<typeof registrationRepository.findById>> | null = null;
 
     if (input.registrationId) {
@@ -53,14 +54,47 @@ export class GroupService {
       // Auto-create akun untuk anggota yang belum punya akun
       for (const member of registration.members) {
         if (!member.userId) {
-          // NISN wajib ada untuk username
-          let nisn = member.nisn;
-          if (!nisn) {
-            nisn = `NISN${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+          // Username & identifier akun siswa WAJIB = NISN persis (10 digit).
+          // Tanpa NISN valid tidak dibuat akun — tanpa lagi fallback
+          // `NISN<timestamp><acak>` yang membuat username tidak sama dengan NISN.
+          const nisn = member.nisn;
+          if (!nisn || !/^\d{10}$/.test(nisn)) {
+            skippedNoNisn += 1;
+            continue;
           }
-          // Pastikan nisn unik
-          while (await prisma.studentProfile.findFirst({ where: { nisn } })) {
-            nisn = `NISN${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+
+          // Pakai akun yang sudah memegang NISN ini — jangan buat duplikat.
+          const existing = await prisma.user.findFirst({
+            where: {
+              role: Role.SISWA,
+              OR: [{ username: nisn }, { studentProfile: { nisn } }],
+            },
+            select: { id: true, username: true, deletedAt: true, cohortId: true },
+          });
+          if (existing) {
+            if (existing.username !== nisn) {
+              try {
+                await prisma.user.update({
+                  where: { id: existing.id },
+                  data: { username: nisn, identifier: nisn },
+                });
+              } catch {
+                // Username sudah dipakai akun lain — biarkan.
+              }
+            }
+            if (existing.deletedAt || (input.cohortId && existing.cohortId !== input.cohortId)) {
+              await prisma.user.update({
+                where: { id: existing.id },
+                data: { deletedAt: null, ...(input.cohortId ? { cohortId: input.cohortId } : {}) },
+              });
+            }
+            await prisma.registrationMember.update({
+              where: { id: member.id },
+              data: { userId: existing.id },
+            });
+            if (member.isLeader) studentLeaderId = existing.id;
+            if (!memberUserIds.includes(existing.id)) memberUserIds.push(existing.id);
+            continue;
           }
 
           const plainPassword = generateRandomPassword();
@@ -99,6 +133,11 @@ export class GroupService {
     }
 
     if (memberUserIds.length === 0) {
+      if (skippedNoNisn > 0) {
+        throw new BadRequestError(
+          `${skippedNoNisn} anggota belum memiliki NISN (10 digit) — lengkapi data NISN pada pendaftaran sebelum membentuk kelompok`
+        );
+      }
       throw new BadRequestError(MESSAGES.GROUP.NO_MEMBERS);
     }
 
@@ -147,6 +186,7 @@ export class GroupService {
         industry: registration.companyIndustry,
         phone: registration.companyPhone,
         city: registration.companyCity,
+        website: registration.companyWebsite,
       });
       companyId = company.id;
     }
@@ -231,7 +271,13 @@ export class GroupService {
   /** Cari/buat company dari data pendaftaran (dipakai saat pembentukan kelompok). */
   private async resolveCompanyFromRegistration(
     name: string,
-    info: { address?: string | null; industry?: string | null; phone?: string | null; city?: string | null }
+    info: {
+      address?: string | null;
+      industry?: string | null;
+      phone?: string | null;
+      city?: string | null;
+      website?: string | null;
+    }
   ) {
     const existing = await companyRepository.findByName(name);
     if (existing) return existing;
@@ -247,6 +293,7 @@ export class GroupService {
       address: info.address ?? null,
       phone: info.phone ?? null,
       city: info.city ?? null,
+      website: info.website ?? null,
       ...(industryId ? { industry: { connect: { id: industryId } } } : {}),
     });
   }
@@ -466,6 +513,25 @@ export class GroupService {
 
       // Hapus kelompok
       await tx.group.delete({ where: { id } });
+
+      // Pendaftaran sumber kelompok ikut dinonaktifkan: tanpa kelompok,
+      // persetujuan itu jadi yatim dan terus mengikat NISN anggota lewat
+      // assertMembersFree — padahal akun siswa ikut terhapus di bawah ini,
+      // sehingga NISN tidak bisa didaftarkan ulang oleh ketua baru.
+      // (Hapus kelompok = batalkan pendaftaran yang membentuknya; restart
+      // bersih lewat pendaftaran baru.)
+      if (group.registrationId) {
+        await tx.registration.updateMany({
+          where: {
+            id: group.registrationId,
+            deletedAt: null,
+            status: {
+              in: [RegistrationStatus.DRAFT, RegistrationStatus.DIAJUKAN, RegistrationStatus.DISETUJUI],
+            },
+          },
+          data: { deletedAt: new Date() },
+        });
+      }
 
       // Hapus akun semua anggota
       for (const userId of memberUserIds) {

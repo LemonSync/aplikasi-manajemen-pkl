@@ -41,16 +41,57 @@ export class VisitController {
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 
-  /** POST /api/visits/:id/complete */
+  /** POST /api/visits/:id/complete — wajib foto bukti (multipart field "photo") */
   complete = asyncHandler(async (req: Request, res: Response) => {
-    const { note } = req.body as { note?: string };
-    const result = await visitService.markVisited(
+    const file = req.file;
+    const result = await visitService.complete(req.user!.sub, req.params.id as string, {
+      note: (req.body as { note?: string }).note,
+      role: req.user!.role,
+      file: file ? { buffer: file.buffer, mimetype: file.mimetype, originalname: file.originalname } : undefined,
+    });
+    return sendSuccess(res, result, 'Monitoring ditandai selesai dengan bukti foto');
+  });
+
+  /** POST /api/visits/:id/postpone */
+  postpone = asyncHandler(async (req: Request, res: Response) => {
+    const dto = req.body as { note?: string | null; scheduledAt?: string | null };
+    const result = await visitService.postpone(req.user!.sub, req.params.id as string, {
+      ...dto,
+      role: req.user!.role,
+    });
+    return sendSuccess(res, result, 'Monitoring ditunda');
+  });
+
+  /** POST /api/visits/:id/resume */
+  resume = asyncHandler(async (req: Request, res: Response) => {
+    const dto = req.body as { scheduledAt?: string | null };
+    const result = await visitService.resume(req.user!.sub, req.params.id as string, {
+      ...dto,
+      role: req.user!.role,
+    });
+    return sendSuccess(res, result, 'Monitoring dilanjutkan');
+  });
+
+  /** POST /api/visits/:id/cancel */
+  cancel = asyncHandler(async (req: Request, res: Response) => {
+    const dto = req.body as { note?: string | null };
+    const result = await visitService.cancel(req.user!.sub, req.params.id as string, {
+      ...dto,
+      role: req.user!.role,
+    });
+    return sendSuccess(res, result, 'Monitoring dibatalkan');
+  });
+
+  /** GET /api/visits/:id/photo — bukti foto monitoring */
+  photo = asyncHandler(async (req: Request, res: Response) => {
+    const { buffer, filename } = await visitService.getPhoto(
       req.user!.sub,
       req.params.id as string,
-      note,
       req.user!.role
     );
-    return sendSuccess(res, result, 'Kunjungan ditandai selesai');
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Content-Disposition', `inline; filename="${filename.replace(/[^\w.\-]+/g, '_')}"`);
+    return res.send(buffer);
   });
 }
 

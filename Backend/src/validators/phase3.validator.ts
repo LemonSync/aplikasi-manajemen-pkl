@@ -136,6 +136,21 @@ export const markVisitSchema = z.object({
   note: z.string().max(2000).optional().nullable(),
 });
 
+// Tunda kunjungan — jadwal baru boleh diisi (ditunda ke waktu lain)
+export const postponeVisitSchema = z.object({
+  note: z.string().max(2000).optional().nullable(),
+  scheduledAt: z.string().optional().nullable(),
+});
+
+// Lanjutkan kembali kunjungan yang tertunda — jadwal baru boleh diisi
+export const resumeVisitSchema = z.object({
+  scheduledAt: z.string().optional().nullable(),
+});
+
+export const cancelVisitSchema = z.object({
+  note: z.string().max(2000).optional().nullable(),
+});
+
 export const listVisitQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),

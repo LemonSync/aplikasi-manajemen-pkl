@@ -327,6 +327,23 @@ export class DocumentService {
     return file;
   }
 
+  /**
+   * Tandai Surat Permohonan sudah diunduh ketua (gerbang Fase 1 → Fase 2).
+   * Hanya pemimpin pendaftaran yang menandai; unduhan admin/guru diabaikan
+   * karena tidak berarti ketua sudah menerima fisik suratnya.
+   */
+  async markPermohonanDownloaded(registrationId: string, requesterId: string): Promise<void> {
+    const reg = await prisma.registration.findUnique({
+      where: { id: registrationId },
+      select: { leaderId: true, deletedAt: true },
+    });
+    if (!reg || reg.deletedAt || reg.leaderId !== requesterId) return;
+    await prisma.registration.update({
+      where: { id: registrationId },
+      data: { permohonanDownloadedAt: new Date() },
+    });
+  }
+
   async listByOwner(ownerId: string) {
     return documentRepository.findMany({ ownerId });
   }

@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { gradeService, documentService, downloadFile, type GradeRecord, type DocumentRecord } from '@/services/api.service';
+import { computed, onMounted, ref } from 'vue';
+import {
+  gradeService,
+  documentService,
+  downloadFile,
+  phase4Service,
+  type GradeRecord,
+  type DocumentRecord,
+} from '@/services/api.service';
+import { useAuthStore } from '@/stores/auth.store';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
+const auth = useAuthStore();
 const grades = ref<GradeRecord[]>([]);
 const docs = ref<DocumentRecord[]>([]);
 const loading = ref(true);
@@ -12,6 +22,25 @@ const error = ref('');
 const success = ref('');
 
 const selectedFile = ref<File | null>(null);
+
+// Laporan Hasil PKL (dari sekolah) — hanya siswa setelah masa PKL selesai
+const showFinalReport = computed(
+  () => auth.role === 'SISWA' && auth.phase === 'PKL_SELESAI'
+);
+const downloadingReport = ref(false);
+const reportError = ref('');
+
+const downloadFinalReport = async (): Promise<void> => {
+  downloadingReport.value = true;
+  reportError.value = '';
+  try {
+    await phase4Service.downloadFinalReport();
+  } catch (e) {
+    reportError.value = extractErrorMessage(e);
+  } finally {
+    downloadingReport.value = false;
+  }
+};
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -64,12 +93,40 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Unggah Laporan Akhir</h2>
-      <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-      <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
+    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
+    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <!-- Laporan Hasil PKL (Pasca-PKL) -->
+    <div v-if="showFinalReport" class="card border-l-4 border-l-primary-600">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-start gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center bg-primary-50 text-primary-600">
+            <AppIcon name="fileCheck" :size="20" />
+          </div>
+          <div>
+            <p class="text-base font-semibold text-ink-900">Laporan Hasil PKL</p>
+            <p class="text-sm text-ink-500">
+              Rekap absensi, monitoring guru pembimbing, jurnal, dan nilai akhir kelompok Anda.
+            </p>
+            <p v-if="reportError" class="mt-1 text-sm text-red-600">{{ reportError }}</p>
+          </div>
+        </div>
+        <button
+          class="btn-primary shrink-0"
+          :disabled="downloadingReport"
+          @click="downloadFinalReport"
+        >
+          {{ downloadingReport ? 'Menyiapkan…' : 'Unduh Laporan (PDF)' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="mb-1">
+        <h2 class="text-lg font-semibold text-gray-800">Unggah Laporan Akhir</h2>
+        <p class="text-sm text-gray-500">Berkas laporan akhir buatan Anda (PDF) untuk diverifikasi sekolah.</p>
+      </div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
         <div>
           <label class="label">File Laporan Akhir (PDF)</label>
           <input class="input" type="file" accept=".pdf" @change="onFileChange" />

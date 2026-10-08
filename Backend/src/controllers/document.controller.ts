@@ -81,6 +81,11 @@ export class DocumentController {
     const buffer = readStoredFile(activeFile.storedPath);
     if (!buffer) throw new NotFoundError(MESSAGES.DOCUMENT.NOT_UPLOADED);
 
+    // Surat Permohonan yang diunduh ketua membuka gerbang Fase 1 → Fase 2
+    if (doc.type === DocumentType.SURAT_PERMOHONAN && doc.registrationId) {
+      await documentService.markPermohonanDownloaded(doc.registrationId, req.user!.sub);
+    }
+
     res.setHeader('Content-Type', activeFile.mimeType ?? 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${activeFile.originalName}"`);
     return res.send(buffer);

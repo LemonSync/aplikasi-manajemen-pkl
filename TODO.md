@@ -1,6 +1,6 @@
 # TODO.md — Sistem Manajemen PKL SMKN 9 Medan
 
-> Dibuat berdasarkan audit kode.
+> Dibuat berdasarkan `prompt.txt` + audit kode.
 > Status: ✅ Selesai | 🔧 Perlu Fix | ⬜ Belum Dikerjakan
 
 ---
@@ -296,7 +296,7 @@
 
 ---
 
-## Quick Reference: Alur Lengkap
+## Quick Reference: Alur Lengkap dari `prompt.txt`
 
 ```
 Fase 1: PRA-PENDAFTARAN-PKL
@@ -355,7 +355,7 @@ Fase 4: PASCA-PKL
 
 ## Auto-Generate Akun DUDI (2026-10-02)
 
-Spec revisi: akun DUDI dibuat **bersamaan dengan akun siswa di Fase 2** (surat penerimaan disetujui), memakai **username & password acak** — tanpa input nama/no. HP mentor di Fase 1, karena siswa menyerahkan akunnya ke pembimbing perusahaan saat masa PKL.
+Spec `prompt.txt:45` + revisi: akun DUDI dibuat **bersamaan dengan akun siswa di Fase 2** (surat penerimaan disetujui), memakai **username & password acak** — tanpa input nama/no. HP mentor di Fase 1, karena siswa menyerahkan akunnya ke pembimbing perusahaan saat masa PKL.
 
 - [x] `studentWorkflow.service.ensureDudiAccount()`: saat provisioning Fase 2 → buat user `Role.DUDI` username acak `DUDI<6-digit>`, password acak, `mustChangePassword`, `CompanyMentor` (`fullName = "Mentor <nama perusahaan>"`, tanpa HP), `InitialCredential`, lalu `autoAssignDudiMentors` (primary)
 - [x] Idempoten/aman lintas gelombang: bila perusahaan sudah punya akun mentor, pembuatan dilewati (hanya penugasan ke kelompok)
@@ -677,7 +677,6 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] **5 view tanpa scoping sekarang ikut konteks:** VerifyPenerimaanView, VerifyDaftarUlangView, DocumentsView (`documentService.list(status, type, cohortId)`), ComplaintMonitorView (`complaintService.list({ cohortId })`), UsersView (client-side: `inActiveCohort = !u.cohortId || u.cohortId === activeCohortId` → akun staf null-cohort selalu tampil, siswa/ketua difilter per gelombang; count tab dari base sama)
 - [x] Tidak diubah: AuditLogs, Companies, Industri (data master global); MasterSiswa/Groups form/Registrations create-form tetap punya pilihan gelombang sendiri bila butuh input lintas gelombang
 - [x] Verifikasi: npx tsc --noEmit (backend) + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-cohort-scoping.ts` **9/9 assertion OK** (skema query + document list + complaint list per cohort, tanpa cohortId = semua) lalu dihapus
-<<<<<<< HEAD
 
 ## UI/UX Refresh: Sharp, Modal, Loading (2026-10-04)
 
@@ -719,5 +718,132 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] **Dashboard redesign**: hero card gelap (gradient blur indigo) berisi sapaan + badge role/fase/gelombang, 3 kartu statistik berikon berwarna (status/role/fase), peringatan password default dengan ikon
 - [x] StatusBadge & view lain otomatis ikut upgrade via class global (badge uppercase micro, tabel baru); tetap **border radius 0** + semua animasi loading sebelumnya
 - [x] Verifikasi: npx vue-tsc --noEmit + npx vite build hijau (181 modul, chunk AppIcon terbentuk)
-=======
->>>>>>> d8cd88c55daa2f8f8af5391a6120a69658f13a6b
+
+## Filter Status Pendaftaran Admin (2026-10-04)
+
+- [x] RegistrationsView: tab filter status tinjauan — **Belum Ditinjau (default)**, Disetujui, Ditolak, Semua; masing-masing berisi jumlah pendaftarannya
+- [x] Daftar kelompok disaring per pendaftaran (`filteredGroups`); kelompok tanpa kecocokan disembunyikan; empty text per tab ("Tidak ada pendaftaran yang menunggu ditinjau." dst.)
+- [x] Kolom Jumlah menampilkan "n ditampilkan · x/y disetujui" saat filter aktif; kolom Status: Lengkap/Sebagian/Ditolak/Menunggu
+- [x] Modal Detail tetap menampilkan seluruh pendaftaran kelompok (lookup by groupName, bukan salinan tersaring)
+- [x] Verifikasi: npx vue-tsc --noEmit + npx vite build hijau
+
+## Website Perusahaan: Form Ketua → Verifikasi Admin → Data Perusahaan (2026-10-04)
+
+- [x] Backend sudah punya `companyWebsite` di Registration (validator/service/grouped) — tinggal kolom di Company & input di FE
+- [x] **Prisma**: `model Company` += `website String? @db.VarChar(255)`; migration manual `20261007000000_add_company_website` + `prisma migrate deploy` sukses (catatan: `prisma migrate dev` hang non-interaktif & `prisma generate` gagal EPERM di rename DLL karena server dev jalan — types/JS/schema client tetap ter-update lengkap, DLL versi sama; skrip cek runtime `tmp-company-website.ts` 2/2 assertion OK lalu dihapus)
+- [x] **Ketua Fase 1** (`RegistrationView.vue`): input "Website Perusahaan (opsional)" (text/inputmode url, placeholder https://…), state + prefill dari `reg.companyWebsite` + payload ternormalisasi (`trim() || null`)
+- [x] **studentWorkflow.service.ts**: saat Fase 2 membuat Company dari data pendaftaran → `website: registration.companyWebsite`; bila Company sudah ada & belum punya website → lengkapi (update)
+- [x] **Admin CRUD perusahaan**: `master.validator.ts` `createCompanySchema` += `website (max 255, optional)`; `company.service.ts` CompanyInput + create/update persist website
+- [x] **CompaniesView.vue**: kolom tabel Website (link buka tab baru, strip `https://`) + input di modal Tambah; `CompanyItem.website` + colspan/skeleton 5
+- [x] Modal verifikasi RegistrationsView sudah tampil `companyWebsite` (bagian "Website:") — otomatis terisi setelah ketua mengisi
+- [x] Verifikasi: npx tsc --noEmit (backend) + npx vue-tsc --noEmit (frontend) hijau
+
+## Bug: NISN "Sudah Terdaftar" Setelah Akun Ketua Dihapus (2026-10-04)
+
+**SkENARIO:** ketua mendaftarkan NISN → disetujui admin → akun ketua dihapus → ketua baru daftarkan NISN yang sama → error "sudah terdaftar di kelompok" padahal halaman Kelompok kosong; dropdown "Bentuk Kelompok" justru masih menawarkan pendaftaran lamanya (membuat grup dari situ → muncul "tiba-tiba").
+
+- [x] **Akar masalah:** hapus akun (soft delete di `userManage.service.delete`) tidak menyentuh pendaftaran yang dipimpin → pendaftaran yatim DISETUJUI/DIAJUKAN/DRAFT terus mengikat NISN lewat `assertMembersFree`, padahal belum ada Group
+- [x] **Fix 1** (`userManage.service.delete`): transaksi — soft delete user + soft delete pendaftaran `leaderId=user` yang **belum membentuk kelompok** (`group: null`, status DRAFT/DIAJUKAN/DISETUJUI); pendaftaran yang SUDAH jadi kelompok tetap dipertahankan (Group.registration menunjuk ke sana)
+- [x] **Fix 2** (`assertMembersFree`): gerbang baru cek **GroupMember aktif** (by username NISN / studentProfile.nisn) sebagai sumber kebenaran tertinggi + pesan dibedakan: "sudah tergabung kelompok X" (kelompok ada) vs "sudah terdaftar pada pendaftaran … [status, kelompok belum dibentuk]"
+- [x] **Fix 3** (dropdown admin): query `GET /registrations` += param `withoutGroup=true` (validator enum 'true'/'false'); `GroupsView` panggil `registrationService.list('DISETUJUI', { withoutGroup: true })` — pendaftaran yang sudah jadi kelompok tidak bisa dipilih ulang ( Group.registrationId unik → sebelumnya bisa P2002 crash)
+- [x] Bonus: `resolveCompanyFromRegistration` (group.service) ikut menyalin `companyWebsite` ke Company
+- [x] Verifikasi: npx tsc --noEmit + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-orphan-reg-cleanup.ts` 4/4 assertion OK (backfill yatim = 0, data existing sudah bersih — REG DITOLAK/berkelompok) lalu dihapus
+- [x] **Round 2 (urutan kebalik):** user hapus kelompok **setelah** akun ketua dihapus → hook delete-user tidak kejebak (waktu itu kelompok masih ada), REG-2026-0005 LEMONSYNC tetap mengikat NISN 1234567894
+- [x] **Fix 4** (`groupService.delete`): dalam transaksi hapus kelompok, **pendaftaran sumber ikut dinonaktifkan** (unconditional, status DRAFT/DIAJUKAN/DISETUJUI) — tanpa ini pendaftaran jadi yatim: akun siswa ikut terhapus oleh hapus-kelompok tapi NISN tetap terikat pendaftaran, sehingga tidak bisa didaftarkan ulang; "hapus kelompok = batalkan pendaftaran sumber, start bersih"
+- [x] Backfill ulang menangkap REG-2026-0005 (1 pendaftaran yatim → NISN 1234567894 dibebaskan, 0 konflik); skrip `tmp-groupdel-reg-cleanup.ts` 5/5 assertion OK (leader HIDUP + hapus kelompok → reg ikut terhapus) lalu dihapus; npx tsc --noEmit hijau
+
+## Bug Fase 1 Telat: Download Surat Permohonan Dilewati (2026-10-04)
+
+**Skenario:** gelombang sudah masuk Fase 2/3, siswa telat mendaftar di Fase 1 → begitu pendaftaran disetujui, user langsung dialihkan ke Fase 2 (daftar ulang) yang minta Surat Penerimaan — padahal Surat Permohonan belum pernah diunduh, jadi bagaimana bisa dapat Surat Penerimaan dari perusahaan?
+
+- [x] **Prinsip:** Fase 1 hanya dianggap selesai bila pendaftaran **DISETUJUI + Surat Permohonan sudah diunduh** (`isKetuaDownloadSuratPermohonan`); gerbang baru di `checkPhaseCompletion(PRA_PKL)`
+- [x] **Prisma**: `Registration.permohonanDownloadedAt DateTime?` + migration `20261007020000_add_registration_permohonan_downloaded_at` (ALTER + backfill: semua DISETUJUI lama ditandai agar data existing tidak terkunci di Fase 1) — `prisma migrate deploy` OK; generate EPERM di DLL tapi `index.js` (schema runtime inline) + `index.d.ts` ter-update, diverifikasi skrip runtime
+- [x] **Penanda unduh** (`documentService.markPermohonanDownloaded`): dipanggil dari `GET /documents/:id/download` untuk tipe SURAT_PERMOHONAN — hanya bila requester = `registration.leaderId` (unduhan admin/guru diabaikan)
+- [x] **Syarat lengkap** `PRA_PKL`: leader registration `DISETUJUI` DAN (`permohonanDownloadedAt` terisi ATAU kelompok sudah terbentuk — jalur dropdown admin tidak mengunci ketua); status DIAJUKAN = belum selesai (nunggu admin); path anggota (regMember/groupMember) tidak diubah
+- [x] **Interface**: `StudentWorkflowStatus.isKetuaDownloadSuratPermohonan` (backend + FE api.service)
+- [x] **FE**: `RegistrationView` emit `downloaded` setelah unduh → `StudentWorkflowView @downloaded="load"` refetch status (fase otomatis pindah ke Fase 2 setelah unduh, tanpa refresh manual); hint teks "Surat ini wajib diunduh terlebih dahulu sebelum dialihkan ke Fase 2" di kartu persetujuan
+- [x] Verifikasi: npx tsc --noEmit + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-phase-gate-test.ts` 7/7 assertion OK (backfill 0 tertinggal, DIAJUKAN/DISETUJUI-belum-unduh=false, non-ketua di-skip, ketua=set→true, group-OR=true) lalu dihapus
+
+## Password Anggota Kelompok: Tampil Sampai Semua Surat Pernyataan Di-ACC (2026-10-04)
+
+**Permintaan (koreksi setelah klarifikasi):** alur → ketua upload Surat Penerimaan di Fase 2 → admin ACC → kartu "Akun Anggota" + "Akun DUDI" muncul. Selama **siswa belum login & pernyataan belum di-ACC admin**, password akun siswa **HARUS tampil** (bagaimana siswa mau login kalau password tidak ditampilkan?). Password disembunyikan **hanya** setelah **semua** siswa sudah login + upload Surat Pernyataan + admin mengkonfirmasi semuanya → tampilan tinggal nama + NISN. (DUDI memang tidak pernah menampilkan password.)
+
+- [x] **Kesalahan awal (fixed):** syarat pertama berbasis **kalender** (`currentSchedule`/`effectivePhase` = Fase 3) — padahal gelombang memang sudah Fase 3 sementara siswa belum pernah login → password langsung tersembunyi. Syarat kalender **dihapus total**
+- [x] **Syarat final** (`getWorkflowStatus`): `hideMemberPasswords = allMembersApproved` — yaitu count Surat Pernyataan `DISETUJUI` milik anggota kelompok ≥ jumlah anggota (`membersCount > 0 && membersApproved >= membersCount`, dihitung dari GroupMember, sudah ada sebelumnya untuk penilaian fase ketua). Selama ada satu pun yang belum → password **tetap tampil**
+- [x] Password di-strip jadi `null` di API (bukan cuma sembunyi di UI); type `temporaryPassword: string | null` (backend + FE)
+- [x] **FE**: kolom Password + teks "Berikan informasi login…" hanya bila password ada; bila tersembunyi → subtitle "Anggota sudah login dengan akun masing-masing. Hanya nama dan NISN yang ditampilkan."; kartu DUDI tidak berubah
+- [x] Verifikasi: npx tsc --noEmit + npx vue-tsc --noEmit + npx vite build hijau; skrip `tmp-hide-pw-test2.ts` 10/10 OK — **Kasus A** (inti bug): kalender Fase 3 + surat penerimaan DISETUJUI + semua pernyataan belum ACC → password TAMPIL; **B**: semua pernyataan ACC → HIDDEN (nama+NISN tetap); **C**: campur → TAMPIL; **D**: akun siswa biasa → `groupMembers` null; restore penuh (status dokumen + dokumen uji dihapus) lalu skrip dihapus
+
+## Username Akun Siswa = NISN Persis (2026-10-04)
+
+**Masalah:** ada akun siswa username-nya `NISN1791386921145ps54` (bukan NISN). **Penyebab (pre-existing, bukan perubahan sebelumnya):** saat provisioning, lookup akun existing hanya by `username = nisn` → akun siswa NISN 1234567895 yang dibuat manual (username `orang`) tidak ketemu → `studentProfile.nisn` terdeteksi duplikat → fallback `` `NISN${Date.now()}${random}` `` membuat akun palsu. 2 lokasi: `studentWorkflow.createMemberAccounts` + `group.service` auto-create.
+
+- [x] **`createMemberAccounts`** (kini publik, untuk test): lookup existing by `username = nisn` **ATAU** `studentProfile.nisn = nisn`; **rename** akun existing ke NISN persis (username + identifier) bila berbeda (try/catch bila bentrok unik); buat baru hanya dengan NISN valid `/^\d{10}$/` — **fallback `NISN<acak>` + while-loop dihapus**; tanpa NISN valid → skip (tidak dibuat akun)
+- [x] **`group.service` auto-create** (alur admin Bentuk Kelompok): pola sama — lookup existing by NISN (link + rename + restore), buat baru tanpa fallback, skip tanpa NISN; kalau semua anggota terlewat karena tanpa NISN → error jelas "n anggota belum memiliki NISN (10 digit) — lengkapi data NISN…" (variabel `skippedNoNisn`)
+- [x] **Data fix:** akun duplikat `orang` (0 dokumen/grup/pendaftaran, melepas NISN 1234567895) di-**hard delete**; akun terhubung REG-2026-0008 direname → username/identifier/profile.nisn = `1234567895`; sisa akun `username LIKE 'NISN%'` = **0**
+- [x] Verifikasi: npx tsc --noEmit hijau; skrip `tmp-username-nisn-test.ts` 10/10 OK (anggota NISN-dipakai-akun-lain → pakai akun lama + rename ke NISN persis, 0 duplikat, anggota tanpa NISN di-skip tanpa akun palsu, ter-link ke akun lama) dengan restore penuh lalu dihapus
+
+## Fase 3: Status Monitoring + Foto Bukti (Tunda/Batal/Selesai) & Laporan Hasil PKL (Final Report PDF)
+
+**Permintaan:** (1) monitoring visit bisa ditandai **Selesai dengan upload foto bukti** (tersimpan di DB/storage), plus aksi **Tunda** dan **Batal**; (2) **Laporan Hasil PKL** per kelompok (absensi, monitoring pembimbing, jurnal, nilai akhir DUDI) berupa PDF, bisa diunduh **hanya siswa**, hanya **setelah masa PKL selesai**; kalau laporan terbit saat DUDI belum input nilai → bagian nilai **dikosongkan**.
+
+### Status monitoring (Fase 3)
+- [x] **Schema+migration** `20261007080000_add_visit_status_photo_final_report` (migrate deploy): `enum VisitStatus {TERJADWAL,TERTUNDA,BATAL,SELESAI}`, `Visit.status @default(TERJADWAL)` + `photoPath/photoName`, backfill `UPDATE visits SET status='SELESAI' WHERE visitedAt IS NOT NULL`; model baru `FinalReport` (groupId unique, pdfPath, issuedAt) + relasi `Group.finalReport`/`Cohort.finalReports`; storage category `'visits'`
+- [x] **Backend visit:** `complete` wajib foto JPG/PNG (multer multipart, disimpan `visits/<id>-<ts>.<ext>` → status SELESAI + visitedAt), `postpone` (TERTUNDA, jadwal baru + catatan opsional), `resume` (→TERJADWAL), `cancel` (BATAL + alasan), `getPhoto` (guru/staff + **siswa anggota kelompok**); `assertEditable` SELESAI/BATAL = final; validator postpone/resume/cancel
+- [x] **FE `VisitView.vue`:** badge status 4 warna, aksi per status (Selesaikan…/Tunda…/Batal…/Lanjutkan/Lihat foto bukti), **modal** untuk selesai (upload foto wajib, JPG/PNG), tunda (jadwal baru + catatan), batal (alasan); `api.service` `complete` kirim FormData + `postpone/resume/cancel` + `openFileInTab`
+
+### Laporan Hasil PKL (PDF)
+- [x] **Template** `templates/finalReport.template.ts` (pdfkit multi-halaman, page-break + header ulang): kop sekolah, identitas kelompok/perusahaan/periode/pembimbing, anggota, rekap+rincian absensi, monitoring visit, jurnal, nilai akhir (sel nilai **kosong** bila DUDI belum input)
+- [x] **Service** `finalReport.service.ts`: gate = jadwal fase `PKL_SELESAI` sudah dimulai (400 "…setelah masa PKL selesai"), akses **SISWA anggota kelompok** saja, **generate-once** (snapshot — request berikutnya pakai file yang sama; race unik groupId → pakai milik yang pertama), simpan `letters/hasil-pkl-<kode>-<ts>.pdf`
+- [x] **Route** `GET /api/phase4/final-report` (`authorizeRoles(Role.SISWA)` saja) + `phase4Controller.downloadFinalReport`; FE: kartu "Laporan Hasil PKL → Unduh (PDF)" di **DashboardView** untuk `role SISWA && phase PKL_SELESAI` (siswa non-ketua di fase 3/4 di-redirect ke dashboard, jadi kartu ditaruh di sana)
+- [x] Verifikasi: `npx tsc --noEmit` + `npx vue-tsc --noEmit` + `npx vite build` hijau; skrip `tmp-visit-final-test.ts` **26/26 PASS** (visit: backfill, tolak tanpa foto/non-gambar, foto tersimpan & bisa diambil guru+siswa anggota, non-anggota ditolak, final SELESAI/BATAL tak bisa diubah, tunda→lanjut→batal; laporan: gate pra-PKL-SELESAI, non-siswa ditolak, PDF valid %PDF, generate-once snapshot sama, nilai-DUDI-dimasukkan → terbit ulang valid; **restore penuh** jadwal/file/record/visit/notification/audit) lalu dihapus
+## Restrukturisasi Informasi Surat/Dokumen (IA)
+
+**Permintaan:** menu surat/dokumen membingungkan; 9 jenis dokumen dengan beberapa titik generate & beberapa menu verifikasi tumpang tindih. Keputusan: **scope penuh (admin + siswa)**; **Transisi Fase tetap di Rekap Penilaian**.
+
+### Masalah yang diperbaiki
+- Generate surat tersebar: Surat Pengantar/Penugasan di Grup, Penarikan + daftar Surat Terbit di Rekap Penilaian, Pernyataan/Penerimaan punya halaman verifikasi sendiri-sendiri
+- "Surat Terbit" muncul di banyak halaman; menu sidebar "Surat Penerimaan" & "Surat Pernyataan" menumpuk dengan "Dokumen & Laporan"
+- Siswa: kartu "Surat Kelompok Anda" di Alur PKL duplikat isi menu Kelompok; "Dokumen Saya" mengizinkan upload manual jenis surat alur (padahal sudah otomatis)
+
+### Admin
+- [x] **`LettersView.vue` (baru, /admin/surat):** 3 kartu - Generate Surat Pengantar & Penugasan (pilih kelompok -> detail -> pembimbing + nomor surat), Generate Surat Penarikan (centang anggota), Surat Terbit (list + filter jenis + unduh); tiap kartu ada penjelasan tujuan
+- [x] **`GradeRecapView.vue`:** hanya Rekap Nilai + Transisi Fase (kartu Surat Penarikan & Surat Terbit dihapus; import `phase4Service` dipertahankan untuk completePhase)
+- [x] **`GroupsView.vue`:** blok "Surat PKL" (nomor surat, tombol generate, daftar terbit) dihapus dari modal detail -> hint arahkan ke menu Surat
+- [x] **`DocumentsView.vue` -> "Verifikasi Dokumen" (gabungan):** filter **Jenis** (Semua/Penerimaan/Pernyataan/Laporan Akhir/Lainnya) + filter Status; modal kini ambil `documentService.getDetail` dan tampilkan blok **Kelompok & Perusahaan** (nama, kode, jurusan, tabel anggota, alamat DUDI) - konteks verifikasi yang dulu hanya ada di halaman Surat Penerimaan
+- [x] **`VerifyPenerimaanView.vue` + `VerifyDaftarUlangView.vue` dihapus;** route lama `admin/verifikasi-penerimaan` & `admin/verifikasi-daftar-ulang` di-redirect ke `/admin/dokumen` (tidak ada referensi tersisa)
+- [x] **Router:** tambah `admin/surat` (name `admin-letters`, ADMIN/SUPER_ADMIN); title "Verifikasi Dokumen" & "Rekap Penilaian" disesuaikan
+- [x] **Nav AppLayout (section Verifikasi):** Absensi, Pendaftaran, **Verifikasi Dokumen**, **Surat**, Rekap Penilaian (3 item lama dibuang)
+
+### Siswa
+- [x] **`StudentWorkflowView.vue`:** kartu "Surat Kelompok Anda" + `myLetters`/`downloadMyLetter`/import `phase4Service`+`LetterRecord` dihapus (surat per kelompok tetap ada di menu Kelompok via `MyGroupsView`)
+- [x] **`MyDocumentsView.vue`:** upload manual hanya jenis **Lainnya** (select dihapus, type hardcode) + subtitle jelaskan Surat Permohonan/Penerimaan/Pernyataan diurus Alur PKL & laporan di menu Laporan Akhir; tabel pakai label manusia (`TYPE_LABELS`)
+- [x] **Kartu "Laporan Hasil PKL" pindah DashboardView -> `ReportView.vue`** (menu Laporan Akhir = tempat wajar; kondisi tetap `role SISWA && phase PKL_SELESAI`)
+
+### Verifikasi
+- [x] `npx tsc --noEmit` + `npx vue-tsc --noEmit` + `npx vite build` hijau
+- [x] Browser QA headless (admin uji `uji_nav_admin`, dibuat + dihapus setelah uji): nav baru 3 item muncul & 3 item lama hilang; /admin/surat render 3 kartu; /admin/rekap tanpa kartu surat; modal Grup tanpa blok "Surat PKL" + hint muncul; redirect 2 route lama -> /admin/dokumen; **20/20 check OK**
+- [x] Modal Verifikasi Dokumen: filter "Semua" -> 10 baris, modal tampil lengkap (Jenis/Versi/Tanggal/Status + KELOMPOK & PERUSAHAAN: TESTINGKELOMPOK GRP-2026-0001, tabel anggota, alamat DUDI) + footer Unduh/Setujui; filter Jenis "Surat Penerimaan" -> 5 baris spesifik
+- [x] API smoke (login admin): `GET /api/phase4/letters` 9 item, `/api/groups` + detail (supervisor+member) OK, `/api/documents?status=MENUNGGU_VERIFIKASI` 0 (data memang kosong), `/api/documents` 10 + `GET /api/documents/:id` balas `group` lengkap
+- [x] Catatan: 401 `/api/auth/me|refresh` di console = probe sebelum login (normal); backend sementara dijalankan ulang via `npm run dev` (port **4000**, bukan 5000) selama QA
+
+## Username DUDI Berbasis Kelompok + Filter Manajemen User
+
+**Permintaan:** (1) username/nama akun DUDI identik/mirip dgn kelompok agar bisa dibedakan & dicari di menu admin; (2) tambah fitur filter di Manajemen User.
+
+### Username & nama DUDI
+- [x] **`studentWorkflow.service.ts`**: `generateDudiUsername(groupCode?, uniquify?)` - username kini **`DUDI-<kode kelompok>`** (mis. `DUDI-GRP-2026-0001`, sanitasi + maks 40 char basis dgn prefix/suffix muat limit 50); bentrok -> suffix acak 3 karakter; tanpa kode kelompok -> fallback acak lama (`DUDI******`, crypto.randomInt)
+- [x] `ensureDudiAccount` ambil `group.code` dari groupId lalu pakai basis kode; loop anti-bentrok tetap; tetap idempoten (perusahaan sudah punya mentor = skip)
+- [x] Backend `userManage.service list`: include `companyMentor { fullName, company { name } }` -> nama mentor ("Mentor PT X") & nama perusahaan ikut terkirim ke FE
+- [x] **Catatan:** akun DUDI lama TIDAK di-rename (identifier/login existing tidak tersentuh); hanya akun baru. Admin manual via Tambah User tetap ketik username sendiri
+
+### Filter Manajemen User (`UsersView.vue`)
+- [x] **Toolbar filter**: search (`type=search`, placeholder "Cari username, nama, NISN/NIP, atau perusahaan") + select **Status** (Semua/Aktif/Nonaktif) + select **Gelombang** (Gelombang Aktif [default] / Semua Gelombang / pilih gelombang) + tombol **Reset** (muncul hanya saat filter aktif)
+- [x] Search mencakup: username, identifier, email, nama+nisw siswa, nama+nip guru, nama mentor DUDI, **nama perusahaan** (case-insensitive, FE-side karena memang fetch-all)
+- [x] Counts per tab & empty state ikut filter ("Tidak ada user yang cocok dengan filter."); perilaku lama (tab role + gelombang aktif) tetap default
+- [x] Tabel: username pakai font-mono + sub-teks **nama perusahaan** utk DUDI; kolom Nama kini tampil utk DUDI (`companyMentor.fullName`, dulu selalu "-"); `UserRecord` dgn `companyMentor?`
+
+### Verifikasi
+- [x] `npx tsc --noEmit` + `npx vue-tsc --noEmit` + `npx vite build` hijau
+- [x] Skrip `tmp-dudi-username-test.ts` **19/19 PASS**: unit (kode utuh, sanitasi, fallback acak, uniquify suffix, panjang <=50) + E2E `ensureDudiAccount` (username `DUDI-GRP-2026-0001`, role/identifier/cohort/mustChangePassword, CompanyMentor nama, InitialCredential, autoAssign +1, panggil ulang idempoten) + **restore penuh** (user/company/penugasan) lalu dihapus
+- [x] Browser QA Manajemen User (akun DUDI uji `DUDI-GRP-2026-0001` + admin uji, dibuat+dihapus): **15/15 check OK** - toolbar 3 filter, search kode kelompok/nama perusahaan/username, pesan kosong filter, Reset (8/8 pulih), filter status, filter gelombang; console bersih (401 = probe pre-login); data uji dihapus (admin, DUDI, company)

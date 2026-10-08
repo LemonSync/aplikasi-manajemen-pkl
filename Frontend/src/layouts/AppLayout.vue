@@ -39,9 +39,8 @@ const navItems: NavItem[] = [
   // Admin — Monitoring
   { label: 'Absensi', routeName: 'admin-attendance', icon: 'activity', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Pendaftaran', routeName: 'admin-registrations', icon: 'clipboard', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Surat Penerimaan', routeName: 'admin-verify-penerimaan', icon: 'fileCheck', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Surat Pernyataan', routeName: 'admin-verify-daftar-ulang', icon: 'fileCheck', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Dokumen & Laporan', routeName: 'admin-documents', icon: 'folder', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
+  { label: 'Verifikasi Dokumen', routeName: 'admin-documents', icon: 'folder', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
+  { label: 'Surat', routeName: 'admin-letters', icon: 'fileCheck', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Rekap Penilaian', routeName: 'admin-grade-recap', icon: 'chart', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
   // Admin — Data
   { label: 'Kelompok', routeName: 'admin-groups', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },

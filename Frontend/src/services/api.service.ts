@@ -146,9 +146,15 @@ export const registrationService = {
     return data.data;
   },
 
-  async list(status?: string): Promise<{ items: Registration[]; meta?: PaginationMeta }> {
+  async list(
+    status?: string,
+    opts?: { withoutGroup?: boolean }
+  ): Promise<{ items: Registration[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<Registration[]>>('/registrations', {
-      params: status ? { status } : {},
+      params: {
+        ...(status ? { status } : {}),
+        ...(opts?.withoutGroup ? { withoutGroup: 'true' } : {}),
+      },
     });
     return { items: data.data, meta: data.meta };
   },
@@ -359,11 +365,16 @@ export interface ComplaintRecord {
   createdAt: string;
 }
 
+export type VisitStatus = 'TERJADWAL' | 'TERTUNDA' | 'BATAL' | 'SELESAI';
+
 export interface VisitRecord {
   id: string;
+  status: VisitStatus;
   scheduledAt: string;
   visitedAt: string | null;
   note: string | null;
+  photoPath?: string | null;
+  photoName?: string | null;
   supervisor?: { id: string; username: string };
   group?: { id: string; name: string } | null;
   company?: { id: string; name: string } | null;
@@ -494,8 +505,29 @@ export const visitService = {
     const { data } = await http.get<ApiResponse<VisitRecord[]>>('/visits', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  async complete(id: string, note?: string): Promise<VisitRecord> {
-    const { data } = await http.post<ApiResponse<VisitRecord>>(`/visits/${id}/complete`, { note });
+  /** Selesaikan monitoring — WAJIB upload foto bukti (JPG/PNG). */
+  async complete(id: string, note: string | undefined, photo: File): Promise<VisitRecord> {
+    const form = new FormData();
+    form.append('photo', photo);
+    if (note) form.append('note', note);
+    const { data } = await http.post<ApiResponse<VisitRecord>>(`/visits/${id}/complete`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data.data;
+  },
+  /** Tunda monitoring (opsional: jadwal baru + catatan). */
+  async postpone(id: string, payload?: { scheduledAt?: string; note?: string | null }): Promise<VisitRecord> {
+    const { data } = await http.post<ApiResponse<VisitRecord>>(`/visits/${id}/postpone`, payload ?? {});
+    return data.data;
+  },
+  /** Lanjutkan kembali kunjungan yang ditunda. */
+  async resume(id: string, payload?: { scheduledAt?: string }): Promise<VisitRecord> {
+    const { data } = await http.post<ApiResponse<VisitRecord>>(`/visits/${id}/resume`, payload ?? {});
+    return data.data;
+  },
+  /** Batalkan kunjungan (status final). */
+  async cancel(id: string, note?: string | null): Promise<VisitRecord> {
+    const { data } = await http.post<ApiResponse<VisitRecord>>(`/visits/${id}/cancel`, { note: note ?? undefined });
     return data.data;
   },
 };
@@ -663,6 +695,10 @@ export const phase4Service = {
     const num = letter.number ? `${letter.number}-` : '';
     await downloadFile(`/phase4/letters/${letter.id}/download`, `${letter.type}-${num}${letter.id}.pdf`);
   },
+  /** SISWA: unduh Laporan Hasil PKL kelompok (generate-once setelah PKL selesai). */
+  async downloadFinalReport(): Promise<void> {
+    await downloadFile('/phase4/final-report', 'Laporan-Hasil-PKL.pdf');
+  },
 };
 
 // ============================================================================
@@ -800,6 +836,7 @@ export interface UserRecord {
   cohortId: string | null;
   studentProfile?: { fullName: string; nisn: string } | null;
   teacherProfile?: { fullName: string; nip: string } | null;
+  companyMentor?: { fullName: string; company?: { name: string } } | null;
 }
 
 export interface StudentPklData {
@@ -1027,8 +1064,11 @@ export interface StudentWorkflowStatus {
   nextSchedule: WorkflowPhaseInfo | null;
   registrationStatus: string | null;
   registrationDocumentId: string | null;
+  /** Gerbang Fase 1 → Fase 2: ketua sudah mengunduh Surat Permohonan? */
+  isKetuaDownloadSuratPermohonan: boolean;
   isKetua: boolean;
-  groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string }> | null;
+  /** Password null = disembunyikan (semua anggota sudah login + Surat Pernyataan di-ACC admin). */
+  groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string | null }> | null;
   dudiCredential: { fullName: string; username: string } | null;
   hasGroup: boolean;
   dudiConnected: boolean;
@@ -1150,4 +1190,12 @@ export const downloadFile = async (url: string, filename: string): Promise<void>
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(link.href);
+};
+
+/** Buka file terproteksi (otomatis ikut auth) di tab baru — pratinjau foto bukti. */
+export const openFileInTab = async (url: string): Promise<void> => {
+  const { data } = await http.get(url, { responseType: 'blob' });
+  const objectUrl = URL.createObjectURL(new Blob([data]));
+  window.open(objectUrl, '_blank');
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 };

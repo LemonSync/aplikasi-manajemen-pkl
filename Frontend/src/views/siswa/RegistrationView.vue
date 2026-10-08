@@ -15,6 +15,10 @@ import { useAuthStore } from '@/stores/auth.store';
 
 const auth = useAuthStore();
 
+// Beri tahu parent (StudentWorkflowView) bahwa Surat Permohonan sudah diunduh
+// agar status workflow di-refetch — unduhan membuka gerbang Fase 1 → Fase 2.
+const emit = defineEmits<{ downloaded: [] }>();
+
 /** Gelombang sudah ditentukan Admin saat membuat akun ketua → tidak bisa diganti. */
 const assignedCohortId = computed(() => auth.user?.cohortId ?? null);
 const assignedCohortName = computed(() => {
@@ -38,6 +42,7 @@ const form = ref({
   companyIndustry: '',
   companyPhone: '',
   companyCity: '',
+  companyWebsite: '',
 });
 
 type MemberStatus = 'idle' | 'checking' | 'found' | 'notfound';
@@ -74,6 +79,7 @@ const load = async (): Promise<void> => {
         companyIndustry: reg.companyIndustry ?? '',
         companyPhone: reg.companyPhone ?? '',
         companyCity: reg.companyCity ?? '',
+        companyWebsite: reg.companyWebsite ?? '',
       };
       // Load nama anggota dari members
       if (reg.members && reg.members.length > 0) {
@@ -211,6 +217,7 @@ const saveDraftNow = async (): Promise<Registration | null> => {
     ...form.value,
     cohortId: assignedCohortId.value ?? form.value.cohortId,
     companyIndustry: form.value.companyIndustry || null,
+    companyWebsite: form.value.companyWebsite.trim() || null,
     companyContacts: [],
     members,
   };
@@ -257,6 +264,7 @@ const downloadSurat = async (): Promise<void> => {
   if (!existing.value?.document) return;
   try {
     await downloadFile(`/documents/${existing.value.document.id}/download`, `surat-permohonan-${existing.value.code}.pdf`);
+    emit('downloaded');
   } catch (e) {
     error.value = extractErrorMessage(e);
   }
@@ -285,6 +293,7 @@ onMounted(load);
         <div v-if="existing.status === 'DISETUJUI' && existing.document" class="mt-4 rounded-lg bg-emerald-50 p-4">
           <p class="text-sm font-medium text-emerald-800">Pendaftaran disetujui! Surat Permohonan sudah dibuat.</p>
           <p class="mt-1 text-sm text-emerald-700">Download, cetak, dan serahkan ke perusahaan.</p>
+          <p class="mt-1 text-xs text-emerald-600">Surat ini wajib diunduh terlebih dahulu sebelum Anda dialihkan ke Fase 2 (Daftar Ulang).</p>
           <button class="btn-primary mt-3" @click="downloadSurat">Download Surat Permohonan (PDF)</button>
         </div>
         <div v-else-if="existing.status === 'DIAJUKAN'" class="mt-4 rounded-lg bg-amber-50 p-4">
@@ -337,6 +346,15 @@ onMounted(load);
             <div>
               <label class="label">Telepon</label>
               <input v-model="form.companyPhone" class="input" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="label">Website Perusahaan (opsional)</label>
+              <input
+                v-model="form.companyWebsite"
+                class="input"
+                inputmode="url"
+                placeholder="https://www.contoh-perusahaan.com"
+              />
             </div>
           </div>
         </div>

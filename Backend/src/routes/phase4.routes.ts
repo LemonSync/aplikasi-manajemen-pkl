@@ -17,6 +17,10 @@ const router = Router();
 
 router.use(authenticate);
 
+// SISWA: unduh Laporan Hasil PKL kelompoknya sendiri (generate-once setelah
+// masa PKL selesai; bagian nilai dikosongkan bila DUDI belum menginput)
+router.get('/final-report', authorizeRoles(Role.SISWA), phase4Controller.downloadFinalReport);
+
 // Admin: daftar surat hasil generate + unduh PDF-nya
 // Siswa: hanya surat milik kelompoknya (scope dicek di controller)
 router.get('/letters', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.SISWA), phase4Controller.listLetters);

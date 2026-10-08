@@ -41,6 +41,9 @@ export const listRegistrationQuerySchema = z.object({
   perPage: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(RegistrationStatus).optional(),
   cohortId: z.string().cuid().optional(),
+  // 'true' → sembunyikan pendaftaran yang sudah membentuk kelompok
+  // (dipakai dropdown "Bentuk Kelompok dari Pendaftaran" di admin).
+  withoutGroup: z.enum(['true', 'false']).optional(),
 });
 
 export type SaveRegistrationDTO = z.infer<typeof saveRegistrationSchema>;

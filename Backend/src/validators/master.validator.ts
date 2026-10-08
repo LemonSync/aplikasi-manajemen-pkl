@@ -11,6 +11,7 @@ export const createCompanySchema = z.object({
   phone: z.string().max(30).optional().nullable(),
   email: z.string().email().optional().nullable(),
   city: z.string().max(120).optional().nullable(),
+  website: z.string().max(255).optional().nullable(),
 });
 
 export const updateCompanySchema = createCompanySchema.partial();

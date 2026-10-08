@@ -10,16 +10,17 @@ const uploading = ref(false);
 const error = ref('');
 const success = ref('');
 
-const uploadType = ref('SURAT_PENERIMAAN');
+const uploadType = ref('LAINNYA');
 const uploadTitle = ref('');
 const selectedFile = ref<File | null>(null);
 
-const DOC_TYPES = [
-  { value: 'SURAT_PERMOHONAN', label: 'Surat Permohonan (otomatis)' },
-  { value: 'SURAT_PENERIMAAN', label: 'Surat Penerimaan (balasan DUDI)' },
-  { value: 'SURAT_PERNYATAAN', label: 'Surat Pernyataan (bermaterai)' },
-  { value: 'LAINNYA', label: 'Lainnya' },
-];
+const TYPE_LABELS: Record<string, string> = {
+  SURAT_PERMOHONAN: 'Surat Permohonan',
+  SURAT_PENERIMAAN: 'Surat Penerimaan',
+  SURAT_PERNYATAAN: 'Surat Pernyataan',
+  LAPORAN_AKHIR: 'Laporan Akhir',
+  LAINNYA: 'Lainnya',
+};
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -69,17 +70,17 @@ onMounted(load);
 <template>
   <div class="space-y-6">
     <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Unggah Dokumen</h2>
+      <div class="mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">Unggah Dokumen</h2>
+        <p class="text-sm text-gray-500">
+          Untuk berkas umum (sertifikat, piagam, dsb). Surat Permohonan/Penerimaan/Pernyataan
+          diurus otomatis lewat <b>Alur PKL</b>, dan laporan akhir lewat menu <b>Laporan Akhir</b>.
+        </p>
+      </div>
       <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label class="label">Jenis Dokumen</label>
-          <select v-model="uploadType" class="input">
-            <option v-for="t in DOC_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
-          </select>
-        </div>
         <div>
           <label class="label">Judul (opsional)</label>
           <input v-model="uploadTitle" class="input" placeholder="Judul dokumen" />
@@ -95,7 +96,10 @@ onMounted(load);
     </div>
 
     <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Dokumen Saya</h2>
+      <div class="mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">Dokumen Saya</h2>
+        <p class="text-sm text-gray-500">Semua dokumen milik Anda beserta status verifikasinya.</p>
+      </div>
       <div v-if="loading" class="loading" />
       <table v-else class="table">
         <thead>
@@ -109,7 +113,7 @@ onMounted(load);
         </thead>
         <tbody>
           <tr v-for="d in docs" :key="d.id">
-            <td>{{ d.type }}</td>
+            <td>{{ TYPE_LABELS[d.type] ?? d.type }}</td>
             <td>{{ d.title ?? '-' }}</td>
             <td><StatusBadge :status="d.status" /></td>
             <td class="text-gray-500">{{ d.note ?? '-' }}</td>

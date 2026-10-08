@@ -3,12 +3,10 @@ import { onMounted, ref, watch } from 'vue';
 import {
   gradeService,
   phase4Service,
-  groupService,
   type GradeRecapByClass,
   type GradeRecapClass,
   type GradeRecapStudent,
   type PhaseTransitionResult,
-  type LetterRecord,
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -17,15 +15,7 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 
-interface GroupOption {
-  id: string;
-  name: string;
-  code?: string;
-  members?: Array<{ userId: string; isLeader?: boolean; user?: { username: string; studentProfile?: { fullName: string } | null } }>;
-}
-
 const recap = ref<GradeRecapByClass | null>(null);
-const groups = ref<GroupOption[]>([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
@@ -56,96 +46,16 @@ const gradedIn = (students: GradeRecapStudent[]): number => students.filter((s) 
 const allGradedStudents = (): GradeRecapStudent[] =>
   (recap.value?.classes ?? []).flatMap((c) => c.groups.flatMap((g) => g.students)).filter((s) => s.grade?.finalScore != null);
 
-// Surat penarikan
-const withdrawalGroupId = ref('');
-const withdrawalMembers = ref<NonNullable<GroupOption['members']>>([]);
-const withdrawalSelectedIds = ref<string[]>([]);
-const withdrawalNumber = ref('');
-const loadingMembers = ref(false);
-
-// Daftar surat
-const letters = ref<LetterRecord[]>([]);
-const lettersLoading = ref(false);
-const letterFilter = ref('');
-
 const load = async (): Promise<void> => {
   loading.value = true;
   try {
-    const [recapData, groupsData] = await Promise.all([
-      gradeService.recapByClass(cohortStore.activeCohortId ? { cohortId: cohortStore.activeCohortId } : undefined),
-      groupService.list(cohortStore.activeCohortId ? { cohortId: cohortStore.activeCohortId } : {}),
-    ]);
-    recap.value = recapData;
-    groups.value = groupsData.items as unknown as GroupOption[];
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    loading.value = false;
-  }
-};
-
-const loadLetters = async (): Promise<void> => {
-  lettersLoading.value = true;
-  try {
-    letters.value = await phase4Service.listLetters(
-      letterFilter.value ? { type: letterFilter.value } : undefined
+    recap.value = await gradeService.recapByClass(
+      cohortStore.activeCohortId ? { cohortId: cohortStore.activeCohortId } : undefined
     );
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
-    lettersLoading.value = false;
-  }
-};
-
-watch(withdrawalGroupId, async (id) => {
-  withdrawalMembers.value = [];
-  withdrawalSelectedIds.value = [];
-  if (!id) return;
-  loadingMembers.value = true;
-  try {
-    const detail = (await groupService.getById(id)) as GroupOption;
-    withdrawalMembers.value = detail.members ?? [];
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    loadingMembers.value = false;
-  }
-});
-
-const toggleMember = (userId: string, checked: boolean): void => {
-  withdrawalSelectedIds.value = checked
-    ? [...withdrawalSelectedIds.value, userId]
-    : withdrawalSelectedIds.value.filter((id) => id !== userId);
-};
-
-const generateWithdrawal = async (): Promise<void> => {
-  if (!withdrawalGroupId.value || withdrawalSelectedIds.value.length === 0) return;
-
-  saving.value = true;
-  error.value = '';
-  success.value = '';
-  try {
-    await phase4Service.generateWithdrawalLetter({
-      groupId: withdrawalGroupId.value,
-      studentIds: withdrawalSelectedIds.value,
-      number: withdrawalNumber.value || null,
-    });
-    success.value = `Surat penarikan untuk ${withdrawalSelectedIds.value.length} siswa digenerate.`;
-    withdrawalSelectedIds.value = [];
-    withdrawalNumber.value = '';
-    await loadLetters();
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    saving.value = false;
-  }
-};
-
-const downloadLetter = async (letter: LetterRecord): Promise<void> => {
-  try {
-    await phase4Service.downloadLetter(letter);
-  } catch (e) {
-    error.value = extractErrorMessage(e);
+    loading.value = false;
   }
 };
 
@@ -180,7 +90,6 @@ onMounted(() => {
     await cohortStore.ensureLoaded();
     await load();
   })();
-  void loadLetters();
 });
 
 watch(
@@ -320,99 +229,6 @@ watch(
         </div>
       </template>
     </Modal>
-
-    <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Surat Penarikan Siswa</h2>
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label class="label">Kelompok</label>
-          <select v-model="withdrawalGroupId" class="input">
-            <option value="">-- Pilih --</option>
-            <option v-for="g in groups" :key="g.id" :value="g.id">
-              {{ g.code ?? '' }} {{ g.name }}
-            </option>
-          </select>
-        </div>
-        <div>
-          <label class="label">Nomor Surat</label>
-          <input v-model="withdrawalNumber" class="input" placeholder="Opsional" />
-        </div>
-      </div>
-
-      <LoadingSpinner v-if="loadingMembers" label="Memuat anggota…" class="mt-4" />
-      <div v-else-if="withdrawalGroupId && withdrawalMembers.length > 0" class="mt-4">
-        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <label
-            v-for="m in withdrawalMembers"
-            :key="m.userId"
-            class="flex items-center gap-2 border border-gray-200 px-3 py-2 text-sm"
-          >
-            <input
-              type="checkbox"
-              :checked="withdrawalSelectedIds.includes(m.userId)"
-              @change="toggleMember(m.userId, ($event.target as HTMLInputElement).checked)"
-            />
-            <span>
-              {{ m.user?.studentProfile?.fullName ?? m.user?.username ?? m.userId }}
-              <span v-if="m.isLeader" class="text-amber-600">(Ketua)</span>
-            </span>
-          </label>
-        </div>
-      </div>
-      <p v-else-if="withdrawalGroupId" class="mt-4 text-sm text-gray-500">Kelompok tanpa anggota.</p>
-
-      <button
-        class="btn-primary mt-4"
-        :disabled="saving || !withdrawalGroupId || withdrawalSelectedIds.length === 0"
-        @click="generateWithdrawal"
-      >
-        <LoadingSpinner v-if="saving" inline />
-        {{ saving ? 'Menggenerate…' : `Generate (${withdrawalSelectedIds.length})` }}
-      </button>
-    </div>
-
-    <div class="card">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-lg font-semibold text-gray-800">Surat Terbit</h2>
-        <div class="flex items-center gap-2">
-          <select v-model="letterFilter" class="input w-auto" @change="loadLetters">
-            <option value="">Semua Jenis</option>
-            <option value="PENGANTAR">Pengantar</option>
-            <option value="PENUGASAN">Penugasan</option>
-            <option value="PENARIKAN">Penarikan</option>
-          </select>
-          <button class="btn-secondary" :disabled="lettersLoading" @click="loadLetters">Muat Ulang</button>
-        </div>
-      </div>
-      <SkeletonTable v-if="lettersLoading" :rows="5" :cols="5" />
-      <table v-else class="table">
-        <thead>
-          <tr>
-            <th>Tanggal</th>
-            <th>Jenis</th>
-            <th>Nomor</th>
-            <th>Perihal</th>
-            <th>Penanda Tangan</th>
-            <th class="text-right">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="l in letters" :key="l.id">
-            <td>{{ new Date(l.createdAt).toLocaleDateString('id-ID') }}</td>
-            <td><StatusBadge :status="l.type" /></td>
-            <td class="font-mono">{{ l.number ?? '-' }}</td>
-            <td>{{ l.subject ?? '-' }}</td>
-            <td>{{ l.signerName }}</td>
-            <td class="text-right">
-              <button class="text-sm text-primary-600 hover:underline" @click="downloadLetter(l)">Unduh</button>
-            </td>
-          </tr>
-          <tr v-if="letters.length === 0">
-            <td colspan="6" class="py-4 text-center text-gray-400">Belum ada surat.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
 
     <div class="card">
       <h2 class="mb-3 text-lg font-semibold text-gray-800">Transisi Fase ke PKL Selesai</h2>

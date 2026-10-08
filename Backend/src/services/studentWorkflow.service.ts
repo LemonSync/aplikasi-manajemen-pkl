@@ -21,8 +21,15 @@ export interface StudentWorkflowStatus {
   nextSchedule: WorkflowPhaseInfo | null;
   registrationStatus: string | null;
   registrationDocumentId: string | null;
+  /** Gerbang Fase 1 → Fase 2: ketua sudah mengunduh Surat Permohonan? */
+  isKetuaDownloadSuratPermohonan: boolean;
   isKetua: boolean;
-  groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string }> | null;
+  /**
+   * Password anggota disembunyikan (null) hanya setelah SEMUA siswa anggota
+   * login + unggah Surat Pernyataan dan disetujui admin. Selama masih ada
+   * yang belum, password tetap dikirim agar ketua bisa membagikannya.
+   */
+  groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string | null }> | null;
   dudiCredential: { fullName: string; username: string } | null;
   hasGroup: boolean;
   /** Kelompok sudah punya akun DUDI (mentor perusahaan) yang ditautkan? */
@@ -140,13 +147,20 @@ export class StudentWorkflowService {
   private async checkPhaseCompletion(userId: string, phase: StudentPhase): Promise<boolean> {
     switch (phase) {
       case StudentPhase.PRA_PKL: {
-        // Selesai bila: ketua sudah mengajukan/menyetujui pendaftaran,
+        // Selesai bila: pendaftaran ketua SUDAH DISETUJUI admin DAN Surat
+        // Permohonan sudah diunduh (gerbang Fase 1 → Fase 2 — tanpa surat ini
+        // ketua tidak bisa memperoleh Surat Penerimaan dari perusahaan),
+        // ATAU kelompoknya sudah terbentuk (sudah jauh melewati tahap itu),
         // ATAU user sudah terdaftar sebagai anggota pendaftaran/kelompok.
+        // Pendaftaran DIAJUKAN tetap dianggap belum selesai: surat permohonan
+        // baru dibuat saat disetujui, jadi pengguna telat menunggu di Fase 1.
         const [registration, regMember, groupMember] = await Promise.all([
           prisma.registration.findFirst({
             where: {
               leaderId: userId,
-              status: { in: [RegistrationStatus.DIAJUKAN, RegistrationStatus.DISETUJUI] },
+              deletedAt: null,
+              status: RegistrationStatus.DISETUJUI,
+              OR: [{ permohonanDownloadedAt: { not: null } }, { group: { isNot: null } }],
             },
             select: { id: true },
           }),
@@ -216,6 +230,7 @@ export class StudentWorkflowService {
         nextSchedule: null,
         registrationStatus: null,
         registrationDocumentId: null,
+        isKetuaDownloadSuratPermohonan: false,
         isKetua: false,
         groupMembers: null,
         dudiCredential: null,
@@ -365,7 +380,7 @@ export class StudentWorkflowService {
 
     // Perbaikan/backfill: provisioning juga membentuk Group dan GroupMember
     // untuk data yang sebelumnya hanya memiliki akun siswa.
-    let groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string }> | null = null;
+    let groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string | null }> | null = null;
     let dudiCredential: { fullName: string; username: string } | null = null;
     if (isKetua && suratPenerimaan && registration) {
       await this.provisionAfterAcceptance(userId);
@@ -377,6 +392,22 @@ export class StudentWorkflowService {
         groupMembers = await this.createMemberAccounts(provisionedRegistration, user.cohortId);
       }
       dudiCredential = await this.getDudiCredential(registration.id);
+    }
+
+    // Sembunyikan password anggota (tampil nama + username/NISN saja) HANYA
+    // setelah semua siswa anggota kelompok menyelesaikan Fase 2, yaitu sudah
+    // login dengan akun masing-masing, mengunggah Surat Pernyataan, dan admin
+    // sudah menyetujuinya (allMembersApproved). Selama masih ada satu pun yang
+    // belum, password harus tetap tampil agar ketua bisa membagikannya untuk
+    // login — bukan berdasarkan fase kalender (gelombang bisa saja sudah Fase 3
+    // padahal siswa belum pernah login).
+    const hideMemberPasswords = allMembersApproved;
+    if (hideMemberPasswords && groupMembers) {
+      groupMembers = groupMembers.map((m) => ({
+        username: m.username,
+        fullName: m.fullName,
+        temporaryPassword: null,
+      }));
     }
 
     // Dokumen surat penerimaan yang belum disetujui: sedang menunggu verifikasi
@@ -393,6 +424,7 @@ export class StudentWorkflowService {
       nextSchedule,
       registrationStatus: registration?.status ?? null,
       registrationDocumentId,
+      isKetuaDownloadSuratPermohonan: registration?.permohonanDownloadedAt != null,
       isKetua,
       groupMembers,
       dudiCredential,
@@ -412,7 +444,7 @@ export class StudentWorkflowService {
    * Membuat akun untuk anggota kelompok yang belum punya akun.
    * Dipanggil saat surat penerimaan disetujui.
    */
-  private async createMemberAccounts(
+  async createMemberAccounts(
     registration: { id: string; members: Array<{ id: string; userId: string | null; fullName: string; nisn: string | null }> },
     cohortId: string | null
   ): Promise<Array<{ username: string; fullName: string; temporaryPassword: string }>> {
@@ -430,12 +462,31 @@ export class StudentWorkflowService {
           })
         : member.nisn
           ? await prisma.user.findFirst({
-              where: { username: member.nisn, role: Role.SISWA },
+              // Cari juga lewat NISN di profil — akun lama bisa dibuat dengan
+              // username berbeda (mis. admin membuat manual), padahal identitas
+              // siswa tetap NISN-nya.
+              where: {
+                role: Role.SISWA,
+                OR: [{ username: member.nisn }, { studentProfile: { nisn: member.nisn } }],
+              },
               select: { id: true, username: true, mustChangePassword: true, deletedAt: true, cohortId: true },
             })
           : null;
 
       if (existingUser) {
+        // Aturan aplikasi: username & identifier akun siswa = NISN persis.
+        // Samakan kembali bila akun lama username-nya bukan NISN.
+        if (member.nisn && /^\d{10}$/.test(member.nisn) && existingUser.username !== member.nisn) {
+          try {
+            await prisma.user.update({
+              where: { id: existingUser.id },
+              data: { username: member.nisn, identifier: member.nisn },
+            });
+            existingUser.username = member.nisn;
+          } catch {
+            // Username sudah dipakai akun lain — biarkan, jangan gagalkan provisioning.
+          }
+        }
         // Pulihkan bila dinonaktifkan + pindahkan ke gelombang ini.
         if (existingUser.deletedAt || (cohortId && existingUser.cohortId !== cohortId)) {
           await prisma.user.update({
@@ -473,10 +524,14 @@ export class StudentWorkflowService {
         continue;
       }
 
-      // Buat akun baru
-      let nisn = member.nisn || `NISN${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-      while (await prisma.studentProfile.findFirst({ where: { nisn } })) {
-        nisn = `NISN${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+      // Buat akun baru — username & identifier WAJIB = NISN persis (10 digit).
+      // NISN yang sudah terdaftar sudah tertangkap lookup di atas, jadi tidak
+      // ada lagi fallback `NISN<timestamp><acak>` yang membuat username tidak
+      // sama dengan NISN. Tanpa NISN valid tidak dibuat akun (menyusul setelah
+      // data pendaftaran dilengkapi).
+      const nisn = member.nisn;
+      if (!nisn || !/^\d{10}$/.test(nisn)) {
+        continue;
       }
 
       const plainPassword = generateRandomPassword();
@@ -541,7 +596,14 @@ export class StudentWorkflowService {
           address: registration.companyAddress,
           phone: registration.companyPhone,
           city: registration.companyCity,
+          website: registration.companyWebsite,
         },
+      });
+    } else if (!company.website && registration.companyWebsite) {
+      // Lengkapi website dari data pendaftaran bila Company belum punya.
+      company = await prisma.company.update({
+        where: { id: company.id },
+        data: { website: registration.companyWebsite },
       });
     }
 
@@ -612,14 +674,21 @@ export class StudentWorkflowService {
   ): Promise<void> {
     const existingMentors = await prisma.companyMentor.count({ where: { companyId: company.id } });
     if (existingMentors === 0) {
-      let username = this.generateDudiUsername();
+      // Username DUDI dibuat identik dengan kode kelompok (mis. DUDI-GRP-2026-0001)
+      // agar mudah dikenali & dicari di menu Manajemen User.
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { code: true },
+      });
+      let username = this.generateDudiUsername(group?.code);
       while (
         await prisma.user.findFirst({
           where: { OR: [{ username }, { identifier: username }] },
           select: { id: true },
         })
       ) {
-        username = this.generateDudiUsername();
+        // Bentrok (mis. kode kelompok pernah dipakai): tambah suffix acak.
+        username = this.generateDudiUsername(group?.code, true);
       }
 
       const plainPassword = generateRandomPassword();
@@ -645,12 +714,29 @@ export class StudentWorkflowService {
     await autoAssignDudiMentors(groupId, company.id);
   }
 
-  /** Username acak untuk akun DUDI otomatis, mis. DUDI7K2M9Q (crypto.randomInt). */
-  private generateDudiUsername(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) code += chars.charAt(randomInt(chars.length));
-    return `DUDI${code}`;
+  /**
+   * Username akun DUDI otomatis - mengikuti kode kelompok bila ada,
+   * mis. `DUDI-GRP-2026-0001`. Tanpa kode (atau setelah bentrok) jatuh ke
+   * kode acak `DUDI7K2M9Q` (crypto.randomInt); `uniquify` menambah suffix
+   * acak pada basis kode kelompok agar tetap unik.
+   */
+  private generateDudiUsername(groupCode?: string | null, uniquify = false): string {
+    const randomCode = (): string => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let code = '';
+      for (let i = 0; i < 6; i++) code += chars.charAt(randomInt(chars.length));
+      return code;
+    };
+    // Batasi 40 char agar muat limit username (50) termasuk prefix/suffix.
+    const safe = groupCode
+      ?.replace(/[^A-Za-z0-9-]/g, '')
+      .toUpperCase()
+      .slice(0, 40);
+    if (safe) {
+      if (!uniquify) return `DUDI-${safe}`;
+      return `DUDI-${safe}-${randomCode().slice(0, 3)}`;
+    }
+    return `DUDI${randomCode()}`;
   }
 
   /**

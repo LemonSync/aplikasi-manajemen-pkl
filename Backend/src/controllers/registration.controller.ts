@@ -49,6 +49,7 @@ export class RegistrationController {
       perPage,
       status: query.status,
       cohortId: query.cohortId,
+      withoutGroup: query.withoutGroup === 'true',
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });

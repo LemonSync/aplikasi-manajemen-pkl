@@ -58,9 +58,12 @@ export class RegistrationService {
   }
 
   /**
-   * Tolak bila ada NISN yang masih terikat pendaftaran/kelompok LAIN
-   * (status DRAFT aktif / DIAJUKAN / DISETUJUI). Pendaftaran berstatus
-   * DITOLAK atau sudah di-soft-delete tidak mengikat.
+   * Tolak bila ada NISN yang masih terikat pendaftaran/kelompok LAIN:
+   *  1. Anggota kelompok aktif (GroupMember) — sumber kebenaran tertinggi.
+   *  2. Pendaftaran status DRAFT aktif / DIAJUKAN / DISETUJUI.
+   * Pendaftaran berstatus DITOLAK atau sudah di-soft-delete tidak mengikat.
+   * Pesan dibedakan: "tergabung kelompok" bila kelompok sudah terbentuk,
+   * "terdaftar pada pendaftaran" bila belum (pendaftaran yatim/konflik biasa).
    */
   private async assertMembersFree(
     nisns: Array<string | null | undefined>,
@@ -69,6 +72,33 @@ export class RegistrationService {
     const list = [...new Set(nisns.filter((n): n is string => !!n))];
     if (list.length === 0) return;
 
+    const msgs: string[] = [];
+    const seen = new Set<string>();
+
+    // 1) Sudah menjadi anggota kelompok aktif (NISN = username akun SISWA).
+    const groupMembers = await prisma.groupMember.findMany({
+      where: {
+        group: { deletedAt: null },
+        user: {
+          deletedAt: null,
+          OR: [{ username: { in: list } }, { studentProfile: { nisn: { in: list } } }],
+        },
+      },
+      include: {
+        group: { select: { name: true } },
+        user: { select: { username: true, studentProfile: { select: { fullName: true, nisn: true } } } },
+      },
+    });
+    for (const gm of groupMembers) {
+      const nisn = gm.user.studentProfile?.nisn ?? gm.user.username ?? '';
+      if (seen.has(nisn)) continue;
+      seen.add(nisn);
+      msgs.push(
+        `NISN ${nisn} (${gm.user.studentProfile?.fullName ?? '-'}) sudah tergabung kelompok "${gm.group.name}"`
+      );
+    }
+
+    // 2) Terikat pendaftaran lain (DRAFT/DIAJUKAN/DISETUJUI).
     const conflicts = await prisma.registrationMember.findMany({
       where: {
         nisn: { in: list },
@@ -80,10 +110,13 @@ export class RegistrationService {
           ...(excludeRegistrationId ? { NOT: { id: excludeRegistrationId } } : {}),
         },
       },
-      include: { registration: { select: { code: true, groupName: true, status: true } } },
+      include: {
+        registration: {
+          select: { code: true, groupName: true, status: true, group: { select: { name: true } } },
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
-    if (conflicts.length === 0) return;
 
     const statusLabel: Record<RegistrationStatus, string> = {
       DRAFT: 'masih draft',
@@ -91,16 +124,19 @@ export class RegistrationService {
       DISETUJUI: 'sudah disetujui admin',
       DITOLAK: 'ditolak',
     };
-    const seen = new Set<string>();
-    const msgs: string[] = [];
     for (const c of conflicts) {
       if (!c.nisn || seen.has(c.nisn)) continue;
       seen.add(c.nisn);
+      const reg = c.registration;
       msgs.push(
-        `NISN ${c.nisn} (${c.fullName}) sudah terdaftar di kelompok "${c.registration.groupName}" [${c.registration.code} - ${statusLabel[c.registration.status]}]`
+        reg.group
+          ? `NISN ${c.nisn} (${c.fullName}) sudah tergabung kelompok "${reg.group.name}" melalui pendaftaran [${reg.code}]`
+          : `NISN ${c.nisn} (${c.fullName}) sudah terdaftar pada pendaftaran "${reg.groupName}" [${reg.code} - ${statusLabel[reg.status]}, kelompok belum dibentuk]`
       );
     }
-    throw new BadRequestError(`Sebagian anggota sudah terikat kelompok lain: ${msgs.join(' | ')}`);
+
+    if (msgs.length === 0) return;
+    throw new BadRequestError(`Sebagian anggota sudah terikat pendaftaran/kelompok lain: ${msgs.join(' | ')}`);
   }
 
   /** Membuat (atau mengambil) pendaftaran DRAFT milik siswa. */
@@ -344,10 +380,12 @@ export class RegistrationService {
     perPage: number;
     status?: RegistrationStatus;
     cohortId?: string;
+    withoutGroup?: boolean;
   }) {
     const where = {
       ...(params.status ? { status: params.status } : {}),
       ...(params.cohortId ? { cohortId: params.cohortId } : {}),
+      ...(params.withoutGroup ? { group: { is: null } } : {}),
     };
     return registrationRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
   }

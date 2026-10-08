@@ -240,6 +240,7 @@ model Cohort {
   registrations Registration[]
   phaseSchedules PhaseSchedule[]
   studentRegistries StudentRegistry[]
+  finalReports FinalReport[]
 
   @@index([status])
   @@map("cohorts")
@@ -412,6 +413,7 @@ model Company {
   phone      String?   @db.VarChar(30)
   email      String?
   city       String?
+  website    String?   @db.VarChar(255)
   isActive   Boolean   @default(true)
 
   createdAt  DateTime  @default(now())
@@ -478,6 +480,7 @@ model Group {
   journals     Journal[]
   complaints   Complaint[]
   visits       Visit[]
+  finalReport  FinalReport?
 
   @@index([cohortId])
   @@index([companyId])
@@ -582,6 +585,11 @@ model Registration {
 
   status        RegistrationStatus @default(DRAFT)
   note          String?            @db.Text            // catatan/alasan penolakan admin
+
+  // Gerbang Fase 1 → Fase 2: ketua wajib sudah mengunduh Surat Permohonan
+  // sebelum dialihkan ke daftar ulang (tanpa surat ini mereka tidak bisa
+  // memperoleh Surat Penerimaan dari perusahaan).
+  permohonanDownloadedAt DateTime?
 
   submittedAt   DateTime?
   reviewedById  String?
@@ -753,6 +761,14 @@ model ComplaintReply {
 }
 
 /// Kunjungan/monitoring guru ke perusahaan
+/// Status monitoring guru pembimbing.
+enum VisitStatus {
+  TERJADWAL
+  TERTUNDA
+  BATAL
+  SELESAI
+}
+
 model Visit {
   id            String   @id @default(cuid())
   supervisorId  String
@@ -761,9 +777,14 @@ model Visit {
   group         Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
   companyId     String?
   company       Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  status        VisitStatus @default(TERJADWAL)
   scheduledAt   DateTime
   visitedAt     DateTime?
   note          String?  @db.Text
+
+  // Bukti foto monitoring — wajib diunggah guru saat menandai selesai.
+  photoPath     String?  // path relatif terhadap storage root
+  photoName     String?  // nama file asli dari pengunggah
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -772,6 +793,24 @@ model Visit {
   @@index([groupId])
   @@index([companyId])
   @@map("visits")
+}
+
+/// Laporan hasil akhir PKL per kelompok (PDF). Diterbitkan satu kali setelah
+/// masa PKL selesai; isi nilai DUDI di-snapshot saat terbit (bila DUDI belum
+/// menginput nilai, bagian nilai terbit dalam keadaan kosong).
+model FinalReport {
+  id        String   @id @default(cuid())
+  groupId   String   @unique
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  cohortId  String?
+  cohort    Cohort?  @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  pdfPath   String   // hasil generate PDF (path relatif storage root)
+  issuedAt  DateTime @default(now()) // waktu terbit — data nilai disnapshot saat ini
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cohortId])
+  @@map("final_reports")
 }
 
 // ============================================================================

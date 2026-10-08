@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma';
-import { DocumentType } from '@prisma/client';
+import { DocumentType, RegistrationStatus } from '@prisma/client';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { encryptCredential } from '../utils/credentialCipher';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
@@ -129,7 +129,14 @@ export class UserManageService {
         skip: (params.page - 1) * params.perPage,
         take: params.perPage,
         orderBy: { createdAt: 'desc' },
-        include: { studentProfile: true, teacherProfile: true },
+        include: {
+          studentProfile: true,
+          teacherProfile: true,
+          // DUDI: nama mentor + perusahaan agar tampil & bisa dicari di Manajemen User
+          companyMentor: {
+            select: { fullName: true, company: { select: { name: true } } },
+          },
+        },
       }),
       prisma.user.count({ where }),
     ]);
@@ -290,10 +297,11 @@ export class UserManageService {
   }
 
   /**
-   * Hapus akun user secara permanen (hard delete).
+   * Hapus akun user (soft delete — disembunyikan & tidak bisa login).
    * Aturan:
    *  - Tidak boleh menghapus diri sendiri.
    *  - Hanya role SISWA, GURU_PEMBIMBING, DUDI yang boleh dihapus (admin & super_admin dilindungi).
+   *  - Pendaftaran yang dipimpin user & belum membentuk kelompok ikut dinonaktifkan.
    */
   async delete(id: string, actorId: string) {
     if (id === actorId) {
@@ -311,10 +319,35 @@ export class UserManageService {
     // SOFT delete: akun disembunyikan dari daftar & tidak bisa login
     // (auth mengecek deletedAt), tetapi data terkait — absensi, jurnal,
     // nilai, dokumen, surat — TETAP tersimpan di database.
-    return prisma.user.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
+    //
+    // Pendaftaran yang dipimpin user ini IKUT dinonaktifkan bila belum
+    // membentuk kelompok: pendaftaran yatim (ketua dihapus) akan terus
+    // mengikat NISN anggota lewat assertMembersFree sehingga NISN tidak
+    // bisa didaftarkan ulang oleh ketua baru, padahal di halaman Kelompok
+    // tidak ada kelompoknya. Pendaftaran yang SUDAH menjadi kelompok tetap
+    // dipertahankan (Group.registration menunjuk ke sana).
+    const [, orphanedRegs] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      }),
+      prisma.registration.updateMany({
+        where: {
+          leaderId: id,
+          deletedAt: null,
+          group: null,
+          status: {
+            in: [
+              RegistrationStatus.DRAFT,
+              RegistrationStatus.DIAJUKAN,
+              RegistrationStatus.DISETUJUI,
+            ],
+          },
+        },
+        data: { deletedAt: new Date() },
+      }),
+    ]);
+    return { ...user, orphanedRegistrations: orphanedRegs.count };
   }
 
   /**

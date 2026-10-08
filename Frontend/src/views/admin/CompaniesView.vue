@@ -11,6 +11,7 @@ interface CompanyItem {
   name: string;
   address: string | null;
   city: string | null;
+  website: string | null;
   industry?: { name: string } | null;
 }
 
@@ -30,6 +31,7 @@ const form = ref({
   phone: '',
   email: '',
   city: '',
+  website: '',
 });
 
 const load = async (): Promise<void> => {
@@ -47,7 +49,7 @@ const load = async (): Promise<void> => {
 };
 
 const openForm = (): void => {
-  form.value = { name: '', address: '', industryId: '', phone: '', email: '', city: '' };
+  form.value = { name: '', address: '', industryId: '', phone: '', email: '', city: '', website: '' };
   showForm.value = true;
 };
 
@@ -63,6 +65,7 @@ const create = async (): Promise<void> => {
       phone: form.value.phone || null,
       email: form.value.email || null,
       city: form.value.city || null,
+      website: form.value.website.trim() || null,
     });
     success.value = 'Perusahaan ditambahkan.';
     showForm.value = false;
@@ -91,13 +94,14 @@ onMounted(load);
         </div>
       </div>
 
-      <SkeletonTable v-if="loading" :rows="6" :cols="4" />
+      <SkeletonTable v-if="loading" :rows="6" :cols="5" />
       <table v-else class="table">
         <thead>
           <tr>
             <th>Nama</th>
             <th>Industri</th>
             <th>Kota</th>
+            <th>Website</th>
             <th>Alamat</th>
           </tr>
         </thead>
@@ -106,10 +110,22 @@ onMounted(load);
             <td class="font-medium">{{ c.name }}</td>
             <td>{{ c.industry?.name ?? '-' }}</td>
             <td>{{ c.city ?? '-' }}</td>
+            <td>
+              <a
+                v-if="c.website"
+                :href="c.website"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-primary-600 hover:underline"
+              >
+                {{ c.website.replace(/^https?:\/\//, '') }}
+              </a>
+              <span v-else class="text-gray-400">-</span>
+            </td>
             <td class="text-gray-500">{{ c.address ?? '-' }}</td>
           </tr>
           <tr v-if="companies.length === 0">
-            <td colspan="4" class="py-4 text-center text-gray-400">Belum ada data.</td>
+            <td colspan="5" class="py-4 text-center text-gray-400">Belum ada data.</td>
           </tr>
         </tbody>
       </table>
@@ -143,6 +159,10 @@ onMounted(load);
         <div class="sm:col-span-2">
           <label class="label">Alamat</label>
           <input v-model="form.address" class="input" />
+        </div>
+        <div class="sm:col-span-2">
+          <label class="label">Website (opsional)</label>
+          <input v-model="form.website" class="input" inputmode="url" placeholder="https://www.contoh-perusahaan.com" />
         </div>
       </div>
 

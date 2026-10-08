@@ -128,16 +128,20 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Verifikasi Pendaftaran' },
       },
       {
+        // Menu lama digabung ke "Verifikasi Dokumen" (admin/dokumen)
         path: 'admin/verifikasi-penerimaan',
-        name: 'admin-verify-penerimaan',
-        component: () => import('@/views/admin/VerifyPenerimaanView.vue'),
-        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Verifikasi Surat Penerimaan' },
+        redirect: { name: 'admin-documents' },
       },
       {
+        // Menu lama digabung ke "Verifikasi Dokumen" (admin/dokumen)
         path: 'admin/verifikasi-daftar-ulang',
-        name: 'admin-verify-daftar-ulang',
-        component: () => import('@/views/admin/VerifyDaftarUlangView.vue'),
-        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Verifikasi Surat Pernyataan' },
+        redirect: { name: 'admin-documents' },
+      },
+      {
+        path: 'admin/surat',
+        name: 'admin-letters',
+        component: () => import('@/views/admin/LettersView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Surat (Generate & Terbit)' },
       },
       {
         path: 'admin/kelompok',
@@ -149,7 +153,7 @@ const routes: RouteRecordRaw[] = [
         path: 'admin/dokumen',
         name: 'admin-documents',
         component: () => import('@/views/admin/DocumentsView.vue'),
-        meta: { roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] as Role[], title: 'Verifikasi Dokumen & Laporan' },
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] as Role[], title: 'Verifikasi Dokumen' },
       },
       {
         path: 'admin/perusahaan',
@@ -161,7 +165,7 @@ const routes: RouteRecordRaw[] = [
         path: 'admin/penilaian',
         name: 'admin-grade-recap',
         component: () => import('@/views/admin/GradeRecapView.vue'),
-        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Rekap Penilaian & Surat Penarikan' },
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Rekap Penilaian' },
       },
       // --- DUDI ---
       {

@@ -7,10 +7,8 @@ import {
   pernyataanService,
   documentService,
   downloadFile,
-  phase4Service,
   type StudentWorkflowStatus,
   type PernyataanPrefill,
-  type LetterRecord,
 } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import RegistrationView from './RegistrationView.vue';
@@ -39,12 +37,13 @@ const penerimaanFile = ref<File | null>(null);
 const uploadingPenerimaan = ref(false);
 
 // --- Anggota kelompok (untuk ketua) ---
-const groupMembers = ref<Array<{ username: string; fullName: string; temporaryPassword: string }>>([]);
+const groupMembers = ref<Array<{ username: string; fullName: string; temporaryPassword: string | null }>>([]);
 const dudiCredential = ref<{ fullName: string; username: string } | null>(null);
 
-// --- Surat kelompok milik siswa (pengantar/penugasan/penarikan) ---
-const myLetters = ref<LetterRecord[]>([]);
-const downloadingLetterId = ref('');
+/** Password anggota disembunyikan backend (semua anggota sudah login + Surat Pernyataan di-ACC). */
+const membersPasswordHidden = computed(
+  () => groupMembers.value.length > 0 && groupMembers.value.every((m) => m.temporaryPassword === null)
+);
 
 const PHASE_LABELS: Record<string, string> = {
   PRA_PKL: 'Pra-Pendaftaran PKL',
@@ -82,31 +81,10 @@ const load = async () => {
     if (status.value?.effectivePhase === 'NON_PKL') {
       await loadNonPklData();
     }
-
-    // Surat kelompok (pengantar/penugasan) yang sudah diterbitkan admin
-    if (status.value?.hasGroup) {
-      try {
-        myLetters.value = await phase4Service.listLetters();
-      } catch {
-        myLetters.value = [];
-      }
-    }
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
     loading.value = false;
-  }
-};
-
-const downloadMyLetter = async (letter: LetterRecord): Promise<void> => {
-  downloadingLetterId.value = letter.id;
-  error.value = '';
-  try {
-    await phase4Service.downloadLetter(letter);
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    downloadingLetterId.value = '';
   }
 };
 
@@ -305,43 +283,6 @@ onMounted(load);
       </div>
     </section>
 
-    <!-- Surat kelompok yang sudah terbit (pengantar/penugasan/penarikan) -->
-    <div v-if="myLetters.length > 0" class="card">
-      <div class="mb-3 flex items-center justify-between">
-        <div>
-          <h3 class="text-base font-semibold text-gray-900">Surat Kelompok Anda</h3>
-          <p class="text-sm text-gray-500">Surat resmi yang diterbitkan sekolah untuk kelompok Anda.</p>
-        </div>
-        <span class="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700">{{ myLetters.length }} surat</span>
-      </div>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-left text-gray-500">
-            <th>Tanggal</th>
-            <th>Jenis</th>
-            <th>Nomor</th>
-            <th class="text-right">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="l in myLetters" :key="l.id" class="border-t">
-            <td>{{ new Date(l.createdAt).toLocaleDateString('id-ID') }}</td>
-            <td>{{ l.type.replace(/_/g, ' ') }}</td>
-            <td class="font-mono">{{ l.number ?? '-' }}</td>
-            <td class="text-right">
-              <button
-                class="text-primary-600 hover:underline disabled:opacity-50"
-                :disabled="downloadingLetterId === l.id"
-                @click="downloadMyLetter(l)"
-              >
-                {{ downloadingLetterId === l.id ? 'Mengunduh…' : 'Unduh PDF' }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
     <!-- Notifikasi -->
     <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
     <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
@@ -416,7 +357,7 @@ onMounted(load);
     </div>
 
     <!-- ==================== PRA_PKL ==================== -->
-    <RegistrationView v-if="status.effectivePhase === 'PRA_PKL' && !status.hasCompleted" />
+    <RegistrationView v-if="status.effectivePhase === 'PRA_PKL' && !status.hasCompleted" @downloaded="load" />
 
     <div v-else-if="status.effectivePhase === 'PRA_PKL' && status.hasCompleted" class="card">
       <div class="flex items-center justify-between">
@@ -491,20 +432,27 @@ onMounted(load);
             <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">2</span>
             <div>
               <h2 class="text-lg font-semibold text-gray-800">Akun Anggota Kelompok</h2>
-              <p class="text-sm text-gray-500">Berikan informasi login ini kepada anggota. Mereka akan login untuk mengisi Surat Pernyataan.</p>
+              <p v-if="!membersPasswordHidden" class="text-sm text-gray-500">Berikan informasi login ini kepada anggota. Mereka akan login untuk mengisi Surat Pernyataan.</p>
+              <p v-else class="text-sm text-gray-500">Anggota sudah login dengan akun masing-masing. Hanya nama dan NISN yang ditampilkan.</p>
             </div>
           </div>
           <table class="table">
-            <thead><tr><th>Nama</th><th>Username (NISN)</th><th>Password</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Nama</th>
+                <th>Username (NISN)</th>
+                <th v-if="!membersPasswordHidden">Password</th>
+              </tr>
+            </thead>
             <tbody>
               <tr v-for="m in groupMembers" :key="m.username">
                 <td>{{ m.fullName }}</td>
                 <td class="font-mono">{{ m.username }}</td>
-                <td class="font-mono text-amber-600">{{ m.temporaryPassword }}</td>
+                <td v-if="!membersPasswordHidden" class="font-mono text-amber-600">{{ m.temporaryPassword }}</td>
               </tr>
             </tbody>
           </table>
-          <p class="mt-3 text-xs text-gray-500">Semua anggota wajib ganti password saat login pertama.</p>
+          <p v-if="!membersPasswordHidden" class="mt-3 text-xs text-gray-500">Semua anggota wajib ganti password saat login pertama.</p>
         </div>
 
         <!-- Step 3: Akun DUDI (dibuat otomatis dari data mentor Fase 1) -->
