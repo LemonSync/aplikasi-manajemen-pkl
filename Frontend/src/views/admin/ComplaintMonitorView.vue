@@ -13,6 +13,7 @@ const cohortStore = useCohortStore();
 const loading = ref(true);
 const error = ref('');
 const statusFilter = ref('');
+const search = ref('');
 const busy = ref(false);
 const replyBody = ref('');
 const activeId = ref<string | null>(null);
@@ -20,6 +21,18 @@ const activeId = ref<string | null>(null);
 const active = computed<ComplaintRecord | null>(
   () => complaints.value.find((c) => c.id === activeId.value) ?? null
 );
+
+/** Cari subjek, penulis, atau nama kelompok (FE-side, daftar tidak dipaginasi). */
+const filteredComplaints = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return complaints.value;
+  return complaints.value.filter((c) =>
+    [c.subject, c.author?.studentProfile?.fullName ?? '', c.author?.username ?? '', c.group?.name ?? '']
+      .join(' ')
+      .toLowerCase()
+      .includes(q)
+  );
+});
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -97,6 +110,12 @@ watch(
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-gray-800">Pengaduan Siswa</h2>
         <div class="flex items-center gap-2">
+          <input
+            v-model="search"
+            class="input w-56"
+            type="search"
+            placeholder="Cari subjek, penulis, kelompok…"
+          />
           <select v-model="statusFilter" class="input w-auto" @change="load">
             <option value="">Semua Status</option>
             <option value="TERBUKA">Terbuka</option>
@@ -110,7 +129,7 @@ watch(
       <SkeletonTable v-if="loading" :rows="6" :cols="4" />
       <div v-else class="divide-y divide-gray-100">
         <button
-          v-for="c in complaints"
+          v-for="c in filteredComplaints"
           :key="c.id"
           class="flex w-full items-center justify-between gap-3 px-1 py-3 text-left hover:bg-gray-50"
           @click="open(c.id)"
@@ -125,7 +144,9 @@ watch(
           </div>
           <StatusBadge :status="c.status" />
         </button>
-        <p v-if="complaints.length === 0" class="py-4 text-center text-gray-400">Belum ada pengaduan.</p>
+        <p v-if="filteredComplaints.length === 0" class="py-4 text-center text-gray-400">
+          {{ search.trim() ? 'Tidak ada pengaduan yang cocok dengan pencarian.' : 'Belum ada pengaduan.' }}
+        </p>
       </div>
     </div>
 

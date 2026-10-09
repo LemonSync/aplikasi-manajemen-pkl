@@ -105,7 +105,9 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Penilaian & Approval Laporan' },
       },
       {
-        path: 'pengaduan',
+        // Path unik — sebelumnya bentrok dengan 'pengaduan' (siswa) sehingga
+        // reload URL di sini selalu kena route siswa → 403.
+        path: 'monitor-pengaduan',
         name: 'complaint-monitor',
         component: () => import('@/views/admin/ComplaintMonitorView.vue'),
         meta: {

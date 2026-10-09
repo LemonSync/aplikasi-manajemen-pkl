@@ -278,10 +278,8 @@ export const groupService = {
  * Service perusahaan.
  */
 export const companyService = {
-  async list(search?: string): Promise<{ items: unknown[]; meta?: PaginationMeta }> {
-    const { data } = await http.get<ApiResponse<unknown[]>>('/companies', {
-      params: search ? { search } : {},
-    });
+  async list(params?: { search?: string; industryId?: string; page?: number; perPage?: number }): Promise<{ items: unknown[]; meta?: PaginationMeta }> {
+    const { data } = await http.get<ApiResponse<unknown[]>>('/companies', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
   async create(payload: unknown): Promise<unknown> {
@@ -744,7 +742,7 @@ export const studentRegistryService = {
     });
     return data.data;
   },
-  async list(cohortId: string, params?: { page?: number; perPage?: number }): Promise<{ items: StudentRegistryRecord[]; meta?: PaginationMeta }> {
+  async list(cohortId: string, params?: { page?: number; perPage?: number; search?: string }): Promise<{ items: StudentRegistryRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<StudentRegistryRecord[]>>('/student-registry', {
       params: { cohortId, ...params },
     });
@@ -1041,7 +1039,7 @@ export const dashboardService = {
 
 /** Service audit log. */
 export const auditLogService = {
-  async list(params?: { action?: string; actorId?: string }): Promise<{ items: AuditLogRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { action?: string; actorId?: string; search?: string }): Promise<{ items: AuditLogRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<AuditLogRecord[]>>('/audit-logs', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { groupService, phase4Service, type LetterRecord } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -51,6 +51,16 @@ const withdrawNumber = ref('');
 const letters = ref<LetterRecord[]>([]);
 const lettersLoading = ref(false);
 const letterFilter = ref('');
+const letterSearch = ref('');
+
+/** Cari nomor/perihal/penanda tangan surat terbit (FE-side). */
+const filteredLetters = computed(() => {
+  const q = letterSearch.value.trim().toLowerCase();
+  if (!q) return letters.value;
+  return letters.value.filter((l) =>
+    [l.number ?? '', l.subject ?? '', l.signerName, l.type].join(' ').toLowerCase().includes(q)
+  );
+});
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -311,6 +321,12 @@ onMounted(() => {
           <p class="text-sm text-gray-500">Semua surat yang sudah digenerate sistem (Pengantar, Penugasan, Penarikan).</p>
         </div>
         <div class="flex items-center gap-2">
+          <input
+            v-model="letterSearch"
+            class="input w-56"
+            type="search"
+            placeholder="Cari nomor, perihal, penanda tangan…"
+          />
           <select v-model="letterFilter" class="input w-auto" @change="loadLetters">
             <option value="">Semua Jenis</option>
             <option value="PENGANTAR">Pengantar</option>
@@ -334,7 +350,7 @@ onMounted(() => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="l in letters" :key="l.id">
+          <tr v-for="l in filteredLetters" :key="l.id">
             <td>{{ new Date(l.createdAt).toLocaleDateString('id-ID') }}</td>
             <td><StatusBadge :status="l.type" /></td>
             <td class="font-mono">{{ l.number ?? '-' }}</td>
@@ -344,8 +360,10 @@ onMounted(() => {
               <button class="text-sm text-primary-600 hover:underline" @click="downloadLetter(l)">Unduh</button>
             </td>
           </tr>
-          <tr v-if="letters.length === 0">
-            <td colspan="6" class="py-4 text-center text-gray-400">Belum ada surat terbit.</td>
+          <tr v-if="filteredLetters.length === 0">
+            <td colspan="6" class="py-4 text-center text-gray-400">
+              {{ letterSearch.trim() ? 'Tidak ada surat yang cocok dengan pencarian.' : 'Belum ada surat terbit.' }}
+            </td>
           </tr>
         </tbody>
       </table>

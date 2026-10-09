@@ -10,7 +10,8 @@ export class AuditLogController {
     const action = req.query.action as string | undefined;
     const actorId = req.query.actorId as string | undefined;
     const entityType = req.query.entityType as string | undefined;
-    const { items, total } = await auditLogService.list({ page, perPage, action, actorId, entityType });
+    const search = (req.query.search as string | undefined)?.trim() || undefined;
+    const { items, total } = await auditLogService.list({ page, perPage, action, actorId, entityType, search });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 }

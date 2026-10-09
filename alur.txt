@@ -1,0 +1,37 @@
+1. buat gelombang
+2. buat fase gelombang
+3. import data siswa
+4. membuat akun guru
+
+[FASE 1]
+4. buat akun ketua -> serahkan ke ketua kelompok anggota siswa
+5. akun ketua login
+6. ketua mengisis form pendaftaran, memasukkan data perusahaan dan menginput nisn setiap anggota kelompoknya lalu menunggu verifikasi dari admin untuk konfirmasi validasi pendaftaran
+7. admin mengecek dan mengkonfirmasi pendaftaran
+8. ketua lgoin ulang/refresh(F5) lalu akan disuruh untuk mengunduh pdf permohonan pkl di perusahaan yang diinput oleh akun ketuanya lalu memberikan surat permohonan tersebut ke perusahaan tempat mereka PKL
+
+[FASE 2]
+9. Selanjutnya ketua login ke webnya lalu memasukkan surat penerimaan dari tempat mereka pkl dan menunggu konfirmasi dari admin.
+10. admin memeriksa kebenaran dan mengkonfirmasikan surat penerimaan tersebut
+11. ketua login/refresh(F5) lalu web menampilkan data akun siswa dan dudi. masing masing anggota siswa harus login
+12. masing masing siswa login dan mengisi form surat pernyataan lalu mengupload dan mengunduh surat pernyataan
+13. selanjutnya masing masing siswa disuruh untuk print, materai dan tanda tangan lalu mengupload surat tersebut dan menunggu konfirmasi admin
+14. admin memeriksa dan mengkonfirmasi surat pernyataan pkl tersebut
+15. siswa disuruh tunggu sebelum masa pkl dimulai
+
+[FASE 3]
+16. Web membuat surat pengantaran dan mengirimnya ke akun ketua agar siswa/ketua mengunduh dan ngeprint lalu memberikan kepada guru pembimbing mereka
+17. siswa meminta password untuk akun dudi ke admin dan admin meminta nomor whatsapp dudi
+18. admin mereset password akun dudi kelompok tersebut lalu mengirim ke kontak whatsapp dudi tersebut
+19. admin menugaskan guru pembimbing ke kelompok siswa tersebut
+20. siswa login setiap hari dan melakukan absensi serta mengisi jurnal
+20 ---- Dudi memeriksa dan mengkonfirmasi presensi siswa
+20 ---- Guru pembimbing bisa melakukan monitoring
+20 ---- Siswa dapat melakukan pengaduan dan langsung diperiksa oleh admin dan guru pembimbing
+
+[FASE 4]
+21. dudi menginput nilai ke siswa
+22. Siswa login hanya untuk melihat dan menguduh rekap nilai, jurnal mereka
+23. Web membuat surat penarikan siswa dan mengirimnya ke akun guru lalu menjemput siswa dari tempat pkl
+24. admin mengambil semua data absensi, nilai, pengaduan, monitoring dari kelompok siswa tersebut.
+25. Masa pkl selesai

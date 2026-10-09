@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   groupService,
   masterService,
@@ -53,6 +53,31 @@ const success = ref('');
 
 // Filter daftar kelompok: mengikuti konteks global di header (cohortStore).
 const cohortStore = useCohortStore();
+const search = ref('');
+const statusFilter = ref('');
+
+/** Status yang ada di data, untuk opsi filter dinamis. */
+const statusOptions = computed(() => [...new Set(groups.value.map((g) => g.status))]);
+
+/** Kelompok disaring berdasarkan status + pencarian (kode/nama/perusahaan/anggota). */
+const filteredGroups = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return groups.value.filter((g) => {
+    if (statusFilter.value && g.status !== statusFilter.value) return false;
+    if (!q) return true;
+    const membersText = (g.members ?? [])
+      .map((m) => `${m.user?.studentProfile?.fullName ?? ''} ${m.user?.username ?? ''}`)
+      .join(' ');
+    return [g.code, g.name, g.company?.name ?? '', membersText].join(' ').toLowerCase().includes(q);
+  });
+});
+
+const hasFilters = (): boolean => Boolean(search.value.trim() || statusFilter.value);
+
+const resetFilters = (): void => {
+  search.value = '';
+  statusFilter.value = '';
+};
 
 const form = ref({
   name: '',
@@ -283,6 +308,19 @@ watch(
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <h2 class="text-lg font-semibold text-gray-800">Daftar Kelompok</h2>
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            v-model="search"
+            class="input w-72"
+            type="search"
+            placeholder="Cari kode, nama, perusahaan, anggota…"
+          />
+          <select v-model="statusFilter" class="input w-auto">
+            <option value="">Semua Status</option>
+            <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <button v-if="hasFilters()" class="btn-secondary" @click="resetFilters">Reset</button>
+        </div>
       </div>
       <div v-if="loading" class="loading" />
       <table v-else class="table">
@@ -297,7 +335,7 @@ watch(
           </tr>
         </thead>
         <tbody>
-          <tr v-for="g in groups" :key="g.id">
+          <tr v-for="g in filteredGroups" :key="g.id">
             <td class="font-medium">{{ g.code }}</td>
             <td>{{ g.name }}</td>
             <td>{{ g.company?.name ?? '-' }}</td>
@@ -309,8 +347,10 @@ watch(
               <button class="text-sm text-red-600 hover:underline" @click="askDelete(g)">Hapus</button>
             </td>
           </tr>
-          <tr v-if="groups.length === 0">
-            <td colspan="6" class="py-4 text-center text-gray-400">Belum ada kelompok.</td>
+          <tr v-if="filteredGroups.length === 0">
+            <td colspan="6" class="py-4 text-center text-gray-400">
+              {{ hasFilters() ? 'Tidak ada kelompok yang cocok dengan filter.' : 'Belum ada kelompok.' }}
+            </td>
           </tr>
         </tbody>
       </table>

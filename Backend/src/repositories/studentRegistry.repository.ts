@@ -40,8 +40,15 @@ export class StudentRegistryRepository {
     });
   }
 
-  async findByCohort(cohortId: string, skip: number, take: number) {
-    const where = { cohortId, isActive: true };
+  async findByCohort(cohortId: string, skip: number, take: number, search?: string) {
+    const where: Record<string, unknown> = { cohortId, isActive: true };
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search } },
+        { nisn: { contains: search } },
+        { className: { contains: search } },
+      ];
+    }
     const [items, total] = await Promise.all([
       prisma.studentRegistry.findMany({
         where,

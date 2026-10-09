@@ -25,6 +25,38 @@ const filters = ref<{ status: string; from: string; to: string }>({
   from: '',
   to: '',
 });
+const search = ref('');
+
+/**
+ * Filter kelas/kelompok/siswa (FE-side, di luar filter status+tanggal server).
+ * Kelas cocok nama → tampil utuh; jika tidak, tampil hanya kelompok/siswa yang cocok.
+ */
+const filteredClasses = computed<AttendanceClassSection[]>(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return classes.value;
+  return classes.value
+    .map((cls) => {
+      if (cls.className.toLowerCase().includes(q)) return cls;
+      const groups = cls.groups
+        .map((g) => {
+          if ([g.groupName, g.companyName ?? ''].join(' ').toLowerCase().includes(q)) return g;
+          return {
+            ...g,
+            students: g.students.filter((s) =>
+              [s.fullName, s.username, s.nisn ?? ''].join(' ').toLowerCase().includes(q)
+            ),
+          };
+        })
+        .filter((g) => g.students.length > 0);
+      if (groups.length === 0) return null;
+      return {
+        ...cls,
+        groups,
+        studentCount: groups.reduce((acc, g) => acc + g.students.length, 0),
+      };
+    })
+    .filter((cls): cls is AttendanceClassSection => cls !== null);
+});
 
 // Modal drill-down: kelas -> kelompok -> rincian siswa
 const detailClass = ref<AttendanceClassSection | null>(null);
@@ -157,6 +189,15 @@ watch(
           <p class="text-sm text-gray-500">{{ total }} absensi</p>
         </div>
         <div>
+          <label class="label">Cari</label>
+          <input
+            v-model="search"
+            class="input max-w-[240px]"
+            type="search"
+            placeholder="Kelas, kelompok, nama, NISN…"
+          />
+        </div>
+        <div>
           <label class="label">Status</label>
           <select v-model="filters.status" class="input max-w-[160px]" @change="load">
             <option value="">Semua</option>
@@ -178,6 +219,9 @@ watch(
 
       <SkeletonTable v-if="loading" :rows="6" :cols="6" />
       <div v-else-if="classes.length === 0" class="py-6 text-center text-sm text-gray-400">Belum ada data absensi.</div>
+      <div v-else-if="filteredClasses.length === 0" class="py-6 text-center text-sm text-gray-400">
+        Tidak ada data yang cocok dengan pencarian.
+      </div>
       <table v-else class="table">
         <thead>
           <tr>
@@ -194,7 +238,7 @@ watch(
         </thead>
         <tbody>
           <tr
-            v-for="cls in classes"
+            v-for="cls in filteredClasses"
             :key="cls.className"
             class="cursor-pointer hover:bg-gray-50"
             @click="openClass(cls)"

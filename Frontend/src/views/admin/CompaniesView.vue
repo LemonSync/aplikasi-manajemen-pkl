@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { companyService, masterService, type MasterLookups } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
@@ -12,7 +12,7 @@ interface CompanyItem {
   address: string | null;
   city: string | null;
   website: string | null;
-  industry?: { name: string } | null;
+  industry?: { id?: string; name: string } | null;
 }
 
 const companies = ref<CompanyItem[]>([]);
@@ -22,6 +22,7 @@ const saving = ref(false);
 const error = ref('');
 const success = ref('');
 const search = ref('');
+const industryFilter = ref('');
 const showForm = ref(false);
 
 const form = ref({
@@ -38,7 +39,14 @@ const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    const [c, lk] = await Promise.all([companyService.list(search.value || undefined), masterService.lookups()]);
+    const [c, lk] = await Promise.all([
+      companyService.list({
+        search: search.value.trim() || undefined,
+        industryId: industryFilter.value || undefined,
+        perPage: 100,
+      }),
+      masterService.lookups(),
+    ]);
     companies.value = c.items as unknown as CompanyItem[];
     lookups.value = lk;
   } catch (e) {
@@ -47,6 +55,24 @@ const load = async (): Promise<void> => {
     loading.value = false;
   }
 };
+
+const hasFilters = (): boolean => Boolean(search.value.trim() || industryFilter.value);
+
+const resetFilters = (): void => {
+  search.value = '';
+  industryFilter.value = '';
+  void load();
+};
+
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(search, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 400);
+});
+watch(industryFilter, () => {
+  clearTimeout(searchTimer);
+  void load();
+});
 
 const openForm = (): void => {
   form.value = { name: '', address: '', industryId: '', phone: '', email: '', city: '', website: '' };
@@ -86,10 +112,20 @@ onMounted(load);
     <div v-if="success" class="bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
-      <div class="mb-4 flex items-center justify-between">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-gray-800">Perusahaan (DUDI)</h2>
-        <div class="flex gap-2">
-          <input v-model="search" class="input" placeholder="Cari…" @keyup.enter="load" />
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            v-model="search"
+            class="input w-56"
+            type="search"
+            placeholder="Cari nama atau kota…"
+          />
+          <select v-model="industryFilter" class="input w-auto">
+            <option value="">Semua Industri</option>
+            <option v-for="i in lookups?.industries ?? []" :key="i.id" :value="i.id">{{ i.name }}</option>
+          </select>
+          <button v-if="hasFilters()" class="btn-secondary" @click="resetFilters">Reset</button>
           <button class="btn-primary" @click="openForm">Tambah</button>
         </div>
       </div>
@@ -125,7 +161,9 @@ onMounted(load);
             <td class="text-gray-500">{{ c.address ?? '-' }}</td>
           </tr>
           <tr v-if="companies.length === 0">
-            <td colspan="5" class="py-4 text-center text-gray-400">Belum ada data.</td>
+            <td colspan="5" class="py-4 text-center text-gray-400">
+              {{ hasFilters() ? 'Tidak ada perusahaan yang cocok dengan filter.' : 'Belum ada data.' }}
+            </td>
           </tr>
         </tbody>
       </table>

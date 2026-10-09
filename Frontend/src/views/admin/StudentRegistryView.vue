@@ -23,6 +23,7 @@ const error = ref('');
 const success = ref('');
 const importResult = ref<StudentRegistryImportResult | null>(null);
 const selectedFile = ref<File | null>(null);
+const search = ref('');
 
 const showAdd = ref(false);
 const adding = ref(false);
@@ -39,7 +40,11 @@ const loadStudents = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    const { items } = await studentRegistryService.list(selectedCohort.value, { page: 1, perPage: 100 });
+    const { items } = await studentRegistryService.list(selectedCohort.value, {
+      page: 1,
+      perPage: 100,
+      search: search.value.trim() || undefined,
+    });
     students.value = items;
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -47,6 +52,12 @@ const loadStudents = async (): Promise<void> => {
     loading.value = false;
   }
 };
+
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(search, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadStudents, 400);
+});
 
 const onFileChange = (event: Event): void => {
   const input = event.target as HTMLInputElement;
@@ -259,9 +270,21 @@ watch(
           <h2 class="text-lg font-semibold text-gray-800">Master Siswa ({{ students.length }} data)</h2>
           <button class="btn-primary" @click="openAdd">+ Tambah Siswa</button>
         </div>
+        <input
+          v-model="search"
+          class="input w-72"
+          type="search"
+          placeholder="Cari NISN, nama, atau kelas…"
+        />
       </div>
       <div v-if="loading" class="loading" />
-      <div v-else-if="students.length === 0" class="text-sm text-gray-400">Belum ada data. Import Excel atau klik "+ Tambah Siswa".</div>
+      <div v-else-if="students.length === 0" class="text-sm text-gray-400">
+        {{
+          search.trim()
+            ? 'Tidak ada siswa yang cocok dengan pencarian.'
+            : 'Belum ada data. Import Excel atau klik "+ Tambah Siswa".'
+        }}
+      </div>
       <table v-else class="table">
         <thead>
           <tr>

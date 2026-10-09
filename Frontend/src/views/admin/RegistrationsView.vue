@@ -17,6 +17,7 @@ const cohortStore = useCohortStore();
 // Filter status tinjauan. Default: belum ditinjau (menunggu verifikasi).
 type StatusFilter = 'DIAJUKAN' | 'DISETUJUI' | 'DITOLAK' | 'SEMUA';
 const statusFilter = ref<StatusFilter>('DIAJUKAN');
+const search = ref('');
 
 const FILTER_TABS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'DIAJUKAN', label: 'Belum Ditinjau' },
@@ -46,11 +47,29 @@ const statusCounts = computed<Record<StatusFilter, number>>(() => {
   return counts;
 });
 
-/** Kelompok yang disaring sesuai tab status; kelompok tanpa kecocokan disembunyikan. */
+/** Kelompok yang disaring sesuai tab status + pencarian; kelompok tanpa kecocokan disembunyikan. */
 const filteredGroups = computed<GroupedRegistration[]>(() => {
-  if (statusFilter.value === 'SEMUA') return groups.value;
-  return groups.value
-    .map((g) => ({ ...g, registrations: g.registrations.filter((r) => r.status === statusFilter.value) }))
+  const q = search.value.trim().toLowerCase();
+  const byStatus = groups.value
+    .map((g) =>
+      statusFilter.value === 'SEMUA'
+        ? g
+        : { ...g, registrations: g.registrations.filter((r) => r.status === statusFilter.value) }
+    )
+    .filter((g) => g.registrations.length > 0);
+  if (!q) return byStatus;
+
+  return byStatus
+    .map((g) => {
+      const groupLevelMatch = [g.groupName, g.companyName].join(' ').toLowerCase().includes(q);
+      if (groupLevelMatch) return g;
+      return { ...g, registrations: g.registrations.filter((r) =>
+        [r.leaderName, r.code, ...r.members.map((m) => `${m.fullName} ${m.nisn ?? ''}`)]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      ) };
+    })
     .filter((g) => g.registrations.length > 0);
 });
 
@@ -147,9 +166,17 @@ watch(
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-semibold text-gray-800">Pendaftaran per Kelompok</h2>
-          <p class="text-sm text-gray-500">Digrup otomatis berdasarkan nama kelompok.</p>
+        <div class="flex flex-1 flex-wrap items-end gap-3">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-800">Pendaftaran per Kelompok</h2>
+            <p class="text-sm text-gray-500">Digrup otomatis berdasarkan nama kelompok.</p>
+          </div>
+          <input
+            v-model="search"
+            class="input ml-auto w-72"
+            type="search"
+            placeholder="Cari kelompok, perusahaan, siswa, NISN…"
+          />
         </div>
 
         <!-- Filter status tinjauan -->
@@ -208,7 +235,9 @@ watch(
             </td>
           </tr>
           <tr v-if="filteredGroups.length === 0 && !loading">
-            <td colspan="5" class="py-4 text-center text-gray-400">{{ EMPTY_TEXT[statusFilter] }}</td>
+            <td colspan="5" class="py-4 text-center text-gray-400">
+              {{ search.trim() ? 'Tidak ada pendaftaran yang cocok dengan pencarian.' : EMPTY_TEXT[statusFilter] }}
+            </td>
           </tr>
         </tbody>
       </table>

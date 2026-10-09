@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { auditLogService, type AuditLogRecord } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
@@ -9,12 +9,17 @@ const logs = ref<AuditLogRecord[]>([]);
 const loading = ref(true);
 const error = ref('');
 const filterAction = ref('');
+const search = ref('');
 const active = ref<AuditLogRecord | null>(null);
 
 const load = async (): Promise<void> => {
   loading.value = true;
   try {
-    const { items } = await auditLogService.list(filterAction.value ? { action: filterAction.value } : undefined);
+    const params = {
+      ...(filterAction.value ? { action: filterAction.value } : {}),
+      ...(search.value.trim() ? { search: search.value.trim() } : {}),
+    };
+    const { items } = await auditLogService.list(Object.keys(params).length > 0 ? params : undefined);
     logs.value = items;
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -22,6 +27,12 @@ const load = async (): Promise<void> => {
     loading.value = false;
   }
 };
+
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(search, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 400);
+});
 
 const pretty = (v: unknown): string => {
   try {
@@ -36,8 +47,14 @@ onMounted(load);
 
 <template>
   <div class="card">
-    <div class="mb-4 flex gap-4">
-      <input v-model="filterAction" class="input w-64" placeholder="Filter aksi (LOGIN)" @keyup.enter="load" />
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <input
+        v-model="search"
+        class="input min-w-64 flex-1"
+        type="search"
+        placeholder="Cari aktor, aksi, atau ID entitas…"
+      />
+      <input v-model="filterAction" class="input w-64" placeholder="Filter aksi persis (LOGIN)" @keyup.enter="load" />
       <button class="btn-secondary" @click="load">Cari</button>
     </div>
 

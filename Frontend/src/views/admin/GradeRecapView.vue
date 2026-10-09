@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   gradeService,
   phase4Service,
@@ -25,6 +25,32 @@ const phaseSkipped = ref<Array<{ studentId: string; reason: string }>>([]);
 
 const cohortStore = useCohortStore();
 const detailClass = ref<GradeRecapClass | null>(null);
+const search = ref('');
+
+/**
+ * Filter rekap per kelas + kelompok (FE-side).
+ * Kelas cocok nama → tampil semua isinya; jika tidak, tampil hanya
+ * kelompok/siswa yang cocok; kelas tanpa kecocokan disembunyikan.
+ */
+const filteredClasses = computed<GradeRecapClass[]>(() => {
+  const q = search.value.trim().toLowerCase();
+  const classes = recap.value?.classes ?? [];
+  if (!q) return classes;
+  return classes
+    .map((cls) => {
+      if (cls.className.toLowerCase().includes(q)) return cls;
+      return {
+        ...cls,
+        groups: cls.groups.filter((g) =>
+          [g.groupName, g.companyName ?? '', ...g.students.map((s) => `${s.fullName} ${s.nisn ?? ''}`)]
+            .join(' ')
+            .toLowerCase()
+            .includes(q)
+        ),
+      };
+    })
+    .filter((cls) => cls.groups.length > 0);
+});
 
 const toNum = (v: number | string | null | undefined): number | null => {
   if (v == null) return null;
@@ -114,11 +140,20 @@ watch(
             {{ recap.totalGraded }}/{{ recap.totalStudents }} siswa dinilai
           </p>
         </div>
+        <input
+          v-model="search"
+          class="input w-72"
+          type="search"
+          placeholder="Cari kelas, kelompok, nama siswa, NISN…"
+        />
       </div>
 
       <SkeletonTable v-if="loading" :rows="6" :cols="5" />
       <div v-else-if="!recap || recap.classes.length === 0" class="py-6 text-center text-sm text-gray-400">
         Belum ada data nilai.
+      </div>
+      <div v-else-if="filteredClasses.length === 0" class="py-6 text-center text-sm text-gray-400">
+        Tidak ada data yang cocok dengan pencarian.
       </div>
       <table v-else class="table">
         <thead>
@@ -133,7 +168,7 @@ watch(
         </thead>
         <tbody>
           <tr
-            v-for="cls in recap.classes"
+            v-for="cls in filteredClasses"
             :key="cls.className"
             class="cursor-pointer hover:bg-gray-50"
             @click="detailClass = cls"

@@ -847,3 +847,54 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] `npx tsc --noEmit` + `npx vue-tsc --noEmit` + `npx vite build` hijau
 - [x] Skrip `tmp-dudi-username-test.ts` **19/19 PASS**: unit (kode utuh, sanitasi, fallback acak, uniquify suffix, panjang <=50) + E2E `ensureDudiAccount` (username `DUDI-GRP-2026-0001`, role/identifier/cohort/mustChangePassword, CompanyMentor nama, InitialCredential, autoAssign +1, panggil ulang idempoten) + **restore penuh** (user/company/penugasan) lalu dihapus
 - [x] Browser QA Manajemen User (akun DUDI uji `DUDI-GRP-2026-0001` + admin uji, dibuat+dihapus): **15/15 check OK** - toolbar 3 filter, search kode kelompok/nama perusahaan/username, pesan kosong filter, Reset (8/8 pulih), filter status, filter gelombang; console bersih (401 = probe pre-login); data uji dihapus (admin, DUDI, company)
+
+## Reset Total Database untuk Testing Real
+
+**Permintaan:** hapus semua data termasuk gelombang; keputusan: pertahankan **superadmin** + **data master** (jurusan, industri, pengumuman, system setting, penanda tangan surat), gelombang **dihapus total & biarkan kosong** (dibuat sendiri via menu).
+
+### Eksekusi
+- [x] **Backup dulu**: `mysqldump` -> `backup-pkl_db-20261008-232058.sql` (245 KB) di temp session
+- [x] **Skrip `tmp-reset-all.ts`** (dihapus setelah jalan): `information_schema` list 41 tabel, `SET FOREIGN_KEY_CHECKS=0`, DELETE per tabel â€” special-case `users`/`refresh_tokens`/`initial_credentials` hanya baris di luar superadmin; **KEEP** = majors, classes, industries, system_settings, announcements, letter_signatories, student_registries
+- [x] Hasil: **371 baris dihapus**; users 17->**1** (superadmin, 244 refresh token sesi tetap hidup), cohorts 2->**0**, companies 6->0, groups/registrations/documents/generated_letters/visits/complaints/notifications/audit_logs/phase_schedules->0; master utuh (majors 6, industries 15, announcements 6, system_settings 9, letter_signatories 1, student_registries 5, classes 0)
+- [x] **`_prisma_migrations` ikut terhapus** (16 baris) -> **dipulihkan dari backup** (extract INSERT `prisma_migrations` -> mysql); `npx prisma migrate status` = "16 migrations found ... Database schema is up to date!"
+
+### Verifikasi pasca-reset
+- [x] Browser QA (akun admin uji dibuat+dihapus): login OK; Dashboard `/` render (kondisi gelombang kosong tanpa undefined/NaN); 9 halaman admin render tanpa crash (Manajemen User, Gelombang, Verifikasi Dokumen, Surat, Pendaftaran, Absensi, Kelompok, Rekap, Pengumuman); modal Tambah User buka; **console bersih** (401 = probe pre-login)
+- [x] Catatan QA: path dashboard = `/` (bukan `/dashboard` â€” 404 di run pertama, bukan bug); teks modal uppercase oleh CSS (check case-sensitive sempat false-negative)
+- [x] State akhir: `users=1 (superadmin), cohorts=0, majors=6, industries=15, announcements=6, system_settings=9, student_registries=5, generated_letters=0, documents=0`; semua skrip tmp dihapus
+- [x] Catatan: `phase_schedules` juga dikosongkan (tidak termasuk daftar master) â€” buat ulang lewat menu Jadwal Fase saat mulai testing
+- [x] **Tambahan:** pengumuman (6 baris) & notifikasi juga dihapus atas permintaan â€” `announcements=0, notifications=0`; master tersisa: majors, classes, industries, system_settings, letter_signatories, student_registries
+
+## Filter & Pencarian di Menu Admin (Banyak Data)
+
+**Permintaan:** tambah fitur search/filter di menu-menu yang menampung banyak data — pendaftaran, surat, master siswa, manajemen user, perusahaan, kelompok, rekap nilai, dokumen, absensi, pengaduan, audit log. **Tanpa** di gelombang, jadwal fase, dan sejenisnya.
+
+### Backend (param `search`)
+- [x] `studentRegistry.repository.ts` — `findByCohort(cohortId, skip, take, search?)`: OR contains (fullName, nisn, className); controller baca `req.query.search`
+- [x] `auditLog.service.ts` — `list` + `search`: OR contains (action, entityType, entityId, actor.username); controller pass-through
+- [x] Route keduanya tanpa validator query ? param lolos; `companyService.list` sudah dukung `search` + `industryId` sejak awal (FE hanya belum kirim)
+- [x] FE `api.service.ts`: `studentRegistryService.list`, `auditLogService.list` (tambah `search`), `companyService.list` (objek: search/industryId/perPage)
+
+### Frontend per view (pola toolbar UsersView: input `type=search` + select + Reset bersyarat + empty state spesifik)
+- [x] **Master Siswa** (`StudentRegistryView`) — server-side search debounce 400ms
+- [x] **Audit Log** (`AuditLogsView`) — server-side search debounce + filter aksi persis lama dipertahankan
+- [x] **Perusahaan** (`CompaniesView`) — live search debounce server-side + select industri + tombol Reset; `perPage: 100`
+- [x] **Pendaftaran** (`RegistrationsView`) — pipeline `filteredGroups`: tab status + search (nama kelompok/perusahaan/ketua/kode/anggota+NISN; match level kelompok = tampil semua registrasinya)
+- [x] **Surat** (`LettersView`) — `filteredLetters` FE (nomor/perihal/penanda tangan/jenis)
+- [x] **Kelompok** (`GroupsView`) — `filteredGroups` FE (kode/nama/perusahaan/anggota) + select status dinamis + Reset
+- [x] **Dokumen** (`DocumentsView`) — `filteredDocs` FE (judul/jenis/catatan) ditambah ke filter jenis+status lama
+- [x] **Rekap Nilai** (`GradeRecapView`) — `filteredClasses` FE: kelas match = utuh, else saring kelompok/siswa
+- [x] **Absensi** (`AttendanceMonitorView`) — `filteredClasses` FE serupa (studentCount dihitung ulang dari grup tersaring)
+- [x] **Pengaduan** (`ComplaintMonitorView`) — `filteredComplaints` FE (subjek/penulis/kelompok)
+- [x] Semua empty state ganti "Tidak ada ... cocok dengan pencarian/filter" saat search aktif
+
+### Bug route duplikat (ditemukan saat QA)
+- [x] **Dua route `path: 'pengaduan'`**: `my-complaints` (SISWA) vs `complaint-monitor` — Vue Router match pertama ? reload `/pengaduan` selalu 403 utk admin/guru. `complaint-monitor` dipindah ke **`/monitor-pengaduan`** (sidebar pakai `routeName`, tdk terpengaruh)
+
+### Data uji (dipertahankan utk testing user)
+- [x] Cohort "Gelombang Uji Filter - 2026/2027" (OPEN) + 5 master siswa direpoint (FK orphan setelah reset); 3 perusahaan (2 industri + 1 tanpa); 1 kelompok `GRP-UJI-001` "Kelompok Uji Filter"; 2 pengaduan tertaut kelompok (pengaduan tanpa group tampil hanya jika ko filter grup)
+
+### Verifikasi
+- [x] `npx tsc --noEmit` (backend) + `npx vue-tsc --noEmit` + `npx vite build` hijau
+- [x] Browser QA **36/36 PASS** (akun admin uji dibuat+dihapus): master-siswa (search NISN + empty state), perusahaan (search "Maju"->1, filter industri->1 & Reset->3), pendaftaran/surat/dokumen (empty state search), kelompok (search, Reset, kode), rekap/absensi (presence), pengaduan (2 data, search "AC ruang"->1, empty state), audit (search LOGIN server-side + empty state); console 401 = probe pre-login normal
+- [x] Catatan QA: server sempat mati karena dimatikan manual (bukan bug); akun admin uji dihapus, file tmp dibersihkan

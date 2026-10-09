@@ -64,9 +64,15 @@ export class StudentRegistryController {
   list = asyncHandler(async (req: Request, res: Response) => {
     const cohortId = req.query.cohortId as string;
     if (!cohortId) throw new BadRequestError('cohortId wajib');
+    const search = (req.query.search as string | undefined)?.trim() || undefined;
 
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    const { items, total } = await studentRegistryRepository.findByCohort(cohortId, (page - 1) * perPage, perPage);
+    const { items, total } = await studentRegistryRepository.findByCohort(
+      cohortId,
+      (page - 1) * perPage,
+      perPage,
+      search
+    );
 
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });

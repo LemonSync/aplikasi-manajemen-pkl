@@ -20,6 +20,7 @@ const error = ref('');
 const success = ref('');
 const filterStatus = ref('MENUNGGU_VERIFIKASI');
 const filterType = ref('');
+const search = ref('');
 const activeId = ref<string | null>(null);
 const noteInput = ref('');
 const busy = ref(false);
@@ -38,6 +39,15 @@ const TYPE_LABELS: Record<string, string> = {
 const active = computed<DocumentRecord | null>(
   () => docs.value.find((d) => d.id === activeId.value) ?? null
 );
+
+/** Cari judul/jenis dokumen (FE-side, daftar sudah difilter server). */
+const filteredDocs = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return docs.value;
+  return docs.value.filter((d) =>
+    [d.title ?? '', TYPE_LABELS[d.type] ?? d.type, d.type, d.note ?? ''].join(' ').toLowerCase().includes(q)
+  );
+});
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -124,6 +134,12 @@ watch(
       </div>
 
       <div class="mb-4 flex flex-wrap items-center gap-3">
+        <input
+          v-model="search"
+          class="input min-w-64 flex-1"
+          type="search"
+          placeholder="Cari judul atau jenis dokumen…"
+        />
         <div class="flex items-center gap-2">
           <label class="label mb-0">Jenis</label>
           <select v-model="filterType" class="input w-auto" @change="load">
@@ -156,7 +172,7 @@ watch(
           </tr>
         </thead>
         <tbody>
-          <tr v-for="d in docs" :key="d.id" class="cursor-pointer hover:bg-gray-50" @click="open(d)">
+          <tr v-for="d in filteredDocs" :key="d.id" class="cursor-pointer hover:bg-gray-50" @click="open(d)">
             <td>{{ TYPE_LABELS[d.type] ?? d.type }}</td>
             <td>{{ d.title ?? '-' }}</td>
             <td>
@@ -169,8 +185,10 @@ watch(
               <button class="text-primary-600 hover:underline" @click.stop="download(d.id)">Unduh</button>
             </td>
           </tr>
-          <tr v-if="docs.length === 0">
-            <td colspan="4" class="py-4 text-center text-gray-400">Tidak ada data.</td>
+          <tr v-if="filteredDocs.length === 0">
+            <td colspan="4" class="py-4 text-center text-gray-400">
+              {{ search.trim() ? 'Tidak ada dokumen yang cocok dengan pencarian.' : 'Tidak ada data.' }}
+            </td>
           </tr>
         </tbody>
       </table>
