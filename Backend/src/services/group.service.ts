@@ -42,7 +42,7 @@ export class GroupService {
 
   /** Membentuk kelompok secara manual oleh admin. */
   async create(input: CreateGroupInput, actorId: string, ctx: { ipAddress?: string; userAgent?: string }) {
-    let memberUserIds = [...input.memberUserIds];
+    const memberUserIds = [...input.memberUserIds];
     let studentLeaderId: string | null = null;
     let registration: Awaited<ReturnType<typeof registrationRepository.findById>> | null = null;
 
