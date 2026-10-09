@@ -261,7 +261,7 @@ export class Phase4Controller {
     if (!buffer) throw new NotFoundError('File surat tidak ditemukan di storage');
 
     const filename = `${letter.type}-${letter.number ? `${letter.number}-` : ''}${letter.id}.pdf`
-      .replace(/[^\w.\-]+/g, '_');
+      .replace(/[^\w.-]+/g, '_');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(buffer);
