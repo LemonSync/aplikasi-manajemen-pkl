@@ -34,7 +34,7 @@ export const errorHandler = (err: unknown, req: Request, res: Response, _next: N
   } else if (err instanceof ZodError) {
     statusCode = HTTP_STATUS.UNPROCESSABLE;
     message = MESSAGES.VALIDATION;
-    details = err.errors.map((e) => ({ field: e.path.join('.'), message: e.message }));
+    details = err.issues.map((e) => ({ field: e.path.join('.'), message: e.message }));
   } else if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
       statusCode = HTTP_STATUS.CONFLICT;
