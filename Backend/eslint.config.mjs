@@ -19,6 +19,9 @@ export default [
         __dirname: 'readonly',
         module: 'readonly',
         require: 'readonly',
+        Buffer: 'readonly',
+        setInterval: 'readonly',
+        Express: 'readonly',
       },
     },
     plugins: {
