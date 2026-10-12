@@ -1,14 +1,14 @@
 import { NextFunction, Request, Response } from 'express';
-import { AnyZodObject, ZodError } from 'zod';
+import { z, ZodError } from 'zod';
 import { UnprocessableError } from '../errors/AppError';
 import { MESSAGES } from '../config/constants';
 
 type Source = 'body' | 'query' | 'params';
 
 interface ValidationSchemas {
-  body?: AnyZodObject;
-  query?: AnyZodObject;
-  params?: AnyZodObject;
+  body?: z.ZodType;
+  query?: z.ZodType;
+  params?: z.ZodType;
 }
 
 /**
@@ -26,12 +26,12 @@ export const validate =
         if (!schema) return;
         const parsed = schema.parse(req[source]);
         // assign kembali hasil parsing (menerapkan default/coerce/transform)
-        req[source] = parsed;
+        req[source] = parsed as Request[typeof source];
       });
       return next();
     } catch (err) {
       if (err instanceof ZodError) {
-        const details = err.errors.map((e) => ({
+        const details = err.issues.map((e) => ({
           field: e.path.join('.'),
           message: e.message,
         }));
