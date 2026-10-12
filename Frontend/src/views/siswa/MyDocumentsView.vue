@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { documentService, downloadFile, type DocumentRecord } from '@/services/api.service';
+import {
+  documentService,
+  downloadFile,
+  type DocumentRecord,
+  type DocumentPlacement,
+} from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
+import Modal from '@/components/Modal.vue';
+
+type DocumentDetail = DocumentRecord & { placement: DocumentPlacement | null };
 
 const docs = ref<DocumentRecord[]>([]);
 const loading = ref(true);
@@ -13,6 +21,11 @@ const success = ref('');
 const uploadType = ref('LAINNYA');
 const uploadTitle = ref('');
 const selectedFile = ref<File | null>(null);
+
+// Detail dokumen + info penempatan per-orang (siswa, perusahaan, pembimbing)
+const showDetail = ref(false);
+const detailLoading = ref(false);
+const detail = ref<DocumentDetail | null>(null);
 
 const TYPE_LABELS: Record<string, string> = {
   SURAT_PERMOHONAN: 'Surat Permohonan',
@@ -61,6 +74,21 @@ const download = async (id: string, title?: string | null, type?: string): Promi
     await downloadFile(`/documents/${id}/download`, title ?? `${type ?? 'dokumen'}.pdf`);
   } catch (e) {
     error.value = extractErrorMessage(e);
+  }
+};
+
+/** Buka detail dokumen — menampilkan info penempatan per-orang. */
+const openDetail = async (id: string): Promise<void> => {
+  showDetail.value = true;
+  detailLoading.value = true;
+  detail.value = null;
+  try {
+    detail.value = await documentService.getDetail(id);
+  } catch (e) {
+    error.value = extractErrorMessage(e);
+    showDetail.value = false;
+  } finally {
+    detailLoading.value = false;
   }
 };
 
@@ -118,6 +146,7 @@ onMounted(load);
             <td><StatusBadge :status="d.status" /></td>
             <td class="text-gray-500">{{ d.note ?? '-' }}</td>
             <td class="text-right">
+              <button class="mr-3 text-primary-600 hover:underline" @click="openDetail(d.id)">Detail</button>
               <button class="text-primary-600 hover:underline" @click="download(d.id, d.title, d.type)">Unduh</button>
             </td>
           </tr>
@@ -127,5 +156,55 @@ onMounted(load);
         </tbody>
       </table>
     </div>
+
+    <!-- Modal Detail: info penempatan per-orang -->
+    <Modal :open="showDetail" title="Detail Dokumen" size="md" @close="showDetail = false">
+      <div v-if="detailLoading" class="loading" />
+      <template v-else-if="detail">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <p class="text-sm font-semibold text-gray-800">{{ TYPE_LABELS[detail.type] ?? detail.type }}</p>
+            <p class="text-xs text-gray-500">Kode: {{ detail.placement?.code ?? '-' }}</p>
+          </div>
+          <StatusBadge :status="detail.status" />
+        </div>
+
+        <!-- Siswa -->
+        <div class="mb-4 rounded-lg bg-gray-50 p-3">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Siswa</p>
+          <p class="mt-1 text-sm font-medium text-gray-800">{{ detail.placement?.student.fullName ?? '-' }}</p>
+          <p class="text-xs text-gray-500">
+            NISN: {{ detail.placement?.student.nisn ?? '-' }}
+            · Username: {{ detail.placement?.student.username }}
+            <span v-if="detail.placement?.student.className"> · Kelas: {{ detail.placement.student.className }}</span>
+          </p>
+        </div>
+
+        <!-- Perusahaan -->
+        <div class="mb-4 rounded-lg bg-gray-50 p-3">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Perusahaan</p>
+          <template v-if="detail.placement?.company">
+            <p class="mt-1 text-sm font-medium text-gray-800">{{ detail.placement.company.name }}</p>
+            <p class="text-xs text-gray-500">
+              {{ detail.placement.company.address }}<span v-if="detail.placement.company.city">, {{ detail.placement.company.city }}</span>
+            </p>
+            <p v-if="detail.placement.company.industryName" class="text-xs text-gray-500">
+              Bidang: {{ detail.placement.company.industryName }}
+            </p>
+            <p v-if="detail.placement.company.phone" class="text-xs text-gray-500">
+              Telp: {{ detail.placement.company.phone }}
+            </p>
+          </template>
+          <p v-else class="mt-1 text-sm text-gray-500">-</p>
+        </div>
+
+        <!-- Pembimbing & Jurusan -->
+        <div class="rounded-lg bg-gray-50 p-3">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Pembimbing</p>
+          <p class="mt-1 text-sm font-medium text-gray-800">{{ detail.placement?.supervisorName ?? 'Belum ditentukan' }}</p>
+          <p v-if="detail.placement?.majorName" class="text-xs text-gray-500">Program Keahlian: {{ detail.placement.majorName }}</p>
+        </div>
+      </template>
+    </Modal>
   </div>
 </template>

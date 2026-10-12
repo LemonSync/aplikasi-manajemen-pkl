@@ -6,6 +6,7 @@ import { REFRESH_COOKIE_NAME } from '../config/constants';
 import { env } from '../config/env';
 import { asyncHandler } from '../utils/asyncHandler';
 import { LoginDTO, ChangePasswordDTO } from '../validators/auth.validator';
+import { UnauthorizedError } from '../errors/AppError';
 
 const refreshCookieOptions = {
   httpOnly: true,
@@ -37,7 +38,8 @@ export class AuthController {
 
   /** POST /api/auth/refresh */
   refresh = asyncHandler(async (req: Request, res: Response) => {
-    const token = (req.body?.refreshToken as string) || (req.cookies?.[REFRESH_COOKIE_NAME] as string);
+    const token = req.cookies?.[REFRESH_COOKIE_NAME] as string | undefined;
+    if (!token) throw new UnauthorizedError('Refresh token tidak ditemukan');
     const ctx = getRequestContext(req);
 
     const result = await authService.refresh(token, {
@@ -51,7 +53,7 @@ export class AuthController {
 
   /** POST /api/auth/logout */
   logout = asyncHandler(async (req: Request, res: Response) => {
-    const token = (req.body?.refreshToken as string) || (req.cookies?.[REFRESH_COOKIE_NAME] as string);
+    const token = req.cookies?.[REFRESH_COOKIE_NAME] as string | undefined;
     await authService.logout(token, req.user?.sub);
     res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' });
     return sendSuccess(res, null, 'Logout berhasil');

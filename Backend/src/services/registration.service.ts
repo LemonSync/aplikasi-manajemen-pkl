@@ -1,52 +1,43 @@
 import {
+  CohortStatus,
   DocumentStatus,
   DocumentType,
   Registration,
   RegistrationStatus,
+  Role,
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { registrationRepository } from '../repositories/registration.repository';
-import { registrationMemberRepository } from '../repositories/registrationMember.repository';
 import { cohortRepository } from '../repositories/cohort.repository';
 import { majorRepository } from '../repositories/major.repository';
-import { industryRepository } from '../repositories/industry.repository';
+import { companyService } from './company.service';
 import { letterService } from './letter.service';
+import { settingService } from './setting.service';
 import { auditService } from './audit.service';
-import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../errors/AppError';
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { readStoredFile } from '../utils/storage';
 import { documentRepository } from '../repositories/document.repository';
 
-export interface RegistrationMemberInput {
-  userId?: string | null;
-  fullName?: string | null;
-  nisn?: string | null;
-  className?: string | null;
-  phone?: string | null;
-  address?: string | null;
-  isLeader?: boolean;
-}
-
 export interface SaveRegistrationInput {
-  groupName: string;
-  cohortId: string;
+  cohortId?: string;
+  companyId: string;
   majorId?: string | null;
-  companyName: string;
-  companyAddress: string;
-  companyIndustry?: string | null;
-  companyPhone?: string | null;
-  companyCity?: string | null;
-  companyWebsite?: string | null;
-  companyContacts?: string[] | null;
-  members: RegistrationMemberInput[];
 }
 
 /**
- * Service pendaftaran PKL (Fase 1: Pra-Pendaftaran).
+ * Service pendaftaran PKL per siswa (Fase 1: Pra-Pendaftaran).
  * Aturan:
- *  - Satu siswa hanya boleh memiliki satu pendaftaran aktif.
- *  - Semua anggota diasumsikan dari jurusan yang sama (validasi di level admin saat pembentukan kelompok).
- *  - Surat Permohonan PDF hanya dibuat setelah ajuan disetujui Admin.
+ *  - Satu baris pendaftaran per (siswa, gelombang); perusahaan dipilih
+ *    dari daftar (harus punya sisa kuota > 0 saat submit).
+ *  - Surat Permohonan PDF dibuat setelah ajuan disetujui Admin.
+ *  - Kuota perusahaan dicek dua kali: saat submit & saat approve
+ *    Surat Penerimaan (lihat companyService.assertSisaAvailable).
  */
 export class RegistrationService {
   /** Membuat kode unik pendaftaran, mis. REG-2024-0001. */
@@ -58,246 +49,133 @@ export class RegistrationService {
   }
 
   /**
-   * Tolak bila ada NISN yang masih terikat pendaftaran/kelompok LAIN:
-   *  1. Anggota kelompok aktif (GroupMember) — sumber kebenaran tertinggi.
-   *  2. Pendaftaran status DRAFT aktif / DIAJUKAN / DISETUJUI.
-   * Pendaftaran berstatus DITOLAK atau sudah di-soft-delete tidak mengikat.
-   * Pesan dibedakan: "tergabung kelompok" bila kelompok sudah terbentuk,
-   * "terdaftar pada pendaftaran" bila belum (pendaftaran yatim/konflik biasa).
+   * Validasi diri pendaftar: akun siswa valid & NISN-nya terdaftar
+   * pada Master Siswa gelombang terkait (aktif).
    */
-  private async assertMembersFree(
-    nisns: Array<string | null | undefined>,
-    excludeRegistrationId?: string
-  ): Promise<void> {
-    const list = [...new Set(nisns.filter((n): n is string => !!n))];
-    if (list.length === 0) return;
-
-    const msgs: string[] = [];
-    const seen = new Set<string>();
-
-    // 1) Sudah menjadi anggota kelompok aktif (NISN = username akun SISWA).
-    const groupMembers = await prisma.groupMember.findMany({
-      where: {
-        group: { deletedAt: null },
-        user: {
-          deletedAt: null,
-          OR: [{ username: { in: list } }, { studentProfile: { nisn: { in: list } } }],
-        },
-      },
-      include: {
-        group: { select: { name: true } },
-        user: { select: { username: true, studentProfile: { select: { fullName: true, nisn: true } } } },
+  private async assertRegistrable(studentId: string, cohortId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: {
+        username: true,
+        deletedAt: true,
+        studentProfile: { select: { nisn: true, majorId: true } },
       },
     });
-    for (const gm of groupMembers) {
-      const nisn = gm.user.studentProfile?.nisn ?? gm.user.username ?? '';
-      if (seen.has(nisn)) continue;
-      seen.add(nisn);
-      msgs.push(
-        `NISN ${nisn} (${gm.user.studentProfile?.fullName ?? '-'}) sudah tergabung kelompok "${gm.group.name}"`
-      );
+    if (!user || user.deletedAt) throw new ForbiddenError('Akun tidak valid');
+
+    const nisn = user.studentProfile?.nisn ?? user.username;
+    const registry = await prisma.studentRegistry.findFirst({
+      where: { nisn, cohortId, isActive: true },
+      select: { majorId: true },
+    });
+    if (!registry) {
+      throw new BadRequestError(`NISN ${nisn} tidak terdaftar pada Master Siswa gelombang ini`);
     }
-
-    // 2) Terikat pendaftaran lain (DRAFT/DIAJUKAN/DISETUJUI).
-    const conflicts = await prisma.registrationMember.findMany({
-      where: {
-        nisn: { in: list },
-        registration: {
-          deletedAt: null,
-          status: {
-            in: [RegistrationStatus.DRAFT, RegistrationStatus.DIAJUKAN, RegistrationStatus.DISETUJUI],
-          },
-          ...(excludeRegistrationId ? { NOT: { id: excludeRegistrationId } } : {}),
-        },
-      },
-      include: {
-        registration: {
-          select: { code: true, groupName: true, status: true, group: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const statusLabel: Record<RegistrationStatus, string> = {
-      DRAFT: 'masih draft',
-      DIAJUKAN: 'menunggu persetujuan admin',
-      DISETUJUI: 'sudah disetujui admin',
-      DITOLAK: 'ditolak',
+    return {
+      nisn,
+      majorId: user.studentProfile?.majorId ?? registry.majorId ?? null,
     };
-    for (const c of conflicts) {
-      if (!c.nisn || seen.has(c.nisn)) continue;
-      seen.add(c.nisn);
-      const reg = c.registration;
-      msgs.push(
-        reg.group
-          ? `NISN ${c.nisn} (${c.fullName}) sudah tergabung kelompok "${reg.group.name}" melalui pendaftaran [${reg.code}]`
-          : `NISN ${c.nisn} (${c.fullName}) sudah terdaftar pada pendaftaran "${reg.groupName}" [${reg.code} - ${statusLabel[reg.status]}, kelompok belum dibentuk]`
-      );
-    }
-
-    if (msgs.length === 0) return;
-    throw new BadRequestError(`Sebagian anggota sudah terikat pendaftaran/kelompok lain: ${msgs.join(' | ')}`);
   }
 
-  /** Membuat (atau mengambil) pendaftaran DRAFT milik siswa. */
-  async saveDraft(leaderId: string, input: SaveRegistrationInput) {
-    // Gelombang ketua sudah ditentukan Admin saat pembuatan akun → form tidak
-    // boleh menggantinya (input dipaksa mengikuti gelombang akun ketua).
-    const leader = await prisma.user.findUnique({
-      where: { id: leaderId },
+  /** Simpan (atau perbarui) pendaftaran DRAFT milik siswa. */
+  async saveDraft(studentId: string, input: SaveRegistrationInput) {
+    const user = await prisma.user.findUnique({
+      where: { id: studentId },
       select: { cohortId: true },
     });
-    const cohortId = leader?.cohortId ?? input.cohortId;
+    const cohortId = user?.cohortId ?? input.cohortId;
+    if (!cohortId) throw new BadRequestError('Gelombang tidak ditentukan');
 
-    // Validasi master data
     const cohort = await cohortRepository.findById(cohortId);
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
-    if (input.majorId) {
-      const major = await majorRepository.findById(input.majorId);
-      if (!major) throw new NotFoundError('Jurusan tidak ditemukan');
-    }
-    if (!input.members || input.members.length === 0) {
-      throw new BadRequestError(MESSAGES.GROUP.NO_MEMBERS);
-    }
-    const nisns = input.members.map((member) => member.nisn?.trim());
-    if (nisns.some((nisn) => !nisn) || new Set(nisns).size !== nisns.length) {
-      throw new BadRequestError('NISN wajib diisi dan tidak boleh duplikat dalam satu kelompok');
-    }
-    const masterStudents = await prisma.studentRegistry.findMany({
-      where: { nisn: { in: nisns as string[] }, cohortId, isActive: true },
-    });
-    const masterByNisn = new Map(masterStudents.map((student) => [student.nisn, student]));
-
-    // Auto-isi NAMA & KELAS dari Master Siswa (berdasarkan NISN) bila kosong,
-    // lalu pastikan data yang dikirim konsisten dengan master.
-    const problems: string[] = [];
-    const members = input.members.map((member) => {
-      const nisn = (member.nisn ?? '').trim();
-      const master = masterByNisn.get(nisn);
-      const sentName = (member.fullName ?? '').trim();
-      const sentClass = (member.className ?? '').trim();
-      if (!master) {
-        problems.push(`NISN ${nisn} tidak terdaftar pada Master Siswa gelombang ini`);
-        return { ...member, nisn, fullName: sentName, className: sentClass };
-      }
-      const fullName = sentName || master.fullName;
-      const className = sentClass || master.className;
-      if (sentName && master.fullName.toLowerCase() !== fullName.toLowerCase()) {
-        problems.push(`NISN ${nisn}: nama tidak cocok dengan Master Siswa`);
-      }
-      if (sentClass && master.className !== className) {
-        problems.push(`NISN ${nisn}: kelas tidak cocok dengan Master Siswa`);
-      }
-      return { ...member, nisn, fullName, className };
-    });
-    if (problems.length > 0) {
-      throw new BadRequestError(problems.join(' | '));
+    if (cohort.status === CohortStatus.CLOSED || cohort.status === CohortStatus.ARCHIVED) {
+      throw new ForbiddenError(MESSAGES.COHORT_LOCKED);
     }
 
-    const existing = await registrationRepository.findActiveByLeader(leaderId);
-    if (existing && existing.status !== RegistrationStatus.DRAFT) {
+    const company = await companyService.getById(input.companyId);
+    if (!company.isActive) throw new BadRequestError('Perusahaan tidak aktif untuk pendaftaran');
+
+    const { majorId: studentMajorId } = await this.assertRegistrable(studentId, cohortId);
+    const majorId = input.majorId ?? studentMajorId;
+    if (majorId && !(await majorRepository.findById(majorId))) {
+      throw new NotFoundError('Jurusan tidak ditemukan');
+    }
+
+    // Satu baris per (siswa, gelombang): baris lama di-reuse bila masih DRAFT
+    // atau sudah DITOLAK (dibuka kembali untuk pendaftaran ulang).
+    const existing = await prisma.registration.findFirst({
+      where: { studentId, cohortId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (
+      existing &&
+      existing.status !== RegistrationStatus.DRAFT &&
+      existing.status !== RegistrationStatus.DITOLAK
+    ) {
       throw new ConflictError('Pendaftaran sudah diajukan dan tidak dapat diubah');
     }
 
-    // Anggota tidak boleh sudah terikat pendaftaran/kelompok lain.
-    await this.assertMembersFree(nisns, existing?.id);
-
     const scalarData = {
-      groupName: input.groupName,
-      companyName: input.companyName,
-      companyAddress: input.companyAddress,
-      companyIndustry: input.companyIndustry ?? null,
-      companyPhone: input.companyPhone ?? null,
-      companyCity: input.companyCity ?? null,
-      companyWebsite: input.companyWebsite ?? null,
-      companyContacts: (input.companyContacts ?? null) as never,
+      cohort: { connect: { id: cohortId } },
+      company: { connect: { id: input.companyId } },
+      ...(majorId ? { major: { connect: { id: majorId } } } : { major: { disconnect: true } }),
     };
-
-    let registrationId: string;
 
     if (existing) {
       await registrationRepository.update(existing.id, {
         ...scalarData,
-        cohort: { connect: { id: cohortId } },
-        ...(input.majorId
-          ? { major: { connect: { id: input.majorId } } }
-          : { major: { disconnect: true } }),
+        status: RegistrationStatus.DRAFT,
+        note: null,
+        submittedAt: null,
+        reviewedBy: { disconnect: true },
+        reviewedAt: null,
+        permohonanDownloadedAt: null,
       });
-      registrationId = existing.id;
-    } else {
-      const code = await this.generateCode();
-      const created = await registrationRepository.create({
-        code,
-        ...scalarData,
-        cohort: { connect: { id: cohortId } },
-        ...(input.majorId ? { major: { connect: { id: input.majorId } } } : {}),
-        leader: { connect: { id: leaderId } },
-      });
-      registrationId = created.id;
+      return registrationRepository.findById(existing.id);
     }
 
-    // Sync anggota: hapus semua lalu buat ulang (form sederhana, atomik).
-    await registrationMemberRepository.deleteByRegistration(registrationId);
-    await registrationMemberRepository.createMany(
-      registrationId,
-      members.map((m) => ({
-        userId: m.userId ?? null,
-        fullName: m.fullName ?? '',
-        nisn: m.nisn ?? null,
-        className: m.className ?? null,
-        phone: m.phone ?? null,
-        address: m.address ?? null,
-        isLeader: m.isLeader ?? false,
-      }))
-    );
-
-    // Pastikan ketua tercatat sebagai anggota
-    const refreshed = await registrationRepository.findById(registrationId);
-    if (refreshed && !refreshed.members.some((m) => m.isLeader)) {
-      await registrationMemberRepository.createMany(registrationId, [
-        { isLeader: true, fullName: '(Ketua)' },
-      ]);
-    }
-
-    return registrationRepository.findById(registrationId);
+    const code = await this.generateCode();
+    const created = await registrationRepository.create({
+      code,
+      ...scalarData,
+      student: { connect: { id: studentId } },
+    });
+    return registrationRepository.findById(created.id);
   }
-  private async getOwnedRegistration(leaderId: string, id: string) {
+
+  private async getOwnedRegistration(studentId: string, id: string) {
     const registration = await registrationRepository.findById(id);
     if (!registration) throw new NotFoundError(MESSAGES.NOT_FOUND);
-    if (registration.leaderId !== leaderId) {
+    if (registration.studentId !== studentId) {
       throw new ForbiddenError(MESSAGES.SCOPE);
     }
     return registration;
   }
 
-  async getMyRegistration(leaderId: string) {
-    return registrationRepository.findActiveByLeader(leaderId);
+  async getMyRegistration(studentId: string) {
+    return registrationRepository.findActiveByStudent(studentId);
   }
 
-  async getById(id: string) {
+  async getById(id: string, actor: { id: string; role: Role }) {
     const registration = await registrationRepository.findById(id);
     if (!registration) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    const staffRoles: Role[] = [Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH];
+    if (!staffRoles.includes(actor.role) && registration.studentId !== actor.id) {
+      throw new ForbiddenError(MESSAGES.SCOPE);
+    }
     return registration;
   }
 
-  /** Mengajukan pendaftaran untuk ditinjau Admin. */
-  async submit(leaderId: string, id: string, ctx: { ipAddress?: string; userAgent?: string }) {
-    const registration = await this.getOwnedRegistration(leaderId, id);
+  /** Mengajukan pendaftaran untuk ditinjau Admin (Guard 1: kuota perusahaan). */
+  async submit(studentId: string, id: string, ctx: { ipAddress?: string; userAgent?: string }) {
+    const registration = await this.getOwnedRegistration(studentId, id);
 
     if (registration.status !== RegistrationStatus.DRAFT) {
       throw new ConflictError('Pendaftaran sudah pernah diajukan');
     }
-    if (registration.members.length === 0) {
-      throw new BadRequestError(MESSAGES.GROUP.NO_MEMBERS);
-    }
 
-    // Cek ulang saat pengajuan: anggota tidak boleh sudah terikat kelompok lain.
-    await this.assertMembersFree(registration.members.map((m) => m.nisn), registration.id);
-
-    // Simpan bidang industri (input bebas) ke master bila belum ada
-    if (registration.companyIndustry) {
-      await industryRepository.findOrCreateByName(registration.companyIndustry);
-    }
+    // Guard 1 (dua penjaga kuota): perusahaan tujuan harus masih punya sisa.
+    await companyService.assertSisaAvailable(registration.companyId);
 
     await registrationRepository.update(registration.id, {
       status: RegistrationStatus.DIAJUKAN,
@@ -305,11 +183,11 @@ export class RegistrationService {
     });
 
     await auditService.record({
-      actorId: leaderId,
+      actorId: studentId,
       action: AUDIT_ACTIONS.CREATE_REGISTRATION,
       entityType: ENTITY_TYPES.REGISTRATION,
       entityId: registration.id,
-      metadata: { status: RegistrationStatus.DIAJUKAN },
+      metadata: { status: RegistrationStatus.DIAJUKAN, companyId: registration.companyId },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
     });
@@ -317,43 +195,62 @@ export class RegistrationService {
     return { registration: await registrationRepository.findById(registration.id), documentId: null };
   }
 
-  /** Buat surat final sekali saja, setelah Admin menyetujui ajuan. */
-  private async generateApplicationLetter(registration: NonNullable<Awaited<ReturnType<typeof registrationRepository.findById>>>) {
+  /** Buat surat permohonan (per siswa) sekali saja, setelah Admin menyetujui ajuan. */
+  private async generateApplicationLetter(
+    registration: NonNullable<Awaited<ReturnType<typeof registrationRepository.findById>>>
+  ) {
     const existing = registration.document;
     if (existing?.files.some((file) => file.isActive)) return existing.id;
 
-    const leader = await prisma.user.findUnique({ where: { id: registration.leaderId } });
-    const leaderName = leader?.username ?? 'Ketua Kelompok';
+    const studentName =
+      registration.student?.studentProfile?.fullName ??
+      registration.student?.username ??
+      'Siswa';
+    const nisn = registration.student?.studentProfile?.nisn ?? null;
+    const company = registration.company;
+
+    const school = await settingService.getSchoolIdentity();
+    const rangeText = await letterService.getPklRangeText(registration.cohortId);
+    const academicYear = letterService.academicYearFromCohortName(registration.cohort?.name);
+    const programKeahlian = registration.major?.name ?? '-';
+
+    const dateClause = rangeText
+      ? `mengikuti kegiatan PKL mulai tanggal **${rangeText}**.`
+      : 'mengikuti kegiatan PKL pada masa yang ditentukan.';
+
     const letter = await letterService.generateLetter({
       type: DocumentType.SURAT_PERMOHONAN,
-      title: 'Surat Permohonan Praktik Kerja Lapangan',
-      recipientLines: [
-        'Kepada Yth.',
-        'Pimpinan ' + registration.companyName,
-        registration.companyAddress,
+      hal: 'Permohonan PKL',
+      recipientLines: ['Bapak / Ibu Pimpinan', company.name, company.address ?? ''],
+      recipientCity: company.city ?? school.city,
+      paragraphs: [
+        'Dengan Hormat,',
+        `Sesuai dengan Permendikbud Ristek RI Nomor 12 Tahun 2024 Tentang Kurikulum Merdeka dan Program Kerja ${school.schoolName}${academicYear ? ` Tahun Pelajaran ${academicYear}` : ''} tentang Praktek Kerja Lapangan (PKL), melalui surat ini kami mohon kepada Bapak/Ibu pimpinan ${company.name}, berkenan menerima siswa/siswi ${school.schoolName} untuk ${dateClause}`,
+        'Bersama ini kami kirimkan nama – nama siswa/i yang akan melaksanakan Praktek Kerja Lapangan (PKL) di Institusi / Lembaga yang Bapak / Ibu pimpin sebagai berikut:',
       ],
-      bodyParagraphs: [
-        'Dengan hormat,',
-        `Sehubungan dengan pelaksanaan Praktik Kerja Lapangan (PKL) pada gelombang ${registration.cohort?.name ?? '-'}, kami bermaksud mengajukan permohonan agar siswa-siswi kami dapat melaksanakan PKL di ${registration.companyName}.`,
-        `Adapun anggota kelompok yang diajukan adalah sebagai berikut: ${registration.members
-          .map((m, i) => `${i + 1}) ${m.fullName}${m.className ? ` (${m.className})` : ''}`)
-          .join(', ')}.`,
-        'Demikian surat permohonan ini kami sampaikan. Atas perhatian dan kerja samanya kami ucapkan terima kasih.',
-      ],
+      table: {
+        columns: ['NO', 'NAMA SISWA', 'PROGRAM KEAHLIAN'],
+        rows: [['1.', studentName, programKeahlian]],
+        widths: [36],
+        aligns: ['center', 'left', 'left'],
+      },
+      closing:
+        'Demikian surat permohonan ini kami sampaikan, atas perhatian, dukungan serta kesediaannya disampaikan terima kasih.',
       cohortId: registration.cohortId,
       payload: {
         registrationId: registration.id,
-        companyName: registration.companyName,
-        leaderName,
+        companyName: company.name,
+        studentName,
+        nisn,
       },
     });
 
-    // Simpan sebagai Document milik ketua (Surat Permohonan ter-generate)
+    // Simpan sebagai Document milik siswa (Surat Permohonan ter-generate)
     const doc = await documentRepository.create({
       type: DocumentType.SURAT_PERMOHONAN,
       status: DocumentStatus.DISETUJUI, // surat ter-generate dianggap final untuk dicetak
-      title: `Surat Permohonan - ${registration.groupName}`,
-      owner: { connect: { id: registration.leaderId } },
+      title: `Surat Permohonan - ${studentName}`,
+      owner: { connect: { id: registration.studentId } },
       cohort: { connect: { id: registration.cohortId } },
       registration: { connect: { id: registration.id } },
     });
@@ -380,12 +277,10 @@ export class RegistrationService {
     perPage: number;
     status?: RegistrationStatus;
     cohortId?: string;
-    withoutGroup?: boolean;
   }) {
     const where = {
       ...(params.status ? { status: params.status } : {}),
       ...(params.cohortId ? { cohortId: params.cohortId } : {}),
-      ...(params.withoutGroup ? { group: { is: null } } : {}),
     };
     return registrationRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
   }
@@ -406,12 +301,6 @@ export class RegistrationService {
 
     if (action === 'REJECT' && !note) {
       throw new BadRequestError('Alasan penolakan wajib diisi');
-    }
-
-    // Persetujuan terakhir: pastikan tidak ada anggota yang sudah terikat
-    // pendaftaran/kelompok lain (mis. ajuan lain yang diajukan lebih dulu).
-    if (action === 'APPROVE') {
-      await this.assertMembersFree(registration.members.map((m) => m.nisn), registration.id);
     }
 
     const updated: Registration = await registrationRepository.update(id, {
@@ -447,76 +336,6 @@ export class RegistrationService {
     }
 
     return updated;
-  }
-
-  /**
-   * Ambil pendaftaran yang digrup berdasarkan nama kelompok.
-   * Mengembalikan array kelompok, setiap kelompok berisi daftar siswa dengan nama yang sama.
-   * Sertakan data form Fase 1 (tempat PKL + identitas anggota: NISN, nama,
-   * kelas, no. HP, alamat) agar admin bisa verifikasi tanpa membuka layar lain.
-   */
-  async listGrouped(cohortId?: string) {
-    const where: Record<string, unknown> = { deletedAt: null };
-    if (cohortId) where.cohortId = cohortId;
-
-    const registrations = await prisma.registration.findMany({
-      where,
-      include: {
-        leader: { include: { studentProfile: true } },
-        cohort: true,
-        major: true,
-        members: { orderBy: [{ isLeader: 'desc' }, { createdAt: 'asc' }] },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    // Group by groupName
-    const groupMap = new Map<string, typeof registrations>();
-    for (const reg of registrations) {
-      const key = reg.groupName;
-      if (!groupMap.has(key)) groupMap.set(key, []);
-      groupMap.get(key)!.push(reg);
-    }
-
-    // Convert to array
-    const groups = Array.from(groupMap.entries()).map(([groupName, regs]) => {
-      const first = regs[0];
-      return {
-        groupName,
-        companyName: first?.companyName ?? '-',
-        companyAddress: first?.companyAddress ?? '-',
-        companyIndustry: first?.companyIndustry ?? null,
-        companyPhone: first?.companyPhone ?? null,
-        companyCity: first?.companyCity ?? null,
-        companyWebsite: first?.companyWebsite ?? null,
-        companyContacts: (first?.companyContacts as string[] | null) ?? null,
-        majorName: first?.major?.name ?? null,
-        cohortName: first?.cohort?.name ?? null,
-        cohortId: first?.cohortId ?? null,
-        registrations: regs.map((r) => ({
-          id: r.id,
-          code: r.code,
-          leaderId: r.leaderId,
-          leaderName: r.leader?.studentProfile?.fullName ?? r.leader?.username ?? '-',
-          status: r.status,
-          createdAt: r.createdAt,
-          members: r.members.map((m) => ({
-            id: m.id,
-            userId: m.userId,
-            fullName: m.fullName,
-            nisn: m.nisn,
-            className: m.className,
-            phone: m.phone,
-            address: m.address,
-            isLeader: m.isLeader,
-          })),
-        })),
-        totalCount: regs.length,
-        approvedCount: regs.filter((r) => r.status === 'DISETUJUI').length,
-      };
-    });
-
-    return groups;
   }
 }
 

@@ -10,9 +10,16 @@ export class DashboardService {
     const stats: Record<string, unknown> = {};
 
     if (role === Role.ADMIN || role === Role.SUPER_ADMIN) {
-      const [totalStudents, totalGroups, totalCompanies, activeCohorts, pendingDocs, pendingRegistrations] = await Promise.all([
+      const [
+        totalStudents,
+        supervisedStudents,
+        totalCompanies,
+        activeCohorts,
+        pendingDocs,
+        pendingRegistrations,
+      ] = await Promise.all([
         prisma.user.count({ where: { role: Role.SISWA } }),
-        prisma.group.count({ where: { deletedAt: null } }),
+        prisma.studentSupervisor.count(),
         prisma.company.count({ where: { deletedAt: null } }),
         prisma.cohort.count({ where: { status: 'OPEN' } }),
         prisma.document.count({ where: { status: 'MENUNGGU_VERIFIKASI' } }),
@@ -20,7 +27,7 @@ export class DashboardService {
       ]);
 
       stats.totalStudents = totalStudents;
-      stats.totalGroups = totalGroups;
+      stats.supervisedStudents = supervisedStudents;
       stats.totalCompanies = totalCompanies;
       stats.activeCohorts = activeCohorts;
       stats.pendingDocuments = pendingDocs;
@@ -38,8 +45,10 @@ export class DashboardService {
     }
 
     if (role === Role.GURU_PEMBIMBING) {
-      const supervisedGroups = await prisma.groupSupervisor.count({ where: { userId: userId } });
-      stats.supervisedGroups = supervisedGroups;
+      const supervisedStudents = await prisma.studentSupervisor.count({
+        where: { supervisorId: userId },
+      });
+      stats.supervisedStudents = supervisedStudents;
     }
 
     if (role === Role.SISWA) {
@@ -51,14 +60,6 @@ export class DashboardService {
       stats.attendanceDays = attendanceCount;
       stats.journalCount = journalCount;
       stats.complaintCount = complaintCount;
-    }
-
-    if (role === Role.DUDI) {
-      const company = await prisma.companyMentor.findUnique({ where: { userId } });
-      if (company) {
-        const groupCount = await prisma.group.count({ where: { companyId: company.companyId } });
-        stats.companyGroups = groupCount;
-      }
     }
 
     return stats;

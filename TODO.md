@@ -867,29 +867,29 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 
 ## Filter & Pencarian di Menu Admin (Banyak Data)
 
-**Permintaan:** tambah fitur search/filter di menu-menu yang menampung banyak data — pendaftaran, surat, master siswa, manajemen user, perusahaan, kelompok, rekap nilai, dokumen, absensi, pengaduan, audit log. **Tanpa** di gelombang, jadwal fase, dan sejenisnya.
+**Permintaan:** tambah fitur search/filter di menu-menu yang menampung banyak data ï¿½ pendaftaran, surat, master siswa, manajemen user, perusahaan, kelompok, rekap nilai, dokumen, absensi, pengaduan, audit log. **Tanpa** di gelombang, jadwal fase, dan sejenisnya.
 
 ### Backend (param `search`)
-- [x] `studentRegistry.repository.ts` — `findByCohort(cohortId, skip, take, search?)`: OR contains (fullName, nisn, className); controller baca `req.query.search`
-- [x] `auditLog.service.ts` — `list` + `search`: OR contains (action, entityType, entityId, actor.username); controller pass-through
+- [x] `studentRegistry.repository.ts` ï¿½ `findByCohort(cohortId, skip, take, search?)`: OR contains (fullName, nisn, className); controller baca `req.query.search`
+- [x] `auditLog.service.ts` ï¿½ `list` + `search`: OR contains (action, entityType, entityId, actor.username); controller pass-through
 - [x] Route keduanya tanpa validator query ? param lolos; `companyService.list` sudah dukung `search` + `industryId` sejak awal (FE hanya belum kirim)
 - [x] FE `api.service.ts`: `studentRegistryService.list`, `auditLogService.list` (tambah `search`), `companyService.list` (objek: search/industryId/perPage)
 
 ### Frontend per view (pola toolbar UsersView: input `type=search` + select + Reset bersyarat + empty state spesifik)
-- [x] **Master Siswa** (`StudentRegistryView`) — server-side search debounce 400ms
-- [x] **Audit Log** (`AuditLogsView`) — server-side search debounce + filter aksi persis lama dipertahankan
-- [x] **Perusahaan** (`CompaniesView`) — live search debounce server-side + select industri + tombol Reset; `perPage: 100`
-- [x] **Pendaftaran** (`RegistrationsView`) — pipeline `filteredGroups`: tab status + search (nama kelompok/perusahaan/ketua/kode/anggota+NISN; match level kelompok = tampil semua registrasinya)
-- [x] **Surat** (`LettersView`) — `filteredLetters` FE (nomor/perihal/penanda tangan/jenis)
-- [x] **Kelompok** (`GroupsView`) — `filteredGroups` FE (kode/nama/perusahaan/anggota) + select status dinamis + Reset
-- [x] **Dokumen** (`DocumentsView`) — `filteredDocs` FE (judul/jenis/catatan) ditambah ke filter jenis+status lama
-- [x] **Rekap Nilai** (`GradeRecapView`) — `filteredClasses` FE: kelas match = utuh, else saring kelompok/siswa
-- [x] **Absensi** (`AttendanceMonitorView`) — `filteredClasses` FE serupa (studentCount dihitung ulang dari grup tersaring)
-- [x] **Pengaduan** (`ComplaintMonitorView`) — `filteredComplaints` FE (subjek/penulis/kelompok)
+- [x] **Master Siswa** (`StudentRegistryView`) ï¿½ server-side search debounce 400ms
+- [x] **Audit Log** (`AuditLogsView`) ï¿½ server-side search debounce + filter aksi persis lama dipertahankan
+- [x] **Perusahaan** (`CompaniesView`) ï¿½ live search debounce server-side + select industri + tombol Reset; `perPage: 100`
+- [x] **Pendaftaran** (`RegistrationsView`) ï¿½ pipeline `filteredGroups`: tab status + search (nama kelompok/perusahaan/ketua/kode/anggota+NISN; match level kelompok = tampil semua registrasinya)
+- [x] **Surat** (`LettersView`) ï¿½ `filteredLetters` FE (nomor/perihal/penanda tangan/jenis)
+- [x] **Kelompok** (`GroupsView`) ï¿½ `filteredGroups` FE (kode/nama/perusahaan/anggota) + select status dinamis + Reset
+- [x] **Dokumen** (`DocumentsView`) ï¿½ `filteredDocs` FE (judul/jenis/catatan) ditambah ke filter jenis+status lama
+- [x] **Rekap Nilai** (`GradeRecapView`) ï¿½ `filteredClasses` FE: kelas match = utuh, else saring kelompok/siswa
+- [x] **Absensi** (`AttendanceMonitorView`) ï¿½ `filteredClasses` FE serupa (studentCount dihitung ulang dari grup tersaring)
+- [x] **Pengaduan** (`ComplaintMonitorView`) ï¿½ `filteredComplaints` FE (subjek/penulis/kelompok)
 - [x] Semua empty state ganti "Tidak ada ... cocok dengan pencarian/filter" saat search aktif
 
 ### Bug route duplikat (ditemukan saat QA)
-- [x] **Dua route `path: 'pengaduan'`**: `my-complaints` (SISWA) vs `complaint-monitor` — Vue Router match pertama ? reload `/pengaduan` selalu 403 utk admin/guru. `complaint-monitor` dipindah ke **`/monitor-pengaduan`** (sidebar pakai `routeName`, tdk terpengaruh)
+- [x] **Dua route `path: 'pengaduan'`**: `my-complaints` (SISWA) vs `complaint-monitor` ï¿½ Vue Router match pertama ? reload `/pengaduan` selalu 403 utk admin/guru. `complaint-monitor` dipindah ke **`/monitor-pengaduan`** (sidebar pakai `routeName`, tdk terpengaruh)
 
 ### Data uji (dipertahankan utk testing user)
 - [x] Cohort "Gelombang Uji Filter - 2026/2027" (OPEN) + 5 master siswa direpoint (FK orphan setelah reset); 3 perusahaan (2 industri + 1 tanpa); 1 kelompok `GRP-UJI-001` "Kelompok Uji Filter"; 2 pengaduan tertaut kelompok (pengaduan tanpa group tampil hanya jika ko filter grup)
@@ -898,3 +898,85 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] `npx tsc --noEmit` (backend) + `npx vue-tsc --noEmit` + `npx vite build` hijau
 - [x] Browser QA **36/36 PASS** (akun admin uji dibuat+dihapus): master-siswa (search NISN + empty state), perusahaan (search "Maju"->1, filter industri->1 & Reset->3), pendaftaran/surat/dokumen (empty state search), kelompok (search, Reset, kode), rekap/absensi (presence), pengaduan (2 data, search "AC ruang"->1, empty state), audit (search LOGIN server-side + empty state); console 401 = probe pre-login normal
 - [x] Catatan QA: server sempat mati karena dimatikan manual (bukan bug); akun admin uji dihapus, file tmp dibersihkan
+
+## Feature F ï¿½ Refactor Per-Orang (Tanpa Kelompok & Tanpa Akun DUDI)
+
+**Keputusan:** pendaftaran per siswa dengan kuota perusahaan (dua penjaga: saat submit & saat ACC surat penerimaan); 1 siswa = 1 guru pembimbing (`StudentSupervisor`, batch admin); absensi & jurnal diverifikasi guru pembimbing; 3 surat bulk (pengantar/monitoring/penjemputan) diterbitkan guru berisi tabel siswa bimbingan + notifikasi per siswa; nilai fase PKL_SELESAI diinput siswa sendiri lalu di-approve guru (Approval entityType GRADE); kelompok + akun DUDI + JobVacancy dihapus total dari UI/DB (Role enum KETUA/DUDI dipertahankan tapi tidak dipakai).
+
+### Fase 1 ï¿½ Skema & migrasi
+- [x] Schema: hapus Group*/RegistrationMember/CompanyMentor/JobVacancy; tambah StudentSupervisor (unique studentId, supervisor FK Restrict), Company.quota, GeneratedLetter(createdById), DocumentType SURAT_PENJEMPUTAN; FinalReport/Visit/Attendance/Journal/Complaint/Grade/Feedback per siswa; manual migration `20261009000000_refactor_perorang` via `prisma migrate deploy`
+
+### Fase 2 ï¿½ Backend
+- [x] 2a: `companyService` quota (getQuotaInfo/assertSisaAvailable/listOptions/attachQuotaInfo) + `GET /api/companies/options`; registration individual (assertRegistrable/saveDraft/submit Guard 1); document verify Guard 2 (kuota dipotong saat ACC Surat Penerimaan)
+- [x] 2b: `supervision.service/controller/routes` (`/api/supervisions`: list scope guru-otomatis, assign batch, unassign, forStudent); surat bulk `POST /phase4/bulk-letter` + tabel siswa + notifikasi tipe LETTER link `/dokumen`; letter.template drawTable; ASSIGN_SUPERVISOR audit
+- [x] 2c: grades per-orang ï¿½ `POST /grades` (SISWA self-only fase PKL_SELESAI, studentId opsional dari token; admin eksplisit), `POST /grades/:id/approve` (scope supervision, decideApproval DISETUJUI/DITOLAK, resetApproval MENUNGGU saat input ulang), list guru scope, recap-by-class flat (kelas?siswa + companyName/supervisorName/approvalStatus)
+- [x] 2d: hapus group/jobVacancy/dudiAssignment files + route; studentWorkflow per-orang (permohonanDownloaded, tanpa group/dudi fields); document.service getOwnerPlacement (bukan group) + scope guru via supervision; userManage tanpa KETUA auto-username/DUDI companyMentor, getStudentData shape baru (pendaftaran/fase2/pembimbing); pernyataan/attendance/journal/finalReport/visit/complaint/feedback/export/dashboard di-refactor; seed-qa per-orang
+
+### Fase 3 ï¿½ Frontend
+- [x] api.service.ts ditulis ulang (kontrak per-orang; groupService/jobVacancyService/listForDudi/verifyByDudi/diplomasi letters dihapus; supervisionService baru)
+- [x] Router+AppLayout: hapus route/menu dudi & kelompok; tambah `/penilaian` (siswa input nilai), `/guru/bimbingan`, `/guru/surat`, `/guru/absensi`; `admin/kelompok` ? `admin/pembimbingan` (SupervisionsView); KETUA dihapus dari guard/menu
+- [x] Siswa: RegistrationView dropdown perusahaan+kuota; StudentWorkflowView 6 langkah + tugas Input Nilai (PKL_SELESAI); MyDocumentsView placement; GradeInputView baru (aspek dinamis + badge approval)
+- [x] Admin: RegistrationsView flat; CompaniesView kolom+form quota; SupervisionsView (batch assign guru, lepas, filter belum dibimbing); UsersView tanpa DUDI/KETUA + modal siswa baru; DocumentsView placement; AttendanceMonitorView & GradeRecapView flat; ComplaintMonitorView filter penulis; LettersView daftar+unduh saja
+- [x] Guru: BimbinganView, BulkLetterView (3 tipe + daftar+unduh), AttendanceVerifyView, JournalMonitorView verify(`POST /:id/verify`), VisitView per siswa, GradeApprovalView approve(`POST /grades/:id/approve`)+guidance
+
+### Fase 4 ï¿½ Verifikasi
+- [x] `npx tsc --noEmit` (backend) + `npx vue-tsc --noEmit` + `npx vite build` hijau
+- [x] Seed QA per-orang (siswa_fase1..4, guru_pembimbing membimbing 2 siswa, registrasi DIAJUKAN/DISETUJUI, akun qa_admin)
+- [x] Browser QA 4 role LULUS: admin 8 halaman render (pembimbingan/perusahaan/pendaftaran/penilaian/dokumen/users/surat/absensi), guru 6 halaman (bimbingan tampil siswa fase3+4), siswa_fase1 alur-pkl + dropdown perusahaan 6 opsi + info kuota, siswa_fase4 form Input Nilai PKL; console tanpa pageerror (401 = probe pre-login normal)
+- [x] Catatan: link notifikasi surat bulk `/dokumen` cocok route siswa; akses halaman guru dibatasi supervision scope (403/SCOPE bila bukan pembimbingnya)
+
+## Feature H - Master Guru + Akun Otomatis (username = NIP)
+
+**Keputusan:** mirror Master Siswa tapi kunci NIP (18 digit, tanpa kolom kelas, jurusan opsional). Perbedaan utama: akun GURU_PEMBIMBING (username = NIP, password acak, wajib ganti password) **dibuat otomatis** saat tambah manual / import Excel ï¿½ tidak perlu tombol terpisah di Manajemen User. Guru = staf global (user.cohortId null); baris master per gelombang (NIP unique global). Hapus data guru = soft delete baris master + hapus permanen akun + penugasan bimbingan & kunjungan (FK Restrict dibersihkan dulu).
+
+- [x] Schema+migrasi: model TeacherRegistry (nisn-analog: nip unique VarChar18), back-relations Cohort/Major; migrasi `20261009000001_teacher_registry` via `prisma migrate deploy`
+- [x] Backend: repository/service/import/controller/routes `/api/teacher-registry` (inspect/import/create/list/remove/ensure-accounts/lookup); auto-provision transaction User+TeacherProfile+InitialCredential; audit CREATE_USER per batch; ensure-accounts = tombal idempoten bila ada baris tanpa akun
+- [x] **Bug fix:** `singleFile` menolak MIME Excel -> import Master Siswa & Master Guru selama ini 400. Tambah middleware `singleExcelFile` (whitelist xlsx/xls/csv) di `upload.ts`, dipakai kedua route registry
+- [x] FE: api.service teacherRegistryService (+ hasil import menampilkan tabel akun+password + list duplikat/error); TeacherRegistryView (import mapping NIP/Nama/Jurusan, tambah manual, tombol "Buat Akun Tertinggal", modal akun otomatis + Salin Semua); route `/admin/master-guru`; menu "Master Guru" section Data
+- [x] Verifikasi: tsc 0, vue-tsc 0, vite build OK; smoke API manual-add+import+ensure+remove (login guru baru OK, akun hilang setelah hapus); browser QA (modal akun otomatis, tambal idempoten, hapus, akun guru tampil di Manajemen User)
+
+## Fix - Kelas Siswa Hilang (Manajemen User / Bimbingan / Surat)
+
+**Akar masalah:** `StudentProfile.classId` selalu null ï¿½ Master Siswa menyimpan kelas sebagai teks (`XII-RPL-2`) yang tidak pernah dipetakan ke baris `Class` (`XII RPL 2`), sehingga semua bacaan `profile.class?.name` kosong.
+
+- [x] `classResolver.service.ts` baru: `normalizeClassName` ("XII-RPL-2" -> "XII RPL 2"), `resolveOrCreateClass` (find-or-create baris Class per gelombang + jurusan), `registryClassByNisn`, `classNameWithFallback`
+- [x] Provision akun siswa (`createStudentsFromRegistry`): set classId saat bikin akun + **backfill** akun lama yang classId-nya null (hasil: `classBackfilled`, idempoten); tombol "Buat Akun dari Master Siswa" bisa dipakai ulang utk backfill
+- [x] Fallback registry (NISN) di: getStudentData (Data PKL), bulk-letter phase4, supervision list, document placement, finalReport PDF
+- [x] `userManage.list` include relasi class; UsersView kolom "Kelas" + info backfill di modal provision; seed-qa set classId (XII-RPL-1/DKV-1/RPL-2)
+- [x] Backfill data existing: 4 siswa Uji Filter (dari registry) + 4 siswa seed QA; Class rows terbentuk dgn major benar
+- [x] Verifikasi: tsc 0, vue-tsc 0, build OK; API studentData "XII RPL 2", supervision guru "XII DKV 1/XII RPL 2"; browser QA kolom Kelas + modal Data PKL "XII DKV 1 / DKV" + bimbingan tampil kelas
+
+## Fitur I - Template Surat Resmi SMKN 9 Medan + Generator Surat Admin
+
+**Referensi:** 3 PDF sample dinas di `Backend/surat_pkl/` (Permohonan, Pengantar, Penugasan Pembimbing). Semua surat kini memakai kop identik: logo Pemprov Sumut + PEMERINTAH PROVINSI SUMATERA UTARA / DINAS PENDIDIKAN / SMK NEGERI 9 MEDAN / Program Keahlian / alamat / Website-Email-NPSN + double rule.
+
+- [x] `letter.template.ts` ditulis ulang: `drawKop` (logo PNG `Backend/src/assets/logo-sumut.png` hasil ekstraksi dari sample), `drawRich` (**bold** inline), `drawTable` (header abu `#e8e8e8`, border 0.6pt, repeat header pindah halaman), `drawSignFormal`/`drawFooters` (`-- n of m --`); kua pdfkit: opsi `margins` (plural) + footer `lineBreak:false` + guard maxY (phantom page fix)
+- [x] Layout formal: blok Nomor/Lampiran/Hal + tanggal kanan, "Kepada Yth :" + "Di-/Medan", body justify rata kolom value, tabel rata kolom value, tanda tangan jabatan+nama+NIP tanpa tanggal; layout penugasan: judul center underlined + Dari/Kepada(nested)/Dasar/Isi/Ketentuan + tabel tujuan + blok Dikeluarkan di kanan
+- [x] `setting.service.getSchoolIdentity` + `letter.service.getPklRangeText`/`academicYearFromCohortName`; `DocumentType.SURAT_PENUGASAN` + migrasi + prisma generate
+- [x] Endpoint generator admin (`/api/letters`, ADMIN+SUPER_ADMIN): `POST /permohonan` (per gelombang+perusahaan, multi-siswa, tabel 3 kolom), `POST /penugasan` (per guru, tujuan=perusahaan unik bimbingan); validator ID `min(1)` (company seed QA non-CUID); pengantar via `POST /phase4/bulk-letter` existing + `replyNumber` (intro sample-2, spasi `nomor : ... tertanggal` fixed)
+- [x] FE: `letterGeneratorService` + `phase4Service.downloadLetterById` + `generateBulkLetter.replyNumber`; `LetterGeneratorView.vue` (3 kartu form + modal hasil + Unduh PDF), route `admin/surat-baru`, menu "Generator Surat", tombol "Buat Surat Baru" di LettersView
+- [x] Verifikasi: tsc 0, vue-tsc 0, vite build OK; smoke API qa_admin ? 3 surat 201 + download PDF 1 halaman masing-masing, visual cocok sample (kop/tabel/ttd/footer); browser QA halaman generator (3 form, opsi gelombang/perusahaan/guru terisi, menu+LettersView OK); tmp scripts dihapus
+
+## Fitur J - Gelombang Aktif Global + Gerbang Login Siswa
+
+**Keputusan:** gelombang aktif bersifat GLOBAL TUNGGAL (disimpan di `system_settings` key `cohort.active`), bukan per-status OPEN. Gerbang login hanya berlaku untuk role **SISWA**.
+
+- [x] `setting.service`: `getActiveCohortId`/`setActiveCohortId` (key `cohort.active`)
+- [x] `cohortManage.service`: `resolveActiveCohortId` (internal), `getActiveCohortId` (wajib ada+OPEN, untuk gate), `setActive` (hanya gelombang OPEN, + audit `SET_ACTIVE_COHORT`); `list`/`getById` menyertakan `isActive`
+- [x] Gerbang login `auth.service.login`: role SISWA wajib (1) punya `phase` valid, (2) ada gelombang aktif, (3) `user.cohortId ===` gelombang aktif; selain itu 403 dengan pesan spesifik (`PHASE_UNSET`/`NO_ACTIVE_COHORT`/`COHORT_INACTIVE`). Role non-siswa bebas.
+- [x] API: `POST /api/cohorts/active` (SUPER_ADMIN/KEPALA_SEKOLAH) + validator `setActiveCohortSchema`
+- [x] FE: `cohortService.setActive`, `CohortRecord.isActive`; CohortsView kolom "Aktif" (badge Aktif / tombol "Jadikan Aktif" bila OPEN / "-")
+- [x] Verifikasi: tsc 0, vue-tsc 0, vite build OK; smoke API ï¿½ siswa di gelombang aktif 200, siswa gelombang lain 403, fase kosong 403, tanpa gelombang aktif 403, non-siswa 200, set aktif ke DRAFT 400; browser QA kolom Aktif + klik "Jadikan Aktif" mengubah aktif (lalu direstore); tmp dihapus
+- Catatan: password `superadmin` (dev) direset ke `Admin#12345` untuk pengujian; password siswa legacy `1234567891` direset ke `123456`.
+
+## Security Hardening - Audit Follow-up
+
+- [x] IDOR registrasi: detail kini hanya pemilik atau staff; phase schedule membatasi pembacaan lintas cohort
+- [x] Stored XSS website perusahaan: backend hanya menerima URL `http/https`; frontend memvalidasi ulang sebelum membuat link
+- [x] Upload: cohort dipaksa dari akun, ekstensi ditentukan MIME server-side, magic bytes diverifikasi, filename/path disanitasi dan dibatasi storage root
+- [x] Auth: access token memuat claim tervalidasi dan user aktif/role/cohort/fase dibaca ulang dari DB; refresh body token ditolak dan refresh rate limit ditambah
+- [x] Download file memakai `application/octet-stream`, `nosniff`, dan filename aman; verify dokumen guru divalidasi ulang di service
+- [x] Error/request logging tidak mengembalikan stack/metadata ORM/full query URL; request ID client divalidasi
+- [x] Docker production wajib menerima secret eksplisit (tanpa default JWT/database); placeholder JWT ditolak pada `NODE_ENV=production`
+- [x] CSRF praktis: refresh/logout memvalidasi `Origin`; Nginx menambah `nosniff`, `X-Frame-Options`, dan `Referrer-Policy`
+- [x] Verifikasi: backend `tsc`, frontend `vue-tsc` + `vite build`, health endpoint, login normal, refresh token body ditolak 401, dan registrasi lintas siswa ditolak 403

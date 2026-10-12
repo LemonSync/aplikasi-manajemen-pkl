@@ -1,44 +1,54 @@
 import { Registration, Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
+const studentInclude = {
+  student: {
+    select: {
+      id: true,
+      username: true,
+      studentProfile: {
+        select: {
+          fullName: true,
+          nisn: true,
+          class: { select: { name: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+const baseInclude = {
+  ...studentInclude,
+  company: { include: { industry: { select: { name: true } } } },
+  cohort: true,
+  major: true,
+  document: { include: { files: { where: { isActive: true } } } },
+} as const;
+
 export type RegistrationWithRelations = Prisma.RegistrationGetPayload<{
-  include: {
-    members: true;
-    cohort: true;
-    major: true;
-    document: { include: { files: true } };
-    group: true;
-  };
+  include: typeof baseInclude;
 }>;
 
 /**
- * Repository pendaftaran PKL (Fase 1).
+ * Repository pendaftaran PKL per siswa (Fase 1).
  */
 export class RegistrationRepository {
   async findById(id: string): Promise<RegistrationWithRelations | null> {
     return prisma.registration.findFirst({
       where: { id, deletedAt: null },
-      include: {
-        members: { orderBy: { isLeader: 'desc' } },
-        cohort: true,
-        major: true,
-        document: { include: { files: { where: { isActive: true } } } },
-        group: true,
-      },
+      include: baseInclude,
     });
   }
 
-  /** Pendaftaran aktif (belum dihapus) milik seorang ketua/siswa. */
-  async findActiveByLeader(leaderId: string): Promise<RegistrationWithRelations | null> {
+  /** Pendaftaran aktif (belum dihapus) milik seorang siswa. */
+  async findActiveByStudent(studentId: string): Promise<RegistrationWithRelations | null> {
     return prisma.registration.findFirst({
-      where: { leaderId, deletedAt: null, status: { in: ['DRAFT', 'DIAJUKAN', 'DISETUJUI'] } },
-      include: {
-        members: { orderBy: { isLeader: 'desc' } },
-        cohort: true,
-        major: true,
-        document: { include: { files: { where: { isActive: true } } } },
-        group: true,
+      where: {
+        studentId,
+        deletedAt: null,
+        status: { in: ['DRAFT', 'DIAJUKAN', 'DISETUJUI'] },
       },
+      include: baseInclude,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -55,13 +65,7 @@ export class RegistrationRepository {
         skip,
         take,
         orderBy: { createdAt: 'desc' },
-        include: {
-          members: { orderBy: { isLeader: 'desc' } },
-          cohort: true,
-          major: true,
-          document: { include: { files: { where: { isActive: true } } } },
-          group: true,
-        },
+        include: baseInclude,
       }),
       prisma.registration.count({ where: base }),
     ]);

@@ -28,6 +28,11 @@ export const resetPasswordSchema = z.object({
   generateRandom: z.boolean().optional(),
 });
 
+// Bulk: buat akun siswa dari baris Master Siswa (per NISN) untuk satu gelombang
+export const provisionStudentsSchema = z.object({
+  cohortId: z.string().cuid('Gelombang tidak valid'),
+});
+
 export const listUserQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),
@@ -39,4 +44,5 @@ export const listUserQuerySchema = z.object({
 export type CreateUserDTO = z.infer<typeof createUserSchema>;
 export type UpdateUserDTO = z.infer<typeof updateUserSchema>;
 export type ResetPasswordDTO = z.infer<typeof resetPasswordSchema>;
+export type ProvisionStudentsDTO = z.infer<typeof provisionStudentsSchema>;
 export type ListUserQueryDTO = z.infer<typeof listUserQuerySchema>;

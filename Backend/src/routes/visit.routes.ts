@@ -60,7 +60,7 @@ router.post(
   validate({ body: cancelVisitSchema }),
   visitController.cancel
 );
-// Bukti foto: guru/admin + siswa anggota kelompok yang dimonitor
+// Bukti foto: guru/admin + siswa yang dimonitor
 router.get(
   '/:id/photo',
   authorizeRoles(...staffRoles, Role.SISWA),

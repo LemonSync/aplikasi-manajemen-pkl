@@ -34,7 +34,7 @@ const routes: RouteRecordRaw[] = [
         path: 'alur-pkl',
         name: 'student-workflow',
         component: () => import('@/views/siswa/StudentWorkflowView.vue'),
-        meta: { roles: ['SISWA', 'KETUA'] as Role[], title: 'Alur PKL Saya' },
+        meta: { roles: ['SISWA'] as Role[], title: 'Alur PKL Saya' },
       },
       // --- Siswa ---
       {
@@ -42,12 +42,6 @@ const routes: RouteRecordRaw[] = [
         name: 'registration',
         component: () => import('@/views/siswa/RegistrationView.vue'),
         meta: { roles: ['SISWA'] as Role[], phase: ['PRA_PKL'] as StudentPhase[], workflowTask: true, title: 'Pendaftaran PKL' },
-      },
-      {
-        path: 'kelompok',
-        name: 'my-groups',
-        component: () => import('@/views/siswa/MyGroupsView.vue'),
-        meta: { roles: ['SISWA'] as Role[], workflowTask: true, title: 'Kelompok Saya' },
       },
       {
         path: 'dokumen',
@@ -85,7 +79,31 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/siswa/ReportView.vue'),
         meta: { roles: ['SISWA'] as Role[], phase: ['PKL_AKTIF', 'PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Laporan Akhir' },
       },
+      {
+        path: 'penilaian',
+        name: 'grade-input',
+        component: () => import('@/views/siswa/GradeInputView.vue'),
+        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Input Nilai PKL' },
+      },
       // --- Guru Pembimbing ---
+      {
+        path: 'guru/bimbingan',
+        name: 'guru-bimbingan',
+        component: () => import('@/views/guru/BimbinganView.vue'),
+        meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Siswa Bimbingan' },
+      },
+      {
+        path: 'guru/surat',
+        name: 'guru-bulk-letter',
+        component: () => import('@/views/guru/BulkLetterView.vue'),
+        meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Surat Pengantar/Monitoring/Penjemputan' },
+      },
+      {
+        path: 'guru/absensi',
+        name: 'guru-attendance-verify',
+        component: () => import('@/views/guru/AttendanceVerifyView.vue'),
+        meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Verifikasi Absensi' },
+      },
       {
         path: 'guru/jurnal',
         name: 'guru-journal-monitor',
@@ -146,10 +164,16 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Surat (Generate & Terbit)' },
       },
       {
-        path: 'admin/kelompok',
-        name: 'admin-groups',
-        component: () => import('@/views/admin/GroupsView.vue'),
-        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Manajemen Kelompok' },
+        path: 'admin/surat-baru',
+        name: 'admin-letter-generator',
+        component: () => import('@/views/admin/LetterGeneratorView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Generator Surat' },
+      },
+      {
+        path: 'admin/pembimbingan',
+        name: 'admin-supervisions',
+        component: () => import('@/views/admin/SupervisionsView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Pembimbingan Siswa' },
       },
       {
         path: 'admin/dokumen',
@@ -168,31 +192,6 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-grade-recap',
         component: () => import('@/views/admin/GradeRecapView.vue'),
         meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Rekap Penilaian' },
-      },
-      // --- DUDI ---
-      {
-        path: 'dudi/penilaian',
-        name: 'dudi-grades',
-        component: () => import('@/views/dudi/GradesView.vue'),
-        meta: { roles: ['DUDI'] as Role[], title: 'Input Nilai & Feedback' },
-      },
-      {
-        path: 'dudi/absensi',
-        name: 'dudi-attendance-verify',
-        component: () => import('@/views/dudi/AttendanceVerifyView.vue'),
-        meta: { roles: ['DUDI'] as Role[], title: 'Konfirmasi Absensi Siswa' },
-      },
-      {
-        path: 'dudi/jurnal',
-        name: 'dudi-journal-verify',
-        component: () => import('@/views/dudi/JournalVerifyView.vue'),
-        meta: { roles: ['DUDI'] as Role[], title: 'Konfirmasi Jurnal Siswa' },
-      },
-      {
-        path: 'dudi/loker',
-        name: 'dudi-loker',
-        component: () => import('@/views/dudi/JobVacanciesView.vue'),
-        meta: { roles: ['DUDI'] as Role[], title: 'Lowongan Kerja' },
       },
       // --- Siswa tambahan ---
       {
@@ -226,6 +225,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-student-registry',
         component: () => import('@/views/admin/StudentRegistryView.vue'),
         meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Master Siswa' },
+      },
+      {
+        path: 'admin/master-guru',
+        name: 'admin-teacher-registry',
+        component: () => import('@/views/admin/TeacherRegistryView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Master Guru' },
       },
       {
         path: 'admin/users',
@@ -306,18 +311,16 @@ router.beforeEach((to) => {
 });
 
 /**
- * Siswa & Ketua di fase PRA_PKL & NON_PKL: selalu diarahkan ke guided workflow.
+ * Siswa fase PRA_PKL & NON_PKL: selalu diarahkan ke guided workflow.
  * Siswa di fase PKL_AKTIF & PKL_SELESAI: bisa akses route langsung (sidebar).
- * Ketua: selalu diarahkan ke guided workflow (akun khusus pra-daftar & daftar ulang).
  */
 router.beforeEach((to) => {
   const auth = useAuthStore();
   const isGuidedPhase = auth.phase === 'PRA_PKL' || auth.phase === 'NON_PKL' || !auth.phase;
-  const isKetua = auth.role === 'KETUA';
 
   if (
-    (auth.role === 'SISWA' || isKetua) &&
-    (isGuidedPhase || isKetua) &&
+    auth.role === 'SISWA' &&
+    isGuidedPhase &&
     to.name !== 'student-workflow' &&
     to.meta.workflowTask !== true &&
     to.name !== 'login' &&

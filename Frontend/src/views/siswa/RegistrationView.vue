@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import {
-  masterService,
+  companyService,
   registrationService,
   downloadFile,
-  studentRegistryService,
-  type MasterLookups,
+  type CompanyOption,
   type Registration,
-  type StudentRegistryRecord,
 } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
@@ -19,84 +17,36 @@ const auth = useAuthStore();
 // agar status workflow di-refetch — unduhan membuka gerbang Fase 1 → Fase 2.
 const emit = defineEmits<{ downloaded: [] }>();
 
-/** Gelombang sudah ditentukan Admin saat membuat akun ketua → tidak bisa diganti. */
-const assignedCohortId = computed(() => auth.user?.cohortId ?? null);
-const assignedCohortName = computed(() => {
-  const id = assignedCohortId.value;
-  if (!id) return '';
-  return lookups.value?.cohorts.find((c) => c.id === id)?.name ?? 'Gelombang terdaftar';
-});
-
-const lookups = ref<MasterLookups | null>(null);
 const existing = ref<Registration | null>(null);
+const companies = ref<CompanyOption[]>([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
 const success = ref('');
 
-const form = ref({
-  groupName: '',
-  cohortId: '',
-  companyName: '',
-  companyAddress: '',
-  companyIndustry: '',
-  companyPhone: '',
-  companyCity: '',
-  companyWebsite: '',
-});
+const companyId = ref('');
 
-type MemberStatus = 'idle' | 'checking' | 'found' | 'notfound';
-interface MemberRow {
-  name: string;
-  nisn: string;
-  className: string;
-  phone: string;
-  status: MemberStatus;
-}
+const selectedCompany = computed(
+  () => companies.value.find((c) => c.id === companyId.value) ?? null
+);
 
-const memberNames = ref<MemberRow[]>([{ name: '', nisn: '', className: '', phone: '', status: 'idle' }]);
-const lookupTimers: Record<number, number> = {};
-const pendingLookups = new Set<Promise<void>>();
+const formatDate = (dateStr: string | null): string => {
+  if (!dateStr) return '-';
+  return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+};
 
-const makeMember = (): MemberRow => ({ name: '', nisn: '', className: '', phone: '', status: 'idle' });
+/** Label sisa kuota; kuota null = tanpa batas. */
+const quotaLabel = (c: CompanyOption): string =>
+  c.sisa === null ? 'Tanpa batas' : `Sisa kuota: ${c.sisa}`;
 
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    const [lk, reg] = await Promise.all([
-      masterService.lookups(),
-      registrationService.getMy(),
-    ]);
-    lookups.value = lk;
+    const [opts, reg] = await Promise.all([companyService.options(), registrationService.getMy()]);
+    companies.value = opts;
     existing.value = reg;
-    if (reg) {
-      form.value = {
-        groupName: reg.groupName,
-        cohortId: assignedCohortId.value ?? reg.cohortId,
-        companyName: reg.companyName,
-        companyAddress: reg.companyAddress,
-        companyIndustry: reg.companyIndustry ?? '',
-        companyPhone: reg.companyPhone ?? '',
-        companyCity: reg.companyCity ?? '',
-        companyWebsite: reg.companyWebsite ?? '',
-      };
-      // Load nama anggota dari members
-      if (reg.members && reg.members.length > 0) {
-        memberNames.value = reg.members.map((m) => ({
-          name: m.fullName,
-          nisn: m.nisn ?? '',
-          className: m.className ?? '',
-          phone: m.phone ?? '',
-          status: m.fullName && m.className ? 'found' : 'idle',
-        }));
-      }
-    } else if (assignedCohortId.value) {
-      form.value.cohortId = assignedCohortId.value;
-    } else if (lk.cohorts.length > 0) {
-      form.value.cohortId = lk.cohorts[0].id;
-    }
-    if (memberNames.value.length === 0) memberNames.value = [makeMember()];
+    if (reg?.company?.id) companyId.value = reg.company.id;
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -104,124 +54,13 @@ const load = async (): Promise<void> => {
   }
 };
 
-const addMember = (): void => { memberNames.value.push(makeMember()); };
-const removeMember = (i: number): void => {
-  if (memberNames.value.length <= 1) return;
-  if (lookupTimers[i]) window.clearTimeout(lookupTimers[i]);
-  memberNames.value.splice(i, 1);
-};
-
-const hasChecking = computed(() => memberNames.value.some((m) => m.status === 'checking'));
-
-/** Lookup NISN ke Master Siswa → isi nama & kelas otomatis. */
-const lookupStudent = async (i: number): Promise<void> => {
-  const row = memberNames.value[i];
-  if (!row) return;
-  const nisn = row.nisn.trim();
-  const cohortId = form.value.cohortId;
-  row.name = '';
-  row.className = '';
-  row.status = 'idle';
-  if (!/^\d{10}$/.test(nisn) || !cohortId) return;
-
-  row.status = 'checking';
-  const task = (async () => {
-    try {
-      const student = await studentRegistryService.lookup(nisn, cohortId);
-      const cur = memberNames.value[i];
-      if (!cur || cur.nisn.trim() !== nisn) return; // baris sudah berubah → abaikan hasil lama
-      if (student && student.fullName) {
-        cur.name = student.fullName;
-        cur.className = student.className;
-        cur.status = 'found';
-      } else {
-        cur.status = 'notfound';
-        error.value = `NISN ${nisn} tidak ditemukan di Master Siswa gelombang ini.`;
-      }
-    } catch (e) {
-      const cur = memberNames.value[i];
-      if (cur && cur.nisn.trim() === nisn) cur.status = 'notfound';
-      error.value = extractErrorMessage(e);
-    }
-  })();
-  pendingLookups.add(task);
-  try {
-    await task;
-  } finally {
-    pendingLookups.delete(task);
-  }
-};
-
-/** Dipanggil tiap kali NISN diketik: reset hasil lama + lookup dengan debounce. */
-const onNisnInput = (i: number, ev: Event): void => {
-  const el = ev.target as HTMLInputElement;
-  const raw = el.value.replace(/\D/g, '').slice(0, 10);
-  if (el.value !== raw) el.value = raw;
-
-  const row = memberNames.value[i];
-  if (!row) return;
-  row.nisn = raw;
-  if (lookupTimers[i]) window.clearTimeout(lookupTimers[i]);
-  row.name = '';
-  row.className = '';
-  row.status = raw.length === 10 ? 'checking' : 'idle';
-  if (row.status !== 'checking') return;
-  lookupTimers[i] = window.setTimeout(() => {
-    void lookupStudent(i);
-  }, 450);
-};
-
-/** Validasi semua anggota sebelum kirim; tunggu lookup yang masih berjalan. */
-const validateMembers = async (): Promise<string | null> => {
-  await Promise.all([...pendingLookups]);
-  const rows = memberNames.value.filter((m) => m.nisn.trim() || m.name.trim());
-  if (rows.length === 0) return 'Minimal 1 anggota harus diisi.';
-  const seen = new Set<string>();
-  for (const [idx, m] of rows.entries()) {
-    const nisn = m.nisn.trim();
-    const label = `Anggota ${idx + 1}`;
-    if (!/^\d{10}$/.test(nisn)) return `${label}: NISN harus 10 digit angka.`;
-    if (seen.has(nisn)) return `${label}: NISN ${nisn} duplikat dengan anggota lain.`;
-    seen.add(nisn);
-    if (m.status !== 'found' || !m.name.trim() || !m.className.trim()) {
-      return `${label}: nama/kelas belum terisi otomatis dari NISN ${nisn}. Pastikan NISN terdaftar di Master Siswa gelombang ini.`;
-    }
-  }
-  return null;
-};
-
-/** Validasi + simpan draft. Return null bila gagal (pesan sudah di-set ke `error`). */
-/** Ganti gelombang → lookup ulang semua NISN (data master per gelombang). */
-const onCohortChange = (): void => {
-  memberNames.value.forEach((row, i) => {
-    if (/^\d{10}$/.test(row.nisn.trim())) void lookupStudent(i);
-  });
-};
-
+/** Simpan draft pendaftaran per-orang (hanya companyId). Return null bila gagal. */
 const saveDraftNow = async (): Promise<Registration | null> => {
-  const invalid = await validateMembers();
-  if (invalid) {
-    error.value = invalid;
+  if (!companyId.value) {
+    error.value = 'Pilih perusahaan tujuan terlebih dahulu.';
     return null;
   }
-  const members = memberNames.value
-    .filter((m) => m.nisn.trim() || m.name.trim())
-    .map((m, i) => ({
-      fullName: m.name.trim(),
-      nisn: m.nisn.trim() || null,
-      className: m.className.trim() || null,
-      phone: m.phone.trim() || null,
-      isLeader: i === 0,
-    }));
-  const payload = {
-    ...form.value,
-    cohortId: assignedCohortId.value ?? form.value.cohortId,
-    companyIndustry: form.value.companyIndustry || null,
-    companyWebsite: form.value.companyWebsite.trim() || null,
-    companyContacts: [],
-    members,
-  };
-  return registrationService.saveDraft(payload);
+  return registrationService.saveDraft({ companyId: companyId.value });
 };
 
 const save = async (): Promise<void> => {
@@ -245,14 +84,14 @@ const submit = async (): Promise<void> => {
   error.value = '';
   success.value = '';
   try {
-    // Selalu simpan dulu agar data terbaru (termasuk hasil lookup NISN) yang diajukan
+    // Selalu simpan dulu agar perusahaan terbaru yang diajukan
     const saved = await saveDraftNow();
     if (!saved) return;
     existing.value = saved;
-    await registrationService.submit(saved.id);
+    const result = await registrationService.submit(saved.id);
+    existing.value = result.registration ?? saved;
     success.value = 'Pendaftaran diajukan. Surat Permohonan akan dibuat setelah disetujui Admin.';
     await auth.fetchMe();
-    await load();
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -261,9 +100,10 @@ const submit = async (): Promise<void> => {
 };
 
 const downloadSurat = async (): Promise<void> => {
-  if (!existing.value?.document) return;
+  const docId = existing.value?.document?.id;
+  if (!docId) return;
   try {
-    await downloadFile(`/documents/${existing.value.document.id}/download`, `surat-permohonan-${existing.value.code}.pdf`);
+    await downloadFile(`/documents/${docId}/download`, `surat-permohonan-${existing.value?.code}.pdf`);
     emit('downloaded');
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -281,19 +121,42 @@ onMounted(load);
       <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
-      <!-- Sudah submit / disetujui -->
-      <div v-if="existing && existing.status !== 'DRAFT'" class="card">
+      <!-- Ringkasan pendaftaran (per-orang) -->
+      <div v-if="existing" class="card">
         <div class="flex items-center justify-between">
           <div>
             <h2 class="text-lg font-semibold text-gray-800">Pendaftaran: {{ existing.code }}</h2>
-            <p class="text-sm text-gray-500">Status pengajuan kelompok Anda.</p>
+            <p class="text-sm text-gray-500">Ringkasan pendaftaran PKL Anda.</p>
           </div>
           <StatusBadge :status="existing.status" />
         </div>
-        <div v-if="existing.status === 'DISETUJUI' && existing.document" class="mt-4 rounded-lg bg-emerald-50 p-4">
+        <dl class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div class="rounded-lg bg-gray-50 p-3">
+            <dt class="text-xs text-gray-500">Perusahaan</dt>
+            <dd class="mt-0.5 text-sm font-medium text-gray-800">{{ existing.company.name }}</dd>
+            <dd class="text-xs text-gray-500">
+              {{ existing.company.address }}{{ existing.company.city ? ` — ${existing.company.city}` : '' }}
+            </dd>
+          </div>
+          <div class="rounded-lg bg-gray-50 p-3">
+            <dt class="text-xs text-gray-500">Tanggal Diajukan</dt>
+            <dd class="mt-0.5 text-sm font-medium text-gray-800">{{ formatDate(existing.submittedAt) }}</dd>
+          </div>
+          <div class="rounded-lg bg-gray-50 p-3">
+            <dt class="text-xs text-gray-500">Tanggal Dibuat</dt>
+            <dd class="mt-0.5 text-sm font-medium text-gray-800">{{ formatDate(existing.createdAt) }}</dd>
+          </div>
+        </dl>
+
+        <div
+          v-if="existing.status === 'DISETUJUI' && existing.document"
+          class="mt-4 rounded-lg bg-emerald-50 p-4"
+        >
           <p class="text-sm font-medium text-emerald-800">Pendaftaran disetujui! Surat Permohonan sudah dibuat.</p>
           <p class="mt-1 text-sm text-emerald-700">Download, cetak, dan serahkan ke perusahaan.</p>
-          <p class="mt-1 text-xs text-emerald-600">Surat ini wajib diunduh terlebih dahulu sebelum Anda dialihkan ke Fase 2 (Daftar Ulang).</p>
+          <p class="mt-1 text-xs text-emerald-600">
+            Surat ini wajib diunduh terlebih dahulu sebelum Anda dialihkan ke Fase 2 (Daftar Ulang).
+          </p>
           <button class="btn-primary mt-3" @click="downloadSurat">Download Surat Permohonan (PDF)</button>
         </div>
         <div v-else-if="existing.status === 'DIAJUKAN'" class="mt-4 rounded-lg bg-amber-50 p-4">
@@ -301,113 +164,52 @@ onMounted(load);
         </div>
       </div>
 
-      <!-- Form pra-pendaftaran -->
-      <form v-else class="space-y-6" @submit.prevent="save">
-        <!-- Data Perusahaan -->
-        <div class="card">
-          <h2 class="mb-4 text-lg font-semibold text-gray-800">Data Perusahaan Tujuan</h2>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label class="label">Nama Kelompok</label>
-              <input v-model="form.groupName" class="input" required placeholder="Nama kelompok (wajib sama dengan anggota)" />
-            </div>
-            <div>
-              <label class="label">Gelombang</label>
-              <select
-                v-if="!assignedCohortId"
-                v-model="form.cohortId"
-                class="input"
-                required
-                @change="onCohortChange"
-              >
-                <option v-for="c in lookups?.cohorts ?? []" :key="c.id" :value="c.id">{{ c.name }}</option>
-              </select>
-              <div v-else class="input cursor-default bg-gray-50 text-gray-700">
-                {{ assignedCohortName }}
-                <span class="text-xs text-gray-400">(mengikuti gelombang akun Anda)</span>
-              </div>
-            </div>
-            <div>
-              <label class="label">Nama Perusahaan</label>
-              <input v-model="form.companyName" class="input" required />
-            </div>
-            <div>
-              <label class="label">Bidang Industri</label>
-              <input v-model="form.companyIndustry" class="input" />
-            </div>
-            <div class="sm:col-span-2">
-              <label class="label">Alamat Perusahaan</label>
-              <input v-model="form.companyAddress" class="input" required />
-            </div>
-            <div>
-              <label class="label">Kota</label>
-              <input v-model="form.companyCity" class="input" />
-            </div>
-            <div>
-              <label class="label">Telepon</label>
-              <input v-model="form.companyPhone" class="input" />
-            </div>
-            <div class="sm:col-span-2">
-              <label class="label">Website Perusahaan (opsional)</label>
-              <input
-                v-model="form.companyWebsite"
-                class="input"
-                inputmode="url"
-                placeholder="https://www.contoh-perusahaan.com"
-              />
-            </div>
-          </div>
+      <!-- Form pra-pendaftaran (hanya saat DRAFT) -->
+      <form v-if="!existing || existing.status === 'DRAFT'" class="card space-y-4" @submit.prevent="save">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-800">Data Perusahaan Tujuan</h2>
+          <p class="text-sm text-gray-500">
+            Pilih perusahaan dari daftar berikut. Hanya perusahaan dengan sisa kuota yang ditampilkan.
+          </p>
         </div>
 
-        <!-- Data Anggota -->
-        <div class="card">
-          <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-800">Anggota Kelompok</h2>
-            <button type="button" class="btn-secondary" @click="addMember">+ Tambah Anggota</button>
-          </div>
-          <p class="mb-3 text-sm text-gray-500">Masukkan data seluruh siswa, termasuk siswa ketua kelompok. NISN wajib diisi karena menjadi username akun SISWA. Akun KETUA yang sedang dipakai hanya akun sementara.</p>
-          <div v-for="(m, i) in memberNames" :key="i" class="mb-3 rounded-lg border border-gray-200 p-3">
-            <div class="mb-2 flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-600">{{ i === 0 ? 'Siswa Ketua Kelompok' : `Siswa Anggota ${i + 1}` }}</span>
-              <button v-if="memberNames.length > 1" type="button" class="text-xs text-red-600 hover:underline" @click="removeMember(i)">Hapus</button>
-            </div>
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-4">
-              <input :value="m.name" class="input" placeholder="Nama (otomatis dari NISN)" readonly />
-              <input
-                :value="m.nisn"
-                class="input"
-                inputmode="numeric"
-                pattern="[0-9]{10}"
-                maxlength="10"
-                placeholder="NISN (10 digit)"
-                required
-                @input="onNisnInput(i, $event)"
-                @blur="lookupStudent(i)"
-              />
-              <input :value="m.className" class="input" placeholder="Kelas (otomatis dari NISN)" readonly />
-              <input v-model="m.phone" class="input" placeholder="No. HP" />
-            </div>
-            <p v-if="m.status === 'checking'" class="mt-2 text-xs text-amber-600">
-              Memeriksa NISN {{ m.nisn }} ke Master Siswa…
-            </p>
-            <p v-else-if="m.status === 'found'" class="mt-2 text-xs text-emerald-600">
-              Nama &amp; kelas terisi otomatis dari Master Siswa.
-            </p>
-            <p v-else-if="m.status === 'notfound'" class="mt-2 text-xs text-red-600">
-              NISN {{ m.nisn }} tidak ditemukan pada Master Siswa gelombang ini. Periksa kembali NISN-nya (pastikan sudah diimport admin).
-            </p>
-            <p v-else class="mt-2 text-xs text-gray-400">
-              Masukkan NISN 10 digit — nama &amp; kelas akan terisi otomatis.
-            </p>
-          </div>
+        <div>
+          <label class="label">Perusahaan</label>
+          <select v-model="companyId" class="input" required>
+            <option value="" disabled>Pilih perusahaan…</option>
+            <option v-for="c in companies" :key="c.id" :value="c.id">
+              {{ c.name }} — {{ c.address }}{{ c.city ? `, ${c.city}` : '' }} ({{ quotaLabel(c) }})
+            </option>
+          </select>
         </div>
+
+        <div v-if="selectedCompany" class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
+          <p class="font-medium text-gray-800">{{ selectedCompany.name }}</p>
+          <p class="mt-0.5">
+            {{ selectedCompany.address }}<span v-if="selectedCompany.city">, {{ selectedCompany.city }}</span>
+          </p>
+          <p class="mt-0.5 text-xs text-gray-500">
+            <span v-if="selectedCompany.industryName">Bidang: {{ selectedCompany.industryName }} · </span>
+            {{ quotaLabel(selectedCompany) }}
+          </p>
+        </div>
+
+        <p v-if="companies.length === 0" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          Belum ada perusahaan dengan sisa kuota. Hubungi admin sekolah.
+        </p>
 
         <div class="flex items-center gap-3">
-          <button type="submit" class="btn-secondary" :disabled="saving || hasChecking">Simpan Draft</button>
-          <button type="button" class="btn-primary" :disabled="saving || hasChecking" @click="submit">
+          <button type="submit" class="btn-secondary" :disabled="saving || companies.length === 0">
+            Simpan Draft
+          </button>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="saving || companies.length === 0"
+            @click="submit"
+          >
             Ajukan Pendaftaran
           </button>
-          <span v-if="hasChecking" class="text-xs text-gray-500">Masih memeriksa NISN…</span>
         </div>
       </form>
     </template>

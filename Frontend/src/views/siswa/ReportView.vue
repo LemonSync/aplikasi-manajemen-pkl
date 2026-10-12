@@ -106,7 +106,7 @@ onMounted(load);
           <div>
             <p class="text-base font-semibold text-ink-900">Laporan Hasil PKL</p>
             <p class="text-sm text-ink-500">
-              Rekap absensi, monitoring guru pembimbing, jurnal, dan nilai akhir kelompok Anda.
+              Rekap absensi, monitoring guru pembimbing, jurnal, dan nilai akhir Anda.
             </p>
             <p v-if="reportError" class="mt-1 text-sm text-red-600">{{ reportError }}</p>
           </div>

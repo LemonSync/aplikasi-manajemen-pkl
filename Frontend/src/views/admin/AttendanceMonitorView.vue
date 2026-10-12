@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue';
 import {
   attendanceService,
   type AttendanceClassSection,
-  type AttendanceGroupSection,
   type AttendanceRecord,
   type AttendanceStudentGroup,
 } from '@/services/api.service';
@@ -28,8 +27,8 @@ const filters = ref<{ status: string; from: string; to: string }>({
 const search = ref('');
 
 /**
- * Filter kelas/kelompok/siswa (FE-side, di luar filter status+tanggal server).
- * Kelas cocok nama → tampil utuh; jika tidak, tampil hanya kelompok/siswa yang cocok.
+ * Filter kelas & siswa (FE-side, di luar filter status+tanggal server).
+ * Kelas cocok nama → tampil utuh; jika tidak, tampil hanya siswa yang cocok.
  */
 const filteredClasses = computed<AttendanceClassSection[]>(() => {
   const q = search.value.trim().toLowerCase();
@@ -37,33 +36,24 @@ const filteredClasses = computed<AttendanceClassSection[]>(() => {
   return classes.value
     .map((cls) => {
       if (cls.className.toLowerCase().includes(q)) return cls;
-      const groups = cls.groups
-        .map((g) => {
-          if ([g.groupName, g.companyName ?? ''].join(' ').toLowerCase().includes(q)) return g;
-          return {
-            ...g,
-            students: g.students.filter((s) =>
-              [s.fullName, s.username, s.nisn ?? ''].join(' ').toLowerCase().includes(q)
-            ),
-          };
-        })
-        .filter((g) => g.students.length > 0);
-      if (groups.length === 0) return null;
+      const students = cls.students.filter((s) =>
+        [s.fullName, s.username, s.nisn ?? ''].join(' ').toLowerCase().includes(q)
+      );
+      if (students.length === 0) return null;
       return {
         ...cls,
-        groups,
-        studentCount: groups.reduce((acc, g) => acc + g.students.length, 0),
+        students,
+        studentCount: students.length,
       };
     })
     .filter((cls): cls is AttendanceClassSection => cls !== null);
 });
 
-// Modal drill-down: kelas -> kelompok -> rincian siswa
+// Modal drill-down: kelas -> rincian siswa -> absensi
 const detailClass = ref<AttendanceClassSection | null>(null);
-const detailGroup = ref<AttendanceGroupSection | null>(null);
 const activeStudentId = ref<string | null>(null);
 const activeStudent = computed<AttendanceStudentGroup | null>(
-  () => detailGroup.value?.students.find((s) => s.userId === activeStudentId.value) ?? null
+  () => detailClass.value?.students.find((s) => s.userId === activeStudentId.value) ?? null
 );
 
 const mapOpen = ref(false);
@@ -73,32 +63,21 @@ const mapPoints = ref<MapPoint[]>([]);
 const classTotals = (cls: AttendanceClassSection): { total: number; counts: Record<string, number> } => {
   let totalAbsen = 0;
   const counts: Record<string, number> = {};
-  for (const g of cls.groups) {
-    for (const s of g.students) {
-      totalAbsen += s.total;
-      for (const [k, v] of Object.entries(s.counts)) counts[k] = (counts[k] ?? 0) + v;
-    }
+  for (const s of cls.students) {
+    totalAbsen += s.total;
+    for (const [k, v] of Object.entries(s.counts)) counts[k] = (counts[k] ?? 0) + v;
   }
   return { total: totalAbsen, counts };
 };
 
-const groupTotals = (g: AttendanceGroupSection): { total: number } => ({
-  total: g.students.reduce((acc, s) => acc + s.total, 0),
-});
-
 const openClass = (cls: AttendanceClassSection): void => {
   detailClass.value = cls;
-};
-const openGroup = (g: AttendanceGroupSection): void => {
-  detailGroup.value = g;
-  activeStudentId.value = null;
 };
 const openStudent = (s: AttendanceStudentGroup): void => {
   activeStudentId.value = s.userId;
 };
 const closeModals = (): void => {
   detailClass.value = null;
-  detailGroup.value = null;
   activeStudentId.value = null;
 };
 
@@ -194,7 +173,7 @@ watch(
             v-model="search"
             class="input max-w-[240px]"
             type="search"
-            placeholder="Kelas, kelompok, nama, NISN…"
+            placeholder="Kelas, nama, NISN…"
           />
         </div>
         <div>
@@ -217,7 +196,7 @@ watch(
         </div>
       </div>
 
-      <SkeletonTable v-if="loading" :rows="6" :cols="6" />
+      <SkeletonTable v-if="loading" :rows="6" :cols="8" />
       <div v-else-if="classes.length === 0" class="py-6 text-center text-sm text-gray-400">Belum ada data absensi.</div>
       <div v-else-if="filteredClasses.length === 0" class="py-6 text-center text-sm text-gray-400">
         Tidak ada data yang cocok dengan pencarian.
@@ -227,7 +206,6 @@ watch(
           <tr>
             <th>Kelas</th>
             <th class="text-center">Siswa</th>
-            <th class="text-center">Kelompok</th>
             <th class="text-center">Total</th>
             <th class="text-center">Hadir</th>
             <th class="text-center">Sakit</th>
@@ -245,7 +223,6 @@ watch(
           >
             <td class="font-medium text-gray-800">{{ cls.className }}</td>
             <td class="text-center">{{ cls.studentCount }}</td>
-            <td class="text-center">{{ cls.groups.length }}</td>
             <td class="text-center font-semibold text-gray-800">{{ classTotals(cls).total }}</td>
             <td class="text-center">{{ classTotals(cls).counts['HADIR'] ?? 0 }}</td>
             <td class="text-center">{{ classTotals(cls).counts['SAKIT'] ?? 0 }}</td>
@@ -257,7 +234,7 @@ watch(
       </table>
     </div>
 
-    <!-- Modal kelas: daftar kelompok + siswa -->
+    <!-- Modal kelas: daftar siswa + rekap absensinya -->
     <Modal
       :open="!!detailClass"
       :title="detailClass?.className ?? 'Kelas'"
@@ -266,64 +243,42 @@ watch(
     >
       <template v-if="detailClass">
         <p class="mb-4 text-sm text-gray-500">
-          {{ detailClass.studentCount }} siswa · {{ detailClass.groups.length }} kelompok
+          {{ detailClass.studentCount }} siswa · {{ classTotals(detailClass).total }} absensi
         </p>
-        <div
-          v-for="g in detailClass.groups"
-          :key="g.groupId ?? 'none'"
-          class="mb-4 border border-gray-200 p-3 last:mb-0"
-        >
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <button class="text-left font-semibold text-gray-800 hover:text-primary-700" @click="openGroup(g)">
-              {{ g.groupName }}
-              <span v-if="g.companyName" class="text-sm font-normal text-gray-500">— {{ g.companyName }}</span>
-            </button>
-            <span class="flex items-center gap-2 text-xs text-gray-500">
-              <span
-                v-if="g.students.length < g.memberCount"
-                class="badge bg-amber-100 text-amber-700"
-                title="Sebagian anggota di kelas lain"
-              >
-                {{ g.students.length }}/{{ g.memberCount }} di kelas ini
-              </span>
-              {{ g.students.length }} siswa · {{ groupTotals(g).total }} absensi
-            </span>
-          </div>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Siswa</th>
-                <th>NISN</th>
-                <th class="text-center">Total</th>
-                <th class="text-center">Hadir</th>
-                <th class="text-center">Sakit</th>
-                <th class="text-center">Izin</th>
-                <th class="text-center">Alfa</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="s in g.students"
-                :key="s.userId"
-                class="cursor-pointer hover:bg-gray-50"
-                @click="openStudent(s)"
-              >
-                <td>
-                  <div class="font-medium text-gray-800">{{ s.fullName }}</div>
-                  <div class="font-mono text-xs text-gray-400">{{ s.username }}</div>
-                </td>
-                <td class="font-mono text-sm text-gray-600">{{ s.nisn ?? '—' }}</td>
-                <td class="text-center font-semibold text-gray-800">{{ s.total }}</td>
-                <td class="text-center">{{ s.counts['HADIR'] ?? 0 }}</td>
-                <td class="text-center">{{ s.counts['SAKIT'] ?? 0 }}</td>
-                <td class="text-center">{{ s.counts['IZIN'] ?? 0 }}</td>
-                <td class="text-center">{{ s.counts['ALPHA'] ?? 0 }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-if="detailClass.groups.length === 0" class="py-4 text-center text-sm text-gray-400">
-          Tidak ada kelompok dengan absensi di kelas ini.
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Siswa</th>
+              <th>NISN</th>
+              <th class="text-center">Total</th>
+              <th class="text-center">Hadir</th>
+              <th class="text-center">Sakit</th>
+              <th class="text-center">Izin</th>
+              <th class="text-center">Alfa</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="s in detailClass.students"
+              :key="s.userId"
+              class="cursor-pointer hover:bg-gray-50"
+              @click="openStudent(s)"
+            >
+              <td>
+                <div class="font-medium text-gray-800">{{ s.fullName }}</div>
+                <div class="font-mono text-xs text-gray-400">{{ s.username }}</div>
+              </td>
+              <td class="font-mono text-sm text-gray-600">{{ s.nisn ?? '—' }}</td>
+              <td class="text-center font-semibold text-gray-800">{{ s.total }}</td>
+              <td class="text-center">{{ s.counts['HADIR'] ?? 0 }}</td>
+              <td class="text-center">{{ s.counts['SAKIT'] ?? 0 }}</td>
+              <td class="text-center">{{ s.counts['IZIN'] ?? 0 }}</td>
+              <td class="text-center">{{ s.counts['ALPHA'] ?? 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="detailClass.students.length === 0" class="py-4 text-center text-sm text-gray-400">
+          Tidak ada siswa dengan absensi di kelas ini.
         </p>
       </template>
     </Modal>

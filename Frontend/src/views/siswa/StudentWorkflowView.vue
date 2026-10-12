@@ -4,15 +4,12 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   studentWorkflowService,
-  pernyataanService,
   documentService,
   downloadFile,
   type StudentWorkflowStatus,
-  type PernyataanPrefill,
 } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import RegistrationView from './RegistrationView.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -21,29 +18,9 @@ const loading = ref(true);
 const error = ref('');
 const success = ref('');
 
-// --- NON_PKL: Surat Pernyataan ---
-const prefill = ref<PernyataanPrefill>({
-  namaSiswa: '', kelasJurusan: '', namaOrtu: '', alamatSiswa: '',
-  hpOrtu: '', hpSiswa: '', tempatPkl: '', tanggalPkl: '', tahunPelajaran: '',
-});
-const generating = ref(false);
-const uploading = ref(false);
-const generatedDocId = ref<string | null>(null);
-const signedFile = ref<File | null>(null);
-const docs = ref<Array<{ id: string; type: string; status: string; title: string | null; note: string | null }>>([]);
-
-// --- Surat Penerimaan (ketua) ---
+// --- Surat Penerimaan ---
 const penerimaanFile = ref<File | null>(null);
 const uploadingPenerimaan = ref(false);
-
-// --- Anggota kelompok (untuk ketua) ---
-const groupMembers = ref<Array<{ username: string; fullName: string; temporaryPassword: string | null }>>([]);
-const dudiCredential = ref<{ fullName: string; username: string } | null>(null);
-
-/** Password anggota disembunyikan backend (semua anggota sudah login + Surat Pernyataan di-ACC). */
-const membersPasswordHidden = computed(
-  () => groupMembers.value.length > 0 && groupMembers.value.every((m) => m.temporaryPassword === null)
-);
 
 const PHASE_LABELS: Record<string, string> = {
   PRA_PKL: 'Pra-Pendaftaran PKL',
@@ -51,8 +28,6 @@ const PHASE_LABELS: Record<string, string> = {
   PKL_AKTIF: 'Masa PKL',
   PKL_SELESAI: 'Pasca-PKL',
 };
-
-const isKetua = computed(() => auth.role === 'KETUA');
 
 const PHASE_ORDER: Record<string, number> = { PRA_PKL: 0, NON_PKL: 1, PKL_AKTIF: 2, PKL_SELESAI: 3 };
 
@@ -64,6 +39,85 @@ const isBehindSchedule = computed(() => {
   return current !== undefined && scheduled !== undefined && current < scheduled;
 });
 
+/** Satu langkah pada stepper alur PKL per-orang. */
+interface WorkflowStep {
+  key: string;
+  label: string;
+  description: string;
+  done: boolean;
+  pending?: boolean;
+  routeName?: string;
+  routeVisible?: boolean;
+}
+
+/** Stepper: pendaftaran → unduh Surat Permohonan → Surat Penerimaan → Data Orang Tua → Surat Pernyataan → Laporan Akhir (+ Input Nilai saat Pasca-PKL). */
+const steps = computed<WorkflowStep[]>(() => {
+  const s = status.value;
+  if (!s) return [];
+  const phase = s.effectivePhase;
+  const list: WorkflowStep[] = [
+    {
+      key: 'pendaftaran',
+      label: 'Pendaftaran PKL',
+      description: 'Pilih perusahaan tujuan lalu ajukan pendaftaran.',
+      done: s.registrationStatus === 'DISETUJUI',
+      pending: s.registrationStatus === 'DIAJUKAN',
+    },
+    {
+      key: 'surat-permohonan',
+      label: 'Unduh Surat Permohonan',
+      description:
+        'Surat Permohonan dibuat setelah pendaftaran disetujui admin. Unduh, cetak, dan serahkan ke perusahaan.',
+      done: s.permohonanDownloaded,
+    },
+    {
+      key: 'surat-penerimaan',
+      label: 'Surat Penerimaan dari Perusahaan',
+      description: 'Unggah surat balasan/penerimaan dari perusahaan, lalu tunggu verifikasi admin.',
+      done: s.hasSuratPenerimaan,
+      pending: s.hasSuratPenerimaanPending,
+    },
+    {
+      key: 'data-ortu',
+      label: 'Data Orang Tua',
+      description: 'Lengkapi data ayah/ibu/wali untuk keperluan surat & laporan.',
+      done: s.hasParentData,
+      routeName: 'parent-data',
+      routeVisible: true,
+    },
+    {
+      key: 'surat-pernyataan',
+      label: 'Surat Pernyataan',
+      description: 'Buat Surat Pernyataan PDF, tanda tangan + materai, lalu unggah kembali untuk diverifikasi.',
+      done: s.hasSuratPernyataan,
+      routeName: 'surat-pernyataan',
+      routeVisible: phase !== 'PRA_PKL',
+    },
+    {
+      key: 'laporan-akhir',
+      label: 'Laporan Akhir',
+      description: 'Unggah laporan akhir PKL untuk diverifikasi sekolah.',
+      done: s.hasLaporanAkhir,
+      routeName: 'my-report',
+      routeVisible: phase === 'PKL_AKTIF' || phase === 'PKL_SELESAI',
+    },
+  ];
+  if (phase === 'PKL_SELESAI') {
+    list.push({
+      key: 'input-nilai',
+      label: 'Input Nilai PKL',
+      description: 'Isi nilai PKL Anda (nilai DUDI + aspek penilaian) pada fase Pasca-PKL.',
+      done: false,
+      routeName: 'grade-input',
+      routeVisible: true,
+    });
+  }
+  return list;
+});
+
+/** Langkah pertama yang belum selesai (penanda "Langkah Aktif"). */
+const currentStepKey = computed(() => steps.value.find((st) => !st.done)?.key ?? '');
+
 const load = async () => {
   loading.value = true;
   error.value = '';
@@ -71,44 +125,15 @@ const load = async () => {
     status.value = await studentWorkflowService.getStatus();
     await auth.fetchMe();
 
-    // KETUA selalu di guided workflow (tidak perlu redirect)
-    if (!isKetua.value && (status.value?.effectivePhase === 'PKL_AKTIF' || status.value?.effectivePhase === 'PKL_SELESAI')) {
+    // Masa PKL aktif: gunakan sidebar (dashboard), bukan guided workflow
+    if (status.value?.effectivePhase === 'PKL_AKTIF') {
       void router.push({ name: 'dashboard' });
       return;
-    }
-
-    // Load data untuk NON_PKL
-    if (status.value?.effectivePhase === 'NON_PKL') {
-      await loadNonPklData();
     }
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
     loading.value = false;
-  }
-};
-
-const loadNonPklData = async () => {
-  try {
-    // KETUA tidak perlu load prefill surat pernyataan
-    if (!isKetua.value) {
-      const [p, d] = await Promise.all([pernyataanService.prefill(), documentService.listMine()]);
-      prefill.value = { ...prefill.value, ...p };
-      docs.value = d;
-      const suratPernyataan = d.find((x) => x.type === 'SURAT_PERNYATAAN');
-      if (suratPernyataan) generatedDocId.value = suratPernyataan.id;
-    } else {
-      const d = await documentService.listMine();
-      docs.value = d;
-    }
-
-    // Load anggota kelompok dari workflow status
-    if (status.value?.groupMembers) {
-      groupMembers.value = status.value.groupMembers;
-    dudiCredential.value = status.value.dudiCredential;
-    }
-  } catch (e) {
-    error.value = extractErrorMessage(e);
   }
 };
 
@@ -140,63 +165,14 @@ const uploadSuratPenerimaan = async () => {
   }
 };
 
-// --- Surat Pernyataan ---
-const generateSuratPernyataan = async () => {
-  generating.value = true;
-  error.value = '';
-  success.value = '';
-  try {
-    const result = await pernyataanService.generate({
-      namaOrtu: prefill.value?.namaOrtu,
-      alamatSiswa: prefill.value?.alamatSiswa,
-      hpOrtu: prefill.value?.hpOrtu,
-    });
-    generatedDocId.value = result.documentId;
-    success.value = 'Surat Pernyataan PDF berhasil dibuat.';
-    await loadNonPklData();
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    generating.value = false;
-  }
-};
-
-const downloadPernyataan = async () => {
-  if (!generatedDocId.value) return;
-  try {
-    await downloadFile(`/documents/${generatedDocId.value}/download`, 'surat-pernyataan-pkl.pdf');
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  }
-};
-
-const onFileChange = (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  signedFile.value = input.files?.[0] ?? null;
-};
-
-const uploadSigned = async () => {
-  if (!signedFile.value) return;
-  uploading.value = true;
-  error.value = '';
-  success.value = '';
-  try {
-    await documentService.upload('SURAT_PERNYATAAN', signedFile.value, 'Surat Pernyataan bermaterai (foto/scan)');
-    success.value = 'Surat Pernyataan bermaterai berhasil diunggah.';
-    signedFile.value = null;
-    await loadNonPklData();
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    uploading.value = false;
-  }
-};
-
 // --- Download Surat Permohonan ---
 const downloadSurat = async () => {
   if (!status.value?.registrationDocumentId) return;
   try {
     await downloadFile(`/documents/${status.value.registrationDocumentId}/download`, 'surat-permohonan-pkl.pdf');
+    // Unduhan menandai permohonanDownloaded di backend → refresh status
+    status.value = await studentWorkflowService.getStatus();
+    await auth.fetchMe();
   } catch (e) {
     error.value = extractErrorMessage(e);
   }
@@ -248,22 +224,6 @@ onMounted(load);
   </div>
 
   <div v-else class="mx-auto max-w-4xl space-y-6">
-    <!-- KETUA di fase 3/4: arahkan ke akun SISWA (NISN) -->
-    <div v-if="isKetua && (status.effectivePhase === 'PKL_AKTIF' || status.effectivePhase === 'PKL_SELESAI')" class="card border-l-4 border-l-amber-500 bg-amber-50">
-      <div class="flex items-start gap-3">
-        <svg class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-        <div>
-          <h3 class="text-sm font-semibold text-amber-800">Gunakan Akun Siswa Anda</h3>
-          <p class="mt-1 text-sm text-amber-700">
-            Akun Ketua hanya digunakan untuk pendaftaran (Tahap 1–2). Untuk masa PKL dan pasca-PKL,
-            silakan login dengan akun SISWA (username = NISN) Anda.
-          </p>
-        </div>
-      </div>
-    </div>
-
     <!-- Header -->
     <section class="rounded-2xl bg-primary-800 p-6 text-white shadow-sm sm:p-8">
       <p class="text-sm font-medium text-primary-200">
@@ -271,12 +231,14 @@ onMounted(load);
         · {{ PHASE_LABELS[status.effectivePhase] }}
       </p>
       <h2 class="mt-2 text-2xl font-bold">
-        {{ status.effectivePhase === 'PRA_PKL' ? 'Pra-Pendaftaran PKL' : 'Pendaftaran Ulang PKL' }}
+        {{ status.effectivePhase === 'PRA_PKL' ? 'Pra-Pendaftaran PKL' : status.effectivePhase === 'PKL_SELESAI' ? 'Pasca-PKL' : 'Pendaftaran Ulang PKL' }}
       </h2>
       <p class="mt-3 max-w-2xl text-sm leading-6 text-primary-100">
         {{ status.effectivePhase === 'PRA_PKL'
-          ? 'Isi data kelompok dan perusahaan. Setelah disetujui, sistem membuat Surat Permohonan PKL.'
-          : 'Lengkapi persyaratan pendaftaran ulang PKL.' }}
+          ? 'Pilih perusahaan tujuan dan ajukan pendaftaran. Setelah disetujui, sistem membuat Surat Permohonan PKL.'
+          : status.effectivePhase === 'PKL_SELESAI'
+            ? 'PKL telah selesai. Lengkapi tahap akhir: laporan dan input nilai PKL.'
+            : 'Lengkapi persyaratan pendaftaran ulang PKL.' }}
       </p>
       <div v-if="status.currentSchedule" class="mt-3 flex items-center gap-4 text-xs text-primary-200">
         <span>Masa: {{ formatDate(status.currentSchedule.startDate) }} — {{ formatDate(status.currentSchedule.endDate) }}</span>
@@ -336,24 +298,64 @@ onMounted(load);
       </div>
     </div>
 
-    <!-- Peringatan: kelompok belum terhubung akun DUDI -->
-    <div v-if="status.hasGroup && !status.dudiConnected" class="card border-l-4 border-l-amber-500 bg-amber-50">
-      <div class="flex items-start gap-3">
-        <svg class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-1.732-2.667-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-        <div>
-          <h3 class="text-sm font-semibold text-amber-800">Akun DUDI Belum Terhubung</h3>
-          <p class="mt-1 text-sm text-amber-700">
-            Kelompok Anda belum terkoneksi dengan akun pembimbing perusahaan (DUDI), sehingga mentor
-            belum dapat melakukan absensi, verifikasi jurnal, dan penilaian.
-          </p>
-          <p class="mt-1 text-sm text-amber-700">
-            Hubungi <strong>Admin sekolah</strong> untuk pembuatan akun DUDI. Admin akan meminta
-            nomor HP pembimbing perusahaan, lalu menyerahkan username &amp; password akunnya kepada Anda.
-          </p>
-        </div>
-      </div>
+    <!-- ==================== STEPPER ==================== -->
+    <div v-if="status.effectivePhase === 'PRA_PKL' || status.effectivePhase === 'NON_PKL' || status.effectivePhase === 'PKL_SELESAI'" class="card">
+      <h2 class="mb-1 text-lg font-semibold text-gray-800">Langkah Alur PKL</h2>
+      <p class="mb-4 text-sm text-gray-500">Selesaikan setiap langkah secara berurutan.</p>
+      <ol class="space-y-3">
+        <li
+          v-for="(step, i) in steps"
+          :key="step.key"
+          class="flex items-start gap-3 rounded-lg border p-3"
+          :class="step.done ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200'"
+        >
+          <span
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+            :class="step.done ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'"
+          >
+            {{ i + 1 }}
+          </span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm font-semibold" :class="step.done ? 'text-emerald-800' : 'text-gray-800'">
+                {{ step.label }}
+              </p>
+              <span v-if="step.done" class="badge bg-emerald-100 text-emerald-700">Selesai</span>
+              <span v-else-if="step.pending" class="badge bg-amber-100 text-amber-700">Menunggu Verifikasi</span>
+              <span v-else-if="step.key === currentStepKey" class="badge bg-primary-100 text-primary-700">Langkah Aktif</span>
+            </div>
+            <p class="mt-0.5 text-sm" :class="step.done ? 'text-emerald-700' : 'text-gray-500'">
+              {{ step.description }}
+            </p>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <!-- Unduh Surat Permohonan (gerbang Fase 1 → 2) -->
+              <template v-if="step.key === 'surat-permohonan'">
+                <button
+                  v-if="status.registrationDocumentId"
+                  class="btn-primary"
+                  @click="downloadSurat"
+                >
+                  {{ step.done ? 'Download Ulang Surat Permohonan' : 'Download Surat Permohonan' }}
+                </button>
+                <span v-else-if="status.registrationStatus === 'DISETUJUI'" class="text-xs text-gray-500">
+                  Surat sedang disiapkan sekolah.
+                </span>
+              </template>
+              <!-- Link ke halaman tugas (workflowTask) -->
+              <RouterLink
+                v-if="step.routeName && !step.done && step.routeVisible"
+                :to="{ name: step.routeName }"
+                class="btn-secondary"
+              >
+                Buka {{ step.label }}
+              </RouterLink>
+              <span v-if="step.key === 'laporan-akhir' && !step.routeVisible && !step.done" class="text-xs text-gray-400">
+                Tersedia saat masa PKL.
+              </span>
+            </div>
+          </div>
+        </li>
+      </ol>
     </div>
 
     <!-- ==================== PRA_PKL ==================== -->
@@ -363,214 +365,65 @@ onMounted(load);
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-lg font-semibold text-gray-800">Pendaftaran PKL</h2>
-          <p class="text-sm text-gray-500">Pengajuan pendaftaran kelompok Anda.</p>
+          <p class="text-sm text-gray-500">Pengajuan pendaftaran Anda.</p>
         </div>
-        <StatusBadge :status="status.registrationStatus ?? 'DIAJUKAN'" />
+        <span class="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">Selesai</span>
       </div>
-      <div v-if="status.registrationStatus === 'DISETUJUI' && status.registrationDocumentId" class="mt-4 rounded-lg bg-emerald-50 p-4">
-        <p class="text-sm font-medium text-emerald-800">Pendaftaran disetujui! Surat Permohonan sudah dibuat.</p>
-        <p class="mt-1 text-sm text-emerald-700">Download, cetak, dan serahkan ke perusahaan tujuan.</p>
-        <button class="btn-primary mt-3" @click="downloadSurat">Download Surat Permohonan (PDF)</button>
-      </div>
-      <div v-else-if="status.registrationStatus === 'DIAJUKAN'" class="mt-4 rounded-lg bg-amber-50 p-4">
-        <p class="text-sm text-amber-700">Menunggu persetujuan admin...</p>
-      </div>
+      <p class="mt-3 text-sm text-gray-600">
+        Pendaftaran sudah disetujui. Pastikan Surat Permohonan sudah diunduh dan diserahkan ke perusahaan.
+      </p>
     </div>
 
     <!-- ==================== NON_PKL ==================== -->
-    <template v-if="status.effectivePhase === 'NON_PKL' && !status.hasCompleted">
-
-      <!-- ===== KETUA ===== -->
-      <template v-if="isKetua">
-        <!-- Step 1: Upload Surat Penerimaan -->
-        <div v-if="!status.hasSuratPenerimaan" class="card">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">1</span>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Upload Surat Penerimaan PKL</h2>
-              <p class="text-sm text-gray-500">Upload surat balasan dari perusahaan untuk kelompok Anda.</p>
-            </div>
-          </div>
-
-          <!-- Sedang menunggu verifikasi: file terkunci, tidak boleh diganti -->
-          <div v-if="status.hasSuratPenerimaanPending" class="rounded-lg bg-amber-50 p-3">
-            <p class="text-sm font-medium text-amber-700">Menunggu verifikasi admin...</p>
-            <p class="mt-1 text-sm text-amber-600">
-              File yang sudah diunggah tidak dapat diganti selama menunggu verifikasi.
-              Unggah ulang hanya dapat dilakukan setelah admin menolak.
-            </p>
-          </div>
-
-          <template v-else>
-            <!-- Ditolak admin: tampilkan alasan + boleh upload ulang -->
-            <div v-if="status.suratPenerimaanStatus === 'DITOLAK'" class="mb-3 rounded-lg bg-red-50 p-3">
-              <p class="text-sm font-medium text-red-700">Surat Penerimaan ditolak admin.</p>
-              <p v-if="status.suratPenerimaanNote" class="mt-1 text-sm text-red-600">Alasan: {{ status.suratPenerimaanNote }}</p>
-              <p class="mt-1 text-xs text-red-500">Perbaiki lalu upload ulang surat yang benar.</p>
-            </div>
-            <input class="input" type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onPenerimaanFileChange" />
-            <button class="btn-primary mt-4" :disabled="uploadingPenerimaan || !penerimaanFile" @click="uploadSuratPenerimaan">
-              {{ uploadingPenerimaan ? 'Mengunggah...' : 'Upload Surat Penerimaan' }}
-            </button>
-          </template>
+    <!-- Upload Surat Penerimaan (belum disetujui) -->
+    <div v-if="status.effectivePhase === 'NON_PKL' && !status.hasSuratPenerimaan" class="card">
+      <div class="mb-4 flex items-center gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">3</span>
+        <div>
+          <h2 class="text-lg font-semibold text-gray-800">Upload Surat Penerimaan PKL</h2>
+          <p class="text-sm text-gray-500">Upload surat balasan/penerimaan dari perusahaan tujuan Anda.</p>
         </div>
+      </div>
 
-        <!-- Surat Penerimaan sudah disetujui -->
-        <div v-if="status.hasSuratPenerimaan" class="card border-l-4 border-l-emerald-500 bg-emerald-50">
-          <div class="flex items-center gap-3">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">1</span>
-            <div>
-              <h3 class="text-sm font-semibold text-emerald-800">Surat Penerimaan PKL — Selesai</h3>
-              <p class="text-sm text-emerald-700">Sudah disetujui admin. Berikan info login kepada anggota.</p>
-            </div>
-          </div>
-        </div>
+      <!-- Sedang menunggu verifikasi: file terkunci, tidak boleh diganti -->
+      <div v-if="status.hasSuratPenerimaanPending" class="rounded-lg bg-amber-50 p-3">
+        <p class="text-sm font-medium text-amber-700">Menunggu verifikasi admin...</p>
+        <p class="mt-1 text-sm text-amber-600">
+          File yang sudah diunggah tidak dapat diganti selama menunggu verifikasi.
+          Unggah ulang hanya dapat dilakukan setelah admin menolak.
+        </p>
+      </div>
 
-        <!-- Step 2: Daftar Akun Anggota -->
-        <div v-if="status.hasSuratPenerimaan && groupMembers.length > 0" class="card">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">2</span>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Akun Anggota Kelompok</h2>
-              <p v-if="!membersPasswordHidden" class="text-sm text-gray-500">Berikan informasi login ini kepada anggota. Mereka akan login untuk mengisi Surat Pernyataan.</p>
-              <p v-else class="text-sm text-gray-500">Anggota sudah login dengan akun masing-masing. Hanya nama dan NISN yang ditampilkan.</p>
-            </div>
-          </div>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Nama</th>
-                <th>Username (NISN)</th>
-                <th v-if="!membersPasswordHidden">Password</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in groupMembers" :key="m.username">
-                <td>{{ m.fullName }}</td>
-                <td class="font-mono">{{ m.username }}</td>
-                <td v-if="!membersPasswordHidden" class="font-mono text-amber-600">{{ m.temporaryPassword }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-if="!membersPasswordHidden" class="mt-3 text-xs text-gray-500">Semua anggota wajib ganti password saat login pertama.</p>
-        </div>
-
-        <!-- Step 3: Akun DUDI (dibuat otomatis dari data mentor Fase 1) -->
-        <div v-if="status.hasSuratPenerimaan && dudiCredential" class="card">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">3</span>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Akun DUDI (Pembimbing Perusahaan)</h2>
-              <p class="text-sm text-gray-500">Akun ini dibuat otomatis bersama akun anggota. Serahkan username-nya ke pembimbing perusahaan — password hanya diberikan Admin sekolah, dipakai mentor untuk absensi, jurnal, dan penilaian siswa kelompok Anda.</p>
-            </div>
-          </div>
-          <table class="table">
-            <thead><tr><th>Nama</th><th>Username</th><th>Password</th></tr></thead>
-            <tbody>
-              <tr>
-                <td>{{ dudiCredential.fullName }}</td>
-                <td class="font-mono">{{ dudiCredential.username }}</td>
-                <td class="text-gray-500">Hubungi Admin sekolah</td>
-              </tr>
-            </tbody>
-          </table>
-          <p class="mt-3 text-xs text-gray-500">Password akun DUDI hanya diberikan Admin kepada pembimbing perusahaan (tidak dibagikan lewat aplikasi). Mentor wajib ganti password saat login pertama.</p>
-        </div>
-
-        <!-- Ketua: menunggu anggota mengisi surat pernyataan -->
-        <div v-if="status.hasSuratPenerimaan && !status.hasSuratPernyataan" class="card border-l-4 border-l-blue-500 bg-blue-50">
-          <div class="flex items-start gap-3">
-            <svg class="mt-0.5 h-5 w-5 shrink-0 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <h3 class="text-sm font-semibold text-blue-800">Menunggu Anggota</h3>
-              <p class="mt-1 text-sm text-blue-700">Anggota sedang mengisi Surat Pernyataan masing-masing.</p>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <!-- ===== ANGGOTA (bukan ketua) ===== -->
       <template v-else>
-        <!-- Langsung Form Surat Pernyataan -->
-        <div class="card">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">1</span>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Form Surat Pernyataan PKL</h2>
-              <p class="text-sm text-gray-500">Isi data, klik "Buat Surat Pernyataan", download PDF, print, tanda tangan + materai, lalu upload.</p>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label class="label">Nama Siswa/I</label>
-              <input v-model="prefill.namaSiswa" class="input bg-gray-50" readonly />
-              <p class="mt-1 text-xs text-gray-400">Otomatis dari data master siswa (NISN).</p>
-            </div>
-            <div>
-              <label class="label">Kelas / Program Keahlian</label>
-              <input v-model="prefill.kelasJurusan" class="input bg-gray-50" readonly />
-              <p class="mt-1 text-xs text-gray-400">Otomatis dari data master siswa (NISN).</p>
-            </div>
-            <div><label class="label">Nama Orang Tua/Wali</label><input v-model="prefill.namaOrtu" class="input" /></div>
-            <div><label class="label">Alamat Siswa/I</label><input v-model="prefill.alamatSiswa" class="input" /></div>
-            <div><label class="label">No. HP Orang Tua/Wali</label><input v-model="prefill.hpOrtu" class="input" /></div>
-            <div>
-              <label class="label">No. HP Siswa</label>
-              <input v-model="prefill.hpSiswa" class="input bg-gray-50" readonly />
-              <p class="mt-1 text-xs text-gray-400">Otomatis dari pendaftaran Fase 1.</p>
-            </div>
-            <div class="sm:col-span-2">
-              <label class="label">Tempat PKL</label>
-              <input v-model="prefill.tempatPkl" class="input bg-gray-50" readonly />
-              <p class="mt-1 text-xs text-gray-400">Otomatis dari pendaftaran Fase 1.</p>
-            </div>
-          </div>
-
-          <div class="mt-5 flex flex-wrap gap-2">
-            <button class="btn-primary" :disabled="generating" @click="generateSuratPernyataan">
-              {{ generating ? 'Membuat surat...' : 'Buat Surat Pernyataan (PDF)' }}
-            </button>
-            <button v-if="generatedDocId" class="btn-secondary" @click="downloadPernyataan">Download PDF</button>
-          </div>
+        <!-- Ditolak admin: tampilkan alasan + boleh upload ulang -->
+        <div v-if="status.suratPenerimaanStatus === 'DITOLAK'" class="mb-3 rounded-lg bg-red-50 p-3">
+          <p class="text-sm font-medium text-red-700">Surat Penerimaan ditolak admin.</p>
+          <p v-if="status.suratPenerimaanNote" class="mt-1 text-sm text-red-600">Alasan: {{ status.suratPenerimaanNote }}</p>
+          <p class="mt-1 text-xs text-red-500">Perbaiki lalu upload ulang surat yang benar.</p>
         </div>
-
-        <!-- Upload Surat Bermaterai -->
-        <div v-if="generatedDocId" class="card">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700">2</span>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Upload Surat yang Sudah Ditandatangani</h2>
-              <p class="text-sm text-gray-500">Print, tanda tangan + materai, lalu foto/scan dan upload.</p>
-            </div>
-          </div>
-          <input class="input" type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onFileChange" />
-          <button class="btn-primary mt-4" :disabled="uploading || !signedFile" @click="uploadSigned">
-            {{ uploading ? 'Mengunggah...' : 'Upload Surat Bermaterai' }}
-          </button>
-        </div>
-
-        <!-- Status -->
-        <div v-if="docs.filter(x => x.type === 'SURAT_PERNYATAAN').length > 0" class="card">
-          <h2 class="mb-4 text-lg font-semibold text-gray-800">Status Dokumen</h2>
-          <table class="table">
-            <thead><tr><th>Jenis</th><th>Status</th><th>Catatan</th></tr></thead>
-            <tbody>
-              <tr v-for="d in docs.filter(x => x.type === 'SURAT_PERNYATAAN')" :key="d.id">
-                <td>{{ d.title ?? d.type }}</td>
-                <td><StatusBadge :status="d.status" /></td>
-                <td class="text-gray-500">{{ d.note ?? '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <input class="input" type="file" accept=".pdf,.jpg,.jpeg,.png" @change="onPenerimaanFileChange" />
+        <button class="btn-primary mt-4" :disabled="uploadingPenerimaan || !penerimaanFile" @click="uploadSuratPenerimaan">
+          {{ uploadingPenerimaan ? 'Mengunggah...' : 'Upload Surat Penerimaan' }}
+        </button>
       </template>
-    </template>
+    </div>
+
+    <!-- Surat Penerimaan sudah disetujui -->
+    <div
+      v-if="status.effectivePhase === 'NON_PKL' && status.hasSuratPenerimaan"
+      class="card border-l-4 border-l-emerald-500 bg-emerald-50"
+    >
+      <div class="flex items-center gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">✓</span>
+        <div>
+          <h3 class="text-sm font-semibold text-emerald-800">Surat Penerimaan PKL — Selesai</h3>
+          <p class="text-sm text-emerald-700">Sudah disetujui admin. Lanjutkan ke langkah berikutnya.</p>
+        </div>
+      </div>
+    </div>
 
     <!-- NON_PKL selesai -->
-    <div v-else-if="status.effectivePhase === 'NON_PKL' && status.hasCompleted" class="card">
+    <div v-if="status.effectivePhase === 'NON_PKL' && status.hasCompleted" class="card">
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-lg font-semibold text-gray-800">Daftar Ulang PKL</h2>
@@ -588,6 +441,22 @@ onMounted(load);
             <p class="mt-1 text-sm text-blue-700">{{ waitingMessage.nextPhase }} dimulai pada {{ waitingMessage.startDate }}.</p>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ==================== PKL_SELESAI ==================== -->
+    <div v-if="status.effectivePhase === 'PKL_SELESAI'" class="card border-l-4 border-l-primary-600">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-800">Input Nilai PKL</h2>
+          <p class="mt-1 text-sm text-gray-500">
+            Pada fase Pasca-PKL, isi nilai PKL Anda (nilai DUDI + aspek penilaian).
+            Nilai akan ditinjau dan disetujui oleh guru pembimbing.
+          </p>
+        </div>
+        <RouterLink :to="{ name: 'grade-input' }" class="btn-primary shrink-0">
+          Buka Input Nilai PKL
+        </RouterLink>
       </div>
     </div>
   </div>

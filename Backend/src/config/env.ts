@@ -51,6 +51,18 @@ if (!parsed.success) {
 
 const raw = parsed.data;
 
+if (raw.NODE_ENV === 'production') {
+  const weakSecrets = new Set([
+    'change_me_access_secret_min_32_chars_long_ok!',
+    'change_me_refresh_secret_min_32_chars_long_ok!',
+    'your-secret-key-change-in-production',
+    'your-refresh-secret-change-in-production',
+  ]);
+  if (weakSecrets.has(raw.JWT_ACCESS_SECRET) || weakSecrets.has(raw.JWT_REFRESH_SECRET)) {
+    throw new Error('JWT production secret masih memakai nilai default/placeholder');
+  }
+}
+
 export const env = {
   ...raw,
   isProduction: raw.NODE_ENV === 'production',

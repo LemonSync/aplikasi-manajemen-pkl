@@ -4,18 +4,32 @@ import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
-import { CreateGradeDTO, UpdateGuidanceScoreDTO, ListGradeQueryDTO, RecapByClassQueryDTO } from '../validators/phase4.validator';
+import {
+  ApproveGradeDTO,
+  CreateGradeDTO,
+  UpdateGuidanceScoreDTO,
+  ListGradeQueryDTO,
+  RecapByClassQueryDTO,
+} from '../validators/phase4.validator';
 
 /**
  * Controller penilaian PKL (Fase 4).
  */
 export class GradeController {
-  /** POST /api/grades — DUDI: input nilai akhir */
+  /** POST /api/grades — Siswa (fase Pasca PKL) / Admin: input nilai akhir */
   inputGrade = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as CreateGradeDTO;
     const ctx = getRequestContext(req);
     const result = await gradeService.inputGrade(req.user!.sub, dto, ctx);
     return sendSuccess(res, result, 'Nilai berhasil diinput', 201);
+  });
+
+  /** POST /api/grades/:id/approve — Guru: setujui/tolak nilai siswa */
+  approve = asyncHandler(async (req: Request, res: Response) => {
+    const dto = req.body as ApproveGradeDTO;
+    const ctx = getRequestContext(req);
+    const result = await gradeService.approveGrade(req.user!.sub, req.params.id as string, dto, ctx);
+    return sendSuccess(res, result, dto.approved ? 'Nilai disetujui' : 'Nilai ditolak');
   });
 
   /** POST /api/grades/:id/guidance — Guru: input nilai bimbingan */
@@ -32,17 +46,6 @@ export class GradeController {
     return sendSuccess(res, result, 'OK');
   });
 
-  dudiAssignments = asyncHandler(async (req: Request, res: Response) => {
-    const result = await gradeService.getDudiAssignments(req.user!.sub);
-    return sendSuccess(res, result, 'OK');
-  });
-
-  /** GET /api/grades/dudi — DUDI: rekap nilai kelompok yang diawasi */
-  dudiGrades = asyncHandler(async (req: Request, res: Response) => {
-    const result = await gradeService.getDudiGrades(req.user!.sub);
-    return sendSuccess(res, result, 'OK');
-  });
-
   /** GET /api/grades — Admin/Guru: daftar nilai */
   list = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as ListGradeQueryDTO;
@@ -51,7 +54,6 @@ export class GradeController {
       {
         page,
         perPage,
-        groupId: query.groupId,
         studentId: query.studentId,
       },
       { id: req.user!.sub, role: req.user!.role }
@@ -60,13 +62,12 @@ export class GradeController {
   });
 
   /** GET /api/grades/recap — Admin: rekap semua nilai */
-  recap = asyncHandler(async (req: Request, res: Response) => {
-    const groupId = req.query.groupId as string | undefined;
-    const result = await gradeService.getRecap({ groupId });
+  recap = asyncHandler(async (_req: Request, res: Response) => {
+    const result = await gradeService.getRecap();
     return sendSuccess(res, result, 'OK');
   });
 
-  /** GET /api/grades/recap-by-class — Admin: rekap per kelas → kelompok → siswa */
+  /** GET /api/grades/recap-by-class — Admin: rekap per kelas → siswa */
   recapByClass = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as RecapByClassQueryDTO;
     const result = await gradeService.getRecapByClass({ cohortId: query.cohortId });

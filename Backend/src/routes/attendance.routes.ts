@@ -12,7 +12,6 @@ import {
   summaryQuerySchema,
   submitAttendanceSchema,
   verifyAttendanceSchema,
-  listDudiAttendanceQuerySchema,
 } from '../validators/phase3.validator';
 
 /**
@@ -58,15 +57,9 @@ router.get(
   validate({ query: listAttendanceQuerySchema }),
   attendanceController.list
 );
-router.get(
-  '/dudi',
-  authorizeRoles(Role.DUDI),
-  validate({ query: listDudiAttendanceQuerySchema }),
-  attendanceController.listForDudi
-);
 router.post(
   '/:id/verify',
-  authorizeRoles(Role.DUDI),
+  authorizeRoles(...staffRoles),
   validate({ body: verifyAttendanceSchema }),
   attendanceController.verify
 );

@@ -31,3 +31,15 @@ export const loginRateLimiter = rateLimit({
     message: 'Terlalu banyak percobaan login. Silakan coba beberapa saat lagi.',
   },
 });
+
+/** Batasi rotasi refresh token secara terpisah dari limit API umum. */
+export const refreshRateLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: Math.min(env.LOGIN_RATE_LIMIT_MAX, 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Terlalu banyak permintaan refresh token. Silakan coba lagi nanti.',
+  },
+});

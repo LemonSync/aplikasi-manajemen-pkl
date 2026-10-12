@@ -1,13 +1,12 @@
-import { Role } from '@prisma/client';
+import { ApprovalStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
-import { gradeRepository } from '../repositories/grade.repository';
-import { groupRepository } from '../repositories/group.repository';
-import { groupService } from './group.service';
+import { gradeRepository, GradeWithStudent } from '../repositories/grade.repository';
 import { auditService } from './audit.service';
+import { notificationService } from './notification.service';
 import { studentWorkflowService } from './studentWorkflow.service';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
-import { CreateGradeDTO, UpdateGuidanceScoreDTO } from '../validators/phase4.validator';
+import { ApproveGradeDTO, CreateGradeDTO, UpdateGuidanceScoreDTO } from '../validators/phase4.validator';
 
 /** Hitung predicate berdasarkan skor (A/B/C/D). */
 const calcPredicate = (score: number): string => {
@@ -17,46 +16,62 @@ const calcPredicate = (score: number): string => {
   return 'D';
 };
 
+const ENTITY_GRADE = 'GRADE';
+
+export type GradeApprovalInfo = {
+  id: string;
+  status: ApprovalStatus;
+  actorId: string | null;
+  note: string | null;
+  actedAt: Date | null;
+};
+
+type GradeWithApproval<T extends { id: string }> = T & { approval: GradeApprovalInfo | null };
+
 /**
  * Service penilaian PKL (Fase 4).
+ *
+ * Alur per-orang: siswa menginput nilai DUDI sendiri pada fase Pasca PKL,
+ * guru pembimbing yang menaungi siswa tersebut menyetujui/menolak, lalu
+ * guru mengisi nilai bimbingan sebagai catatan.
  */
 export class GradeService {
-  /** DUDI: input nilai akhir PKL per siswa. */
+  /** Input nilai akhir PKL (mewakili nilai DUDI). Siswa hanya untuk dirinya sendiri; admin dapat membantu. */
   async inputGrade(
     actorId: string,
     dto: CreateGradeDTO,
     ctx: { ipAddress?: string; userAgent?: string }
   ) {
-    // Pastikan siswa ada
-    const { prisma } = await import('../config/prisma');
-    // Fase efektif ditentukan jadwal cohort. Sinkronkan dahulu agar siswa yang
-    // belum membuka workflow tetap bisa dinilai saat jadwal sudah Pasca PKL.
-    await studentWorkflowService.syncScheduledPhase(dto.studentId);
-    const student = await prisma.user.findUnique({ where: { id: dto.studentId } });
+    // Siswa menginput nilai untuk dirinya sendiri — studentId boleh dihilangkan
+    // dari payload dan diambil dari token; admin mengirim studentId eksplisit.
+    const actor = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: { role: true },
+    });
+    if (!actor) throw new NotFoundError('Penginput nilai tidak ditemukan');
+    const studentId = dto.studentId ?? (actor.role === Role.SISWA ? actorId : undefined);
+    if (!studentId) throw new BadRequestError('Siswa wajib ditentukan');
+
+    // Sinkronkan fase efektif berdasarkan jadwal cohort terlebih dahulu.
+    await studentWorkflowService.syncScheduledPhase(studentId);
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        role: true,
+        phase: true,
+        studentProfile: { select: { fullName: true } },
+      },
+    });
     if (!student) throw new NotFoundError('Siswa tidak ditemukan');
     if (student.role !== Role.SISWA) throw new BadRequestError('ID harus merujuk ke siswa');
-    const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { role: true } });
-    if (!actor) throw new NotFoundError('Penginput nilai tidak ditemukan');
-    if (actor.role === Role.DUDI && student.phase !== 'PKL_SELESAI') {
-      throw new BadRequestError('Nilai akhir hanya dapat diinput setelah siswa memasuki fase Pasca PKL');
-    }
 
-    // DUDI hanya boleh menilai siswa pada kelompok milik perusahaannya sendiri.
-    // Admin tetap dapat membantu input/koreksi administratif melalui endpoint yang sama.
-    if (actor.role === Role.DUDI && !dto.groupId) {
-      throw new BadRequestError('Kelompok wajib diisi saat DUDI menginput nilai');
-    }
-    if (dto.groupId) {
-      const group = await groupRepository.findByIdWithRelations(dto.groupId);
-      if (!group) throw new NotFoundError('Kelompok tidak ditemukan');
-      // Validasi siswa anggota kelompok
-      const isMember = group.members.some((m) => m.userId === dto.studentId);
-      if (!isMember) throw new BadRequestError('Siswa bukan anggota kelompok ini');
-      if (actor.role === Role.DUDI) {
-        const assignment = await prisma.groupDudiMentor.findUnique({ where: { groupId_dudiUserId: { groupId: dto.groupId, dudiUserId: actorId } } });
-        if (!assignment?.isPrimary) {
-          throw new BadRequestError('Hanya DUDI utama yang ditugaskan pada kelompok ini dapat menginput nilai akhir');
-        }
+    if (actor.role === Role.SISWA) {
+      if (actorId !== studentId) {
+        throw new BadRequestError('Anda hanya dapat menginput nilai untuk diri sendiri');
+      }
+      if (student.phase !== 'PKL_SELESAI') {
+        throw new BadRequestError('Nilai hanya dapat diinput setelah siswa menyelesaikan PKL');
       }
     }
 
@@ -65,7 +80,6 @@ export class GradeService {
     if (dto.scoreDudi !== undefined) {
       finalScore = dto.scoreDudi;
     } else if (aspects.length > 0) {
-      // Nilai akhir = rata-rata indikator yang diisi DUDI
       finalScore =
         Math.round((aspects.reduce((sum, a) => sum + a.score, 0) / aspects.length) * 100) / 100;
     } else {
@@ -74,23 +88,23 @@ export class GradeService {
     const predicate = calcPredicate(finalScore);
 
     const grade = await gradeRepository.upsertByStudentAndGiver(
-      dto.studentId,
+      studentId,
       Role.DUDI,
       {
-        student: { connect: { id: dto.studentId } },
+        student: { connect: { id: studentId } },
         giver: { connect: { id: actorId } },
         giverRole: Role.DUDI,
         scoreDudi: finalScore,
         finalScore,
         predicate,
         note: dto.note ?? null,
-        ...(dto.groupId ? { groupId: dto.groupId } : {}),
       },
       {
         scoreDudi: finalScore,
         finalScore,
         predicate,
         note: dto.note ?? null,
+        giver: { connect: { id: actorId } },
       }
     );
 
@@ -104,11 +118,30 @@ export class GradeService {
       ]);
     }
 
+    // Input baru = menunggu persetujuan guru pembimbing lagi.
+    await this.resetApproval(grade.id);
+
+    // Kabari guru pembimbing yang menaungi siswa ini.
+    const supervision = await prisma.studentSupervisor.findUnique({
+      where: { studentId: studentId },
+      select: { supervisorId: true },
+    });
+    if (supervision?.supervisorId && supervision.supervisorId !== actorId) {
+      const studentName = student.studentProfile?.fullName ?? 'Seorang siswa';
+      await notificationService.create(
+        supervision.supervisorId,
+        'Nilai PKL menunggu persetujuan',
+        `${studentName} menginput nilai PKL. Mohon tinjau di halaman Penilaian.`,
+        'GRADE',
+        '/guru/penilaian'
+      );
+    }
+
     await auditService.record({
       actorId,
       action: AUDIT_ACTIONS.UPDATE_GRADE,
       entityType: ENTITY_TYPES.USER,
-      entityId: dto.studentId,
+      entityId: studentId,
       metadata: { scoreDudi: finalScore, finalScore, predicate, aspects: aspects.map((a) => a.label) },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
@@ -117,7 +150,54 @@ export class GradeService {
     return grade;
   }
 
-  /** Guru: input nilai bimbingan (catatan). */
+  /** Guru: setujui/tolak nilai yang diinput siswa. */
+  async approveGrade(
+    actorId: string,
+    gradeId: string,
+    dto: ApproveGradeDTO,
+    ctx: { ipAddress?: string; userAgent?: string }
+  ) {
+    const grade = await gradeRepository.findById(gradeId);
+    if (!grade) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { role: true } });
+    if (!actor) throw new NotFoundError('Pengguna tidak ditemukan');
+
+    if (actor.role === Role.GURU_PEMBIMBING) {
+      const supervision = await prisma.studentSupervisor.findUnique({
+        where: { studentId: grade.studentId },
+        select: { supervisorId: true },
+      });
+      if (supervision?.supervisorId !== actorId) throw new BadRequestError(MESSAGES.SCOPE);
+    }
+
+    const status: ApprovalStatus = dto.approved ? 'DISETUJUI' : 'DITOLAK';
+    const approval = await this.decideApproval(grade.id, status, actorId, dto.note ?? null);
+
+    const studentName = grade.student.studentProfile?.fullName ?? 'Siswa';
+    await notificationService.create(
+      grade.studentId,
+      dto.approved ? 'Nilai PKL disetujui' : 'Nilai PKL ditolak',
+      dto.approved
+        ? `Nilai PKL Anda disetujui oleh guru pembimbing.`
+        : `Nilai PKL Anda ditolak${dto.note ? `: ${dto.note}` : '. Mohon perbaiki data nilai.'}`,
+      'GRADE',
+      '/penilaian'
+    );
+
+    await auditService.record({
+      actorId,
+      action: AUDIT_ACTIONS.UPDATE_GRADE,
+      entityType: ENTITY_TYPES.USER,
+      entityId: grade.studentId,
+      metadata: { approval: status, gradeId, studentName },
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+    });
+
+    return { ...grade, approval };
+  }
+
+  /** Guru: input nilai bimbingan (catatan) untuk siswa bimbingannya. */
   async inputGuidanceScore(
     actorId: string,
     gradeId: string,
@@ -129,10 +209,12 @@ export class GradeService {
 
     const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { role: true } });
     if (!actor) throw new NotFoundError('Penginput nilai tidak ditemukan');
-    // Guru pembimbing hanya boleh menilai kelompok bimbingannya sendiri.
     if (actor.role === Role.GURU_PEMBIMBING) {
-      if (!grade.groupId) throw new BadRequestError(MESSAGES.SCOPE);
-      await groupService.assertSupervisor(actorId, grade.groupId);
+      const supervision = await prisma.studentSupervisor.findUnique({
+        where: { studentId: grade.studentId },
+        select: { supervisorId: true },
+      });
+      if (supervision?.supervisorId !== actorId) throw new BadRequestError(MESSAGES.SCOPE);
     }
 
     const updated = await gradeRepository.update(gradeId, {
@@ -153,199 +235,199 @@ export class GradeService {
     return updated;
   }
 
-  /** Siswa: lihat rekap nilai sendiri. */
-  async getMyGrades(studentId: string) {
-    return gradeRepository.findMany({ studentId });
+  /** Siswa: lihat rekap nilai sendiri (termasuk status persetujuan). */
+  async getMyGrades(studentId: string): Promise<Array<GradeWithApproval<GradeWithStudent>>> {
+    const items = await gradeRepository.findMany({ studentId });
+    return this.attachApprovals(items);
   }
 
-  /** Daftar siswa yang benar-benar diawasi DUDI, dikelompokkan per kelompok PKL. */
-  async getDudiAssignments(dudiUserId: string) {
-    const { prisma } = await import('../config/prisma');
-    return prisma.group.findMany({
-      where: { dudiMentors: { some: { dudiUserId } }, deletedAt: null, status: { not: 'DIBUBARKAN' } },
-      select: {
-        id: true, name: true,
-        members: { where: { user: { role: Role.SISWA } }, select: { user: { select: { id: true, username: true, studentProfile: { select: { fullName: true } } } } } },
-      },
-      orderBy: { name: 'asc' },
-    });
-  }
-
-  /** DUDI: rekap nilai siswa pada kelompok yang diawasinya. */
-  async getDudiGrades(dudiUserId: string) {
-    const { prisma } = await import('../config/prisma');
-    const groups = await prisma.group.findMany({
-      where: { dudiMentors: { some: { dudiUserId } }, deletedAt: null, status: { not: 'DIBUBARKAN' } },
-      select: { id: true },
-    });
-    if (groups.length === 0) return [];
-    return gradeRepository.findMany({ groupId: { in: groups.map((g) => g.id) } });
-  }
-
-  /** Admin/Guru: lihat nilai per kelompok. Guru dibatasi ke kelompok bimbingannya. */
+  /** Admin/Guru: daftar nilai. Guru dibatasi ke siswa bimbingannya. */
   async list(
-    params: { page: number; perPage: number; groupId?: string; studentId?: string },
+    params: { page: number; perPage: number; studentId?: string },
     actor: { id: string; role: string }
-  ) {
-    if (actor.role === Role.GURU_PEMBIMBING) {
-      const supervised = await prisma.groupSupervisor.findMany({
-        where: { userId: actor.id },
-        select: { groupId: true },
-      });
-      const ids = supervised.map((s) => s.groupId);
-      if (params.groupId) {
-        if (!ids.includes(params.groupId)) throw new BadRequestError(MESSAGES.SCOPE);
-      } else if (ids.length === 0) {
-        return { items: [], total: 0 };
-      }
-      const where = {
-        groupId: params.groupId ? params.groupId : { in: ids },
-        ...(params.studentId ? { studentId: params.studentId } : {}),
-      };
-      return gradeRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
-    }
-
-    const where = {
-      ...(params.groupId ? { groupId: params.groupId } : {}),
+  ): Promise<{ items: Array<GradeWithApproval<GradeWithStudent>>; total: number }> {
+    let where: Prisma.GradeWhereInput = {
       ...(params.studentId ? { studentId: params.studentId } : {}),
     };
-    return gradeRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
+
+    if (actor.role === Role.GURU_PEMBIMBING) {
+      if (params.studentId) {
+        const supervision = await prisma.studentSupervisor.findUnique({
+          where: { studentId: params.studentId },
+          select: { supervisorId: true },
+        });
+        if (supervision?.supervisorId !== actor.id) throw new BadRequestError(MESSAGES.SCOPE);
+      } else {
+        const links = await prisma.studentSupervisor.findMany({
+          where: { supervisorId: actor.id },
+          select: { studentId: true },
+        });
+        if (links.length === 0) return { items: [], total: 0 };
+        where = { ...where, studentId: { in: links.map((l) => l.studentId) } };
+      }
+    }
+
+    const { items, total } = await gradeRepository.paginate(
+      where,
+      (params.page - 1) * params.perPage,
+      params.perPage
+    );
+    return { items: await this.attachApprovals(items), total };
   }
 
   /** Admin: rekap semua nilai. */
-  async getRecap(params?: { groupId?: string }) {
-    const where = params?.groupId ? { groupId: params.groupId } : {};
-    return gradeRepository.findMany(where);
+  async getRecap(): Promise<Array<GradeWithApproval<GradeWithStudent>>> {
+    const items = await gradeRepository.findMany({});
+    return this.attachApprovals(items);
   }
 
   /**
-   * Admin: rekap penilaian per kelas → kelompok → siswa.
-   * Sumber siswa = seluruh anggota kelompok PKL aktif, termasuk yang belum
-   * dinilai (`grade: null`), agar admin bisa melihat siapa yang belum dinilai.
-   * Kelas boleh campur dalam satu kelompok; `memberCount` dipakai UI untuk
-   * penanda "n dari m anggota di kelas ini".
+   * Admin: rekap penilaian per kelas → siswa.
+   * Sumber = seluruh siswa aktif cohort, termasuk yang belum dinilai (`grade: null`),
+   * lengkap dengan perusahaan tujuan dan guru pembimbing.
    */
   async getRecapByClass(params?: { cohortId?: string }): Promise<{
     classes: Array<{
       className: string;
       studentCount: number;
       gradedCount: number;
-      groups: Array<{
-        groupId: string | null;
-        groupName: string;
+      students: Array<{
+        userId: string;
+        username: string;
+        fullName: string;
+        nisn: string | null;
         companyName: string | null;
-        memberCount: number;
-        students: Array<{
-          userId: string;
-          username: string;
-          fullName: string;
-          nisn: string | null;
-          grade: Awaited<ReturnType<typeof gradeRepository.findMany>>[number] | null;
-        }>;
+        supervisorName: string | null;
+        approvalStatus: ApprovalStatus | null;
+        grade: GradeWithStudent | null;
       }>;
     }>;
     totalStudents: number;
     totalGraded: number;
   }> {
-    const members = await prisma.groupMember.findMany({
+    const students = await prisma.user.findMany({
       where: {
-        group: { deletedAt: null },
-        user: { deletedAt: null, role: Role.SISWA, ...(params?.cohortId ? { cohortId: params.cohortId } : {}) },
+        role: Role.SISWA,
+        deletedAt: null,
+        ...(params?.cohortId ? { cohortId: params.cohortId } : {}),
       },
-      include: {
-        group: { include: { company: { select: { name: true } } } },
-        user: {
+      select: {
+        id: true,
+        username: true,
+        studentProfile: {
           select: {
-            id: true,
-            username: true,
-            studentProfile: {
-              select: {
-                fullName: true,
-                nisn: true,
-                class: { select: { name: true } },
-                major: { select: { name: true } },
-              },
+            fullName: true,
+            nisn: true,
+            class: { select: { name: true } },
+            major: { select: { name: true } },
+          },
+        },
+        supervision: {
+          select: {
+            supervisor: {
+              select: { username: true, teacherProfile: { select: { fullName: true } } },
             },
           },
         },
       },
+      orderBy: { username: 'asc' },
     });
 
-    // Satu nilai terbaik per siswa: prioritas yang sudah punya nilai akhir,
-    // lalu yang terbaru (daftar repo sudah urut createdAt desc).
+    // Nilai (prioritas yang sudah punya nilai akhir, lalu terbaru)
     const gradeRows = await gradeRepository.findMany({});
-    const gradeByStudent = new Map<string, (typeof gradeRows)[number]>();
+    const gradeByStudent = new Map<string, GradeWithStudent>();
     for (const g of gradeRows) {
       const cur = gradeByStudent.get(g.studentId);
       if (!cur || (cur.finalScore == null && g.finalScore != null)) gradeByStudent.set(g.studentId, g);
     }
+    const approvalByGrade = new Map<string, GradeApprovalInfo>();
+    if (gradeRows.length > 0) {
+      const approvals = await prisma.approval.findMany({
+        where: { entityType: ENTITY_GRADE, entityId: { in: gradeRows.map((g) => g.id) } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, entityId: true, status: true, actorId: true, note: true, actedAt: true },
+      });
+      for (const a of approvals) if (!approvalByGrade.has(a.entityId)) approvalByGrade.set(a.entityId, a);
+    }
+
+    // Perusahaan tujuan dari pendaftaran aktif (DISETUJUI lebih diprioritaskan)
+    const regs = await prisma.registration.findMany({
+      where: {
+        status: { in: ['DIAJUKAN', 'DISETUJUI'] },
+        ...(params?.cohortId ? { cohortId: params.cohortId } : {}),
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { studentId: true, status: true, company: { select: { name: true } } },
+    });
+    const companyByStudent = new Map<string, string>();
+    for (const r of regs) {
+      const name = r.company?.name;
+      if (!name) continue;
+      if (r.status === 'DISETUJUI') companyByStudent.set(r.studentId, name);
+      else if (!companyByStudent.has(r.studentId)) companyByStudent.set(r.studentId, name);
+    }
 
     // Fallback nama kelas dari master siswa (NISN unik global)
-    const nisns = [...new Set(members.map((m) => m.user.studentProfile?.nisn).filter((n): n is string => !!n))];
+    const nisns = [...new Set(students.map((s) => s.studentProfile?.nisn).filter((n): n is string => !!n))];
     const registryRows = nisns.length
-      ? await prisma.studentRegistry.findMany({ where: { nisn: { in: nisns } }, select: { nisn: true, className: true } })
+      ? await prisma.studentRegistry.findMany({
+          where: { nisn: { in: nisns } },
+          select: { nisn: true, className: true },
+        })
       : [];
     const registryClass = new Map(registryRows.map((r) => [r.nisn, r.className]));
 
-    const memberCountByGroup = new Map<string, number>();
-    for (const m of members) memberCountByGroup.set(m.groupId, (memberCountByGroup.get(m.groupId) ?? 0) + 1);
-
-    type StudentOut = {
-      userId: string;
-      username: string;
-      fullName: string;
-      nisn: string | null;
-      grade: (typeof gradeRows)[number] | null;
-    };
     const classMap = new Map<
       string,
-      Map<string, { groupId: string; groupName: string; companyName: string | null; students: Map<string, StudentOut> }>
+      Map<
+        string,
+        {
+          userId: string;
+          username: string;
+          fullName: string;
+          nisn: string | null;
+          companyName: string | null;
+          supervisorName: string | null;
+          approvalStatus: ApprovalStatus | null;
+          grade: GradeWithStudent | null;
+        }
+      >
     >();
 
-    for (const m of members) {
-      const p = m.user.studentProfile;
-      const className = p?.class?.name ?? (p?.nisn ? registryClass.get(p.nisn) : undefined) ?? 'Belum Ada Kelas';
-
-      let groups = classMap.get(className);
-      if (!groups) {
-        groups = new Map();
-        classMap.set(className, groups);
+    for (const s of students) {
+      const p = s.studentProfile;
+      const className =
+        p?.class?.name ?? (p?.nisn ? registryClass.get(p.nisn) : undefined) ?? 'Belum Ada Kelas';
+      let rows = classMap.get(className);
+      if (!rows) {
+        rows = new Map();
+        classMap.set(className, rows);
       }
-      let grp = groups.get(m.groupId);
-      if (!grp) {
-        grp = {
-          groupId: m.groupId,
-          groupName: m.group.name,
-          companyName: m.group.company?.name ?? null,
-          students: new Map(),
-        };
-        groups.set(m.groupId, grp);
-      }
-      if (!grp.students.has(m.user.id)) {
-        grp.students.set(m.user.id, {
-          userId: m.user.id,
-          username: m.user.username,
-          fullName: p?.fullName ?? m.user.username,
-          nisn: p?.nisn ?? null,
-          grade: gradeByStudent.get(m.user.id) ?? null,
-        });
-      }
+      const grade = gradeByStudent.get(s.id) ?? null;
+      rows.set(s.id, {
+        userId: s.id,
+        username: s.username,
+        fullName: p?.fullName ?? s.username,
+        nisn: p?.nisn ?? null,
+        companyName: companyByStudent.get(s.id) ?? null,
+        supervisorName:
+          s.supervision?.supervisor.teacherProfile?.fullName ??
+          s.supervision?.supervisor.username ??
+          null,
+        approvalStatus: grade ? (approvalByGrade.get(grade.id)?.status ?? null) : null,
+        grade,
+      });
     }
 
     const classes = [...classMap.entries()]
-      .map(([className, groups]) => {
-        const groupsOut = [...groups.values()]
-          .map((g) => ({
-            groupId: g.groupId,
-            groupName: g.groupName,
-            companyName: g.companyName,
-            memberCount: memberCountByGroup.get(g.groupId) ?? g.students.size,
-            students: [...g.students.values()].sort((a, b) => a.fullName.localeCompare(b.fullName)),
-          }))
-          .sort((a, b) => a.groupName.localeCompare(b.groupName));
-        const studentCount = groupsOut.reduce((s, g) => s + g.students.length, 0);
-        const gradedCount = groupsOut.reduce((s, g) => s + g.students.filter((st) => st.grade !== null).length, 0);
-        return { className, studentCount, gradedCount, groups: groupsOut };
+      .map(([className, rows]) => {
+        const studentsOut = [...rows.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
+        return {
+          className,
+          studentCount: studentsOut.length,
+          gradedCount: studentsOut.filter((st) => st.grade !== null).length,
+          students: studentsOut,
+        };
       })
       .sort((a, b) => a.className.localeCompare(b.className));
 
@@ -354,6 +436,66 @@ export class GradeService {
       totalStudents: classes.reduce((s, c) => s + c.studentCount, 0),
       totalGraded: classes.reduce((s, c) => s + c.gradedCount, 0),
     };
+  }
+
+  /** Lampirkan status persetujuan terbaru (per grade) ke daftar nilai. */
+  private async attachApprovals<T extends { id: string }>(
+    items: T[]
+  ): Promise<Array<GradeWithApproval<T>>> {
+    if (items.length === 0) return [];
+    const approvals = await prisma.approval.findMany({
+      where: { entityType: ENTITY_GRADE, entityId: { in: items.map((i) => i.id) } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, entityId: true, status: true, actorId: true, note: true, actedAt: true },
+    });
+    const byEntity = new Map<string, GradeApprovalInfo>();
+    for (const a of approvals) if (!byEntity.has(a.entityId)) byEntity.set(a.entityId, a);
+    return items.map((i) => ({ ...i, approval: byEntity.get(i.id) ?? null }));
+  }
+
+  /** Kembalikan status approval ke MENUNGGU saat nilai diinput ulang. */
+  private async resetApproval(gradeId: string): Promise<GradeApprovalInfo> {
+    const latest = await prisma.approval.findFirst({
+      where: { entityType: ENTITY_GRADE, entityId: gradeId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true },
+    });
+    if (latest && latest.status === 'MENUNGGU') {
+      return prisma.approval.findUniqueOrThrow({
+        where: { id: latest.id },
+        select: { id: true, status: true, actorId: true, note: true, actedAt: true },
+      });
+    }
+    return prisma.approval.create({
+      data: { entityType: ENTITY_GRADE, entityId: gradeId, status: 'MENUNGGU' },
+      select: { id: true, status: true, actorId: true, note: true, actedAt: true },
+    });
+  }
+
+  /** Catat keputusan pada approval MENUNGGU terakhir (atau buat baru bila tidak ada). */
+  private async decideApproval(
+    gradeId: string,
+    status: ApprovalStatus,
+    actorId: string,
+    note: string | null
+  ): Promise<GradeApprovalInfo> {
+    const latest = await prisma.approval.findFirst({
+      where: { entityType: ENTITY_GRADE, entityId: gradeId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true },
+    });
+    const data = { status, actorId, actedAt: new Date(), note };
+    if (latest && latest.status === 'MENUNGGU') {
+      return prisma.approval.update({
+        where: { id: latest.id },
+        data,
+        select: { id: true, status: true, actorId: true, note: true, actedAt: true },
+      });
+    }
+    return prisma.approval.create({
+      data: { entityType: ENTITY_GRADE, entityId: gradeId, ...data },
+      select: { id: true, status: true, actorId: true, note: true, actedAt: true },
+    });
   }
 }
 

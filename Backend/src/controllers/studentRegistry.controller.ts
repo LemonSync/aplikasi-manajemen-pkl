@@ -87,7 +87,6 @@ export class StudentRegistryController {
       message +=
         `; permanen: ${result.accounts} akun, ${result.attendance} absensi,` +
         ` ${result.journals} jurnal, ${result.grades} nilai, ${result.documents} dokumen,` +
-        ` ${result.groupMemberships} keanggotaan kelompok, ${result.memberRows} baris pendaftaran` +
         (result.registrations > 0 ? `, ${result.registrations} pendaftaran yang diajukan` : '');
     }
     return sendSuccess(res, result, message);

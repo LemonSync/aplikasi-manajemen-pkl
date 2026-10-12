@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Role } from '@prisma/client';
 import { studentRegistryController } from '../controllers/studentRegistry.controller';
 import { authenticate, authorizeRoles } from '../middlewares/auth';
-import { singleFile } from '../middlewares/upload';
+import { singleExcelFile } from '../middlewares/upload';
 
 /**
  * Router Master Siswa — prefix /api/student-registry
@@ -15,7 +15,7 @@ router.use(authenticate);
 router.post(
   '/inspect',
   authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  singleFile('file'),
+  singleExcelFile('file'),
   studentRegistryController.inspectExcel
 );
 
@@ -23,7 +23,7 @@ router.post(
 router.post(
   '/import',
   authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  singleFile('file'),
+  singleExcelFile('file'),
   studentRegistryController.importExcel
 );
 

@@ -11,13 +11,21 @@ import { ReplacePhaseScheduleDTO } from '../validators/phaseSchedule.validator';
 export class PhaseScheduleController {
   /** GET /api/cohorts/:cohortId/phase-schedule */
   list = asyncHandler(async (req: Request, res: Response) => {
-    const result = await phaseScheduleService.listByCohort(req.params.cohortId as string);
+    const result = await phaseScheduleService.listByCohort(req.params.cohortId as string, {
+      id: req.user!.sub,
+      role: req.user!.role,
+      cohortId: req.user!.cohortId,
+    });
     return sendSuccess(res, result, 'OK');
   });
 
   /** GET /api/cohorts/:cohortId/phase-schedule/overview */
   overview = asyncHandler(async (req: Request, res: Response) => {
-    const result = await phaseScheduleService.getOverview(req.params.cohortId as string);
+    const result = await phaseScheduleService.getOverview(req.params.cohortId as string, {
+      id: req.user!.sub,
+      role: req.user!.role,
+      cohortId: req.user!.cohortId,
+    });
     return sendSuccess(res, result, 'OK');
   });
 

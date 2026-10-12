@@ -6,24 +6,25 @@ import { validate } from '../middlewares/validate';
 import { createFeedbackSchema, listFeedbackQuerySchema } from '../validators/phase4.validator';
 
 /**
- * Router feedback DUDI — prefix /api/feedbacks
+ * Router feedback untuk siswa — prefix /api/feedbacks
  */
 const router = Router();
 
 router.use(authenticate);
 
-// DUDI: input feedback
+// Admin/guru pembimbing: input feedback
+// (guru hanya untuk siswa bimbingannya — dicek di service)
 router.post(
   '/',
-  authorizeRoles(Role.DUDI, Role.ADMIN, Role.SUPER_ADMIN),
+  authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
   validate({ body: createFeedbackSchema }),
   feedbackController.create
 );
 
-// Lihat feedback per siswa
+// Lihat feedback per siswa (siswa: miliknya sendiri; guru: bimbingannya; admin: bebas)
 router.get(
   '/student/:studentId',
-  authorizeRoles(Role.DUDI, Role.ADMIN, Role.SUPER_ADMIN, Role.GURU_PEMBIMBING),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.GURU_PEMBIMBING, Role.SISWA),
   feedbackController.listByStudent
 );
 

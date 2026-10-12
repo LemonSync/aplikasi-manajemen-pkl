@@ -4,7 +4,7 @@ import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
-import { CreateCohortDTO, UpdateCohortDTO, ListCohortQueryDTO } from '../validators/cohort.validator';
+import { CreateCohortDTO, UpdateCohortDTO, ListCohortQueryDTO, SetActiveCohortDTO } from '../validators/cohort.validator';
 
 export class CohortManageController {
   create = asyncHandler(async (req: Request, res: Response) => {
@@ -34,6 +34,13 @@ export class CohortManageController {
   getById = asyncHandler(async (req: Request, res: Response) => {
     const result = await cohortService.getById(req.params.id as string);
     return sendSuccess(res, result, 'OK');
+  });
+
+  /** Tetapkan gelombang aktif global (hanya yang OPEN). */
+  setActive = asyncHandler(async (req: Request, res: Response) => {
+    const { cohortId } = req.body as SetActiveCohortDTO;
+    const result = await cohortService.setActive(cohortId, req.user!.sub, getRequestContext(req));
+    return sendSuccess(res, result, 'Gelombang aktif berhasil ditetapkan');
   });
 }
 

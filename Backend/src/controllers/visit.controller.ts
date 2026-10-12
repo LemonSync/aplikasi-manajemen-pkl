@@ -14,7 +14,7 @@ export class VisitController {
   create = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as CreateVisitDTO;
     const ctx = getRequestContext(req);
-    const result = await visitService.create(req.user!.sub, dto, ctx);
+    const result = await visitService.create(req.user!.sub, dto, ctx, req.user!.role);
     return sendSuccess(res, result, 'Jadwal kunjungan dibuat', 201);
   });
 
@@ -33,7 +33,7 @@ export class VisitController {
       {
         page,
         perPage,
-        groupId: query.groupId,
+        studentId: query.studentId,
         supervisorId: query.supervisorId,
       },
       { id: req.user!.sub, role: req.user!.role }

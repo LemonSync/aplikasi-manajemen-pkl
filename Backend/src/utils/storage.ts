@@ -42,7 +42,11 @@ export const saveBuffer = (
   buffer: Buffer
 ): { relativePath: string; absolutePath: string } => {
   const dir = categoryDir(category);
-  const absolutePath = path.join(dir, filename);
+  const safeFilename = path.basename(filename);
+  const absolutePath = path.resolve(dir, safeFilename);
+  if (!absolutePath.startsWith(`${path.resolve(dir)}${path.sep}`)) {
+    throw new Error('Nama file tidak valid');
+  }
   fs.writeFileSync(absolutePath, buffer);
   const relativePath = path.relative(env.storageRoot, absolutePath).split(path.sep).join('/');
   return { relativePath, absolutePath };
@@ -54,7 +58,7 @@ export const saveBuffer = (
 export const resolveStoredPath = (relativePath: string): string => {
   const absolutePath = path.resolve(env.storageRoot, relativePath);
   // Pastikan hasil resolve tetap di dalam storage root.
-  if (!absolutePath.startsWith(path.resolve(env.storageRoot))) {
+  if (!absolutePath.startsWith(`${path.resolve(env.storageRoot)}${path.sep}`)) {
     throw new Error('Path file tidak valid');
   }
   return absolutePath;

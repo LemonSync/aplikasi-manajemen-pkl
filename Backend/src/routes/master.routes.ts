@@ -47,4 +47,6 @@ companyRouter.patch(
   validate({ body: updateCompanySchema }),
   companyController.update
 );
+// Opsi dropdown pendaftaran siswa — semua role terotentikasi (harus sebelum '/:id')
+companyRouter.get('/options', companyController.options);
 companyRouter.get('/:id', companyController.detail);

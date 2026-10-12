@@ -1,11 +1,16 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
 /**
  * Service export data (Excel/CSV).
+ * Filter memakai studentId / cohortId (lewat relasi siswa), bukan kelompok.
  */
 export class ExportService {
-  async grades(groupId?: string) {
-    const where = groupId ? { groupId } : {};
+  async grades(params: { studentId?: string; cohortId?: string }) {
+    const where: Prisma.GradeWhereInput = {
+      ...(params.studentId ? { studentId: params.studentId } : {}),
+      ...(params.cohortId ? { student: { cohortId: params.cohortId } } : {}),
+    };
     const grades = await prisma.grade.findMany({
       where,
       include: {
@@ -25,13 +30,15 @@ export class ExportService {
     }));
   }
 
-  async attendances(params: { groupId?: string; from?: string; to?: string }) {
-    const where: Record<string, unknown> = {};
-    if (params.groupId) where.groupId = params.groupId;
+  async attendances(params: { studentId?: string; cohortId?: string; from?: string; to?: string }) {
+    const where: Prisma.AttendanceWhereInput = {};
+    if (params.studentId) where.userId = params.studentId;
+    if (params.cohortId) where.user = { cohortId: params.cohortId };
     if (params.from || params.to) {
-      where.date = {};
-      if (params.from) (where.date as Record<string, string>).gte = params.from;
-      if (params.to) (where.date as Record<string, string>).lte = params.to;
+      const date: Prisma.DateTimeFilter = {};
+      if (params.from) date.gte = params.from;
+      if (params.to) date.lte = params.to;
+      where.date = date;
     }
 
     const attendances = await prisma.attendance.findMany({

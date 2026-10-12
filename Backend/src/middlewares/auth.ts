@@ -4,6 +4,7 @@ import { verifyAccessToken, JwtAccessPayload } from '../utils/jwt';
 import { ForbiddenError, UnauthorizedError } from '../errors/AppError';
 import { MESSAGES } from '../config/constants';
 import { studentWorkflowService } from '../services/studentWorkflow.service';
+import { userRepository } from '../repositories/user.repository';
 
 /**
  * Perluas tipe Request Express dengan data user terautentikasi.
@@ -21,7 +22,7 @@ declare global {
  * Middleware autentikasi: memverifikasi Bearer access token.
  * Menyimpan payload ke `req.user`.
  */
-export const authenticate = (req: Request, _res: Response, next: NextFunction): void => {
+export const authenticate = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
@@ -32,7 +33,13 @@ export const authenticate = (req: Request, _res: Response, next: NextFunction): 
 
   try {
     const payload = verifyAccessToken(token);
-    req.user = payload;
+    const user = await userRepository.findById(payload.sub);
+    if (!user || user.deletedAt || !user.isActive || user.role !== payload.role) {
+      return next(new UnauthorizedError(MESSAGES.AUTH.TOKEN_INVALID));
+    }
+    // Ambil fase/cohort terbaru dari DB agar token lama tidak mempertahankan
+    // konteks akses setelah admin mengubah data akun.
+    req.user = { ...payload, role: user.role, phase: user.phase, cohortId: user.cohortId };
     return next();
   } catch (err) {
     const name = (err as Error).name;

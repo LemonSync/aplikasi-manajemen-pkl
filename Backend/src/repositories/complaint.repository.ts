@@ -4,7 +4,6 @@ import { prisma } from '../config/prisma';
 export type ComplaintWithRelations = Prisma.ComplaintGetPayload<{
   include: {
     author: { select: { id: true; username: true; studentProfile: { select: { fullName: true } } } };
-    group: { select: { id: true; name: true } };
     replies: { include: { author: { select: { id: true; username: true } } } };
   };
 }>;
@@ -18,7 +17,6 @@ export class ComplaintRepository {
       where: { id },
       include: {
         author: { select: { id: true, username: true, studentProfile: { select: { fullName: true } } } },
-        group: { select: { id: true, name: true } },
         replies: {
           orderBy: { createdAt: 'asc' },
           include: { author: { select: { id: true, username: true } } },
@@ -52,7 +50,6 @@ export class ComplaintRepository {
         orderBy: { createdAt: 'desc' },
         include: {
           author: { select: { id: true, username: true, studentProfile: { select: { fullName: true } } } },
-          group: { select: { id: true, name: true } },
           replies: {
             orderBy: { createdAt: 'asc' },
             include: { author: { select: { id: true, username: true } } },

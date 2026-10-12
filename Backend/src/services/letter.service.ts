@@ -1,19 +1,48 @@
 import { DocumentType } from '@prisma/client';
-import { renderLetterPdf, LetterContent } from '../templates/letter.template';
+import {
+  renderFormalLetterPdf,
+  renderPenugasanLetterPdf,
+  LetterTable,
+  PembimbingBlock,
+  SchoolHeader,
+  SignerBlock,
+} from '../templates/letter.template';
 import { saveBuffer } from '../utils/storage';
 import { settingService } from './setting.service';
 import { letterSignatoryRepository, generatedLetterRepository } from '../repositories/letter.repository';
 import { NotFoundError } from '../errors/AppError';
+import { prisma } from '../config/prisma';
+import { formatDate } from '../utils/date';
 
 export interface GenerateLetterInput {
   type: DocumentType;
   number?: string | null;
-  title: string;
-  recipientLines: string[];
-  bodyParagraphs: string[];
+  hal?: string;
+  /** Tanggal pada blok Nomor (default hari ini). */
+  date?: Date;
+  lampiran?: string;
+  recipientLines?: string[];
+  recipientCity?: string;
+  paragraphs: string[];
+  table?: LetterTable | null;
+  pembimbing?: PembimbingBlock | null;
   closing?: string;
   cohortId?: string | null;
-  relatedGroupId?: string | null;
+  createdById?: string | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface GeneratePenugasanInput {
+  number?: string | null;
+  dari: string;
+  kepada: { nama: string; nip?: string | null; jabatan: string; unitKerja: string };
+  dasar: string;
+  isi: string;
+  ketentuan: string;
+  tujuan: Array<{ name: string; address: string }>;
+  date?: Date;
+  cohortId?: string | null;
+  createdById?: string | null;
   payload?: Record<string, unknown>;
 }
 
@@ -30,65 +59,166 @@ export interface GeneratedLetterResult {
  * sehingga perubahan pejabat di masa depan tidak mengubah surat lama.
  */
 export class LetterService {
-  async generateLetter(input: GenerateLetterInput): Promise<GeneratedLetterResult> {
-    // 1. Penandatangan aktif (snapshot)
+  private async resolveHeaderAndSigner(): Promise<{
+    header: SchoolHeader;
+    signer: SignerBlock;
+    signatoryId: string;
+  }> {
     const signatory = await letterSignatoryRepository.findActive();
     if (!signatory) {
       throw new NotFoundError('Penandatangan surat belum dikonfigurasi');
     }
-
-    // 2. Identitas sekolah untuk kop surat
     const school = await settingService.getSchoolIdentity();
-
-    const now = new Date();
-    const content: LetterContent = {
+    return {
       header: {
+        government: school.government,
+        dinas: school.dinas,
         schoolName: school.schoolName,
-        schoolAddress: school.schoolAddress,
-        schoolPhone: school.schoolPhone,
-        schoolEmail: school.schoolEmail,
+        programKeahlian: school.programKeahlian,
+        address: school.schoolAddress,
+        website: school.website,
+        email: school.schoolEmail,
+        npsn: school.npsn,
       },
-      title: input.title,
-      number: input.number ?? undefined,
-      recipientLines: input.recipientLines,
-      bodyParagraphs: input.bodyParagraphs,
-      closing: input.closing,
       signer: {
         name: signatory.name,
         nip: signatory.nip,
         position: signatory.position,
-        city: school.city,
-        date: now,
       },
+      signatoryId: signatory.id,
     };
+  }
 
-    // 3. Render PDF -> buffer
-    const pdfBuffer = await renderLetterPdf(content);
+  private async persist(params: {
+    type: DocumentType;
+    number?: string | null;
+    subject: string;
+    signerName: string;
+    signerNip: string | null;
+    signatoryId: string;
+    pdfBuffer: Buffer;
+    cohortId?: string | null;
+    createdById?: string | null;
+    payload?: Record<string, unknown>;
+  }): Promise<GeneratedLetterResult> {
+    const filename = `${params.type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.pdf`;
+    const { relativePath } = saveBuffer('letters', filename, params.pdfBuffer);
 
-    // 4. Simpan ke storage
-    const filename = `${input.type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.pdf`;
-    const { relativePath } = saveBuffer('letters', filename, pdfBuffer);
-
-    // 5. Simpan record surat dengan snapshot tanda tangan
     const letter = await generatedLetterRepository.create({
-      type: input.type,
-      number: input.number ?? null,
-      subject: input.title,
-      signerName: signatory.name,
-      signerNip: signatory.nip,
+      type: params.type,
+      number: params.number ?? null,
+      subject: params.subject,
+      signerName: params.signerName,
+      signerNip: params.signerNip,
       pdfPath: relativePath,
-      relatedGroupId: input.relatedGroupId ?? null,
-      payload: (input.payload ?? {}) as never,
-      ...(input.cohortId ? { cohort: { connect: { id: input.cohortId } } } : {}),
-      ...(signatory.id ? { signatory: { connect: { id: signatory.id } } } : {}),
+      payload: (params.payload ?? {}) as never,
+      ...(params.createdById ? { createdBy: { connect: { id: params.createdById } } } : {}),
+      ...(params.cohortId ? { cohort: { connect: { id: params.cohortId } } } : {}),
+      ...(params.signatoryId ? { signatory: { connect: { id: params.signatoryId } } } : {}),
     });
 
     return {
       letterId: letter.id,
       relativePath,
-      signerName: signatory.name,
-      signerNip: signatory.nip,
+      signerName: params.signerName,
+      signerNip: params.signerNip,
     };
+  }
+
+  /** Surat formal (permohonan/pengantar/monitoring/penjemputan) — layout resmi sekolah. */
+  async generateLetter(input: GenerateLetterInput): Promise<GeneratedLetterResult> {
+    const { header, signer, signatoryId } = await this.resolveHeaderAndSigner();
+    const school = await settingService.getSchoolIdentity();
+
+    const pdfBuffer = await renderFormalLetterPdf(header, {
+      number: input.number ?? undefined,
+      date: input.date,
+      city: school.city,
+      lampiran: input.lampiran,
+      hal: input.hal,
+      recipientLines: input.recipientLines,
+      recipientCity: input.recipientCity,
+      paragraphs: input.paragraphs,
+      table: input.table ?? undefined,
+      pembimbing: input.pembimbing ?? undefined,
+      closing: input.closing,
+      signer,
+    });
+
+    return this.persist({
+      type: input.type,
+      number: input.number ?? null,
+      subject: input.hal ?? input.type,
+      signerName: signer.name,
+      signerNip: signer.nip ?? null,
+      signatoryId,
+      pdfBuffer,
+      cohortId: input.cohortId ?? null,
+      createdById: input.createdById ?? null,
+      payload: input.payload,
+    });
+  }
+
+  /** Surat penugasan pembimbing — layout Dari/Kepada/Dasar/Isi khusus. */
+  async generatePenugasan(input: GeneratePenugasanInput): Promise<GeneratedLetterResult> {
+    const { header, signer, signatoryId } = await this.resolveHeaderAndSigner();
+    const school = await settingService.getSchoolIdentity();
+
+    const pdfBuffer = await renderPenugasanLetterPdf(header, {
+      number: input.number ?? undefined,
+      dari: input.dari,
+      kepada: input.kepada,
+      dasar: input.dasar,
+      isi: input.isi,
+      ketentuan: input.ketentuan,
+      tujuan: input.tujuan,
+      date: input.date,
+      kota: school.city,
+      signer,
+    });
+
+    return this.persist({
+      type: DocumentType.SURAT_PENUGASAN,
+      number: input.number ?? null,
+      subject: 'Surat Penugasan Pembimbing PKL',
+      signerName: signer.name,
+      signerNip: signer.nip ?? null,
+      signatoryId,
+      pdfBuffer,
+      cohortId: input.cohortId ?? null,
+      createdById: input.createdById ?? null,
+      payload: input.payload,
+    });
+  }
+
+  /**
+   * Rentang tanggal masa PKL suatu gelombang dari PhaseSchedule
+   * (PKL_AKTIF → PKL_SELESAI), diformat "13 Juli 2026 s.d 7 November 2026".
+   * null bila jadwal belum diatur.
+   */
+  async getPklRangeText(cohortId: string | null): Promise<string | null> {
+    if (!cohortId) return null;
+    const [start, end] = await Promise.all([
+      prisma.phaseSchedule.findUnique({
+        where: { cohortId_phase: { cohortId, phase: 'PKL_AKTIF' } },
+        select: { startDate: true },
+      }),
+      prisma.phaseSchedule.findUnique({
+        where: { cohortId_phase: { cohortId, phase: 'PKL_SELESAI' } },
+        select: { endDate: true },
+      }),
+    ]);
+    const startText = start?.startDate ? formatDate(start.startDate) : null;
+    const endText = end?.endDate ? formatDate(end.endDate) : null;
+    if (startText && endText) return `${startText} s.d ${endText}`;
+    if (startText) return `mulai ${startText}`;
+    return null;
+  }
+
+  /** Tahun pelajaran dari nama gelombang (mis. "Gelombang 1 2026/2027" → "2026/2027"). */
+  academicYearFromCohortName(cohortName: string | null | undefined): string | null {
+    const match = cohortName?.match(/\d{4}\s*\/\s*\d{4}/);
+    return match ? match[0].replace(/\s+/g, '') : null;
   }
 }
 

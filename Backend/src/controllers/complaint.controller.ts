@@ -38,7 +38,6 @@ export class ComplaintController {
         page,
         perPage,
         status: query.status,
-        groupId: query.groupId,
         authorId: query.authorId,
         cohortId: query.cohortId,
       },

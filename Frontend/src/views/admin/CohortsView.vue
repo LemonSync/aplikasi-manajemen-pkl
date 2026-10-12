@@ -111,6 +111,19 @@ const openCreate = (): void => {
   showForm.value = true;
 };
 
+/** Tetapkan gelombang aktif global — hanya untuk gelombang OPEN. */
+const setActive = async (c: CohortRecord): Promise<void> => {
+  error.value = '';
+  success.value = '';
+  try {
+    await cohortService.setActive(c.id);
+    success.value = `"${c.name}" kini menjadi gelombang aktif.`;
+    await load();
+  } catch (e) {
+    error.value = extractErrorMessage(e);
+  }
+};
+
 onMounted(load);
 </script>
 
@@ -125,17 +138,28 @@ onMounted(load);
         <button class="btn-primary" @click="openCreate">Tambah</button>
       </div>
 
-      <SkeletonTable v-if="loading" :rows="4" :cols="4" />
+      <SkeletonTable v-if="loading" :rows="4" :cols="5" />
       <table v-else class="table">
-        <thead><tr><th>Nama</th><th>Tahun</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Nama</th><th>Tahun</th><th>Status</th><th>Aktif</th><th></th></tr></thead>
         <tbody>
           <tr v-for="c in cohorts" :key="c.id">
             <td>{{ c.name }}</td>
             <td>{{ c.academicYear ?? '-' }}</td>
             <td><StatusBadge :status="c.status" /></td>
+            <td>
+              <span v-if="c.isActive" class="badge bg-emerald-100 text-emerald-700">Aktif</span>
+              <button
+                v-else-if="c.status === 'OPEN'"
+                class="text-primary-600 hover:underline"
+                @click="setActive(c)"
+              >
+                Jadikan Aktif
+              </button>
+              <span v-else class="text-gray-400">-</span>
+            </td>
             <td class="text-right"><button class="text-primary-600 hover:underline" @click="edit(c)">Edit</button></td>
           </tr>
-          <tr v-if="cohorts.length === 0"><td colspan="4" class="py-4 text-center text-gray-400">Belum ada gelombang.</td></tr>
+          <tr v-if="cohorts.length === 0"><td colspan="5" class="py-4 text-center text-gray-400">Belum ada gelombang.</td></tr>
         </tbody>
       </table>
     </div>

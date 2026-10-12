@@ -42,11 +42,6 @@ router.get(
   validate({ query: listRegistrationQuerySchema }),
   registrationController.list
 );
-router.get(
-  '/grouped',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH),
-  registrationController.grouped
-);
 router.post(
   '/:id/review',
   authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),

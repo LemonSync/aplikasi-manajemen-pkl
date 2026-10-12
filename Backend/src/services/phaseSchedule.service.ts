@@ -1,9 +1,9 @@
-import { StudentPhase } from '@prisma/client';
+import { Role, StudentPhase } from '@prisma/client';
 import { phaseScheduleRepository } from '../repositories/phaseSchedule.repository';
 import { cohortRepository } from '../repositories/cohort.repository';
 import { auditService } from './audit.service';
 import { AUDIT_ACTIONS, ENTITY_TYPES } from '../config/constants';
-import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 
 export interface PhaseScheduleInput {
   phase: StudentPhase;
@@ -18,9 +18,13 @@ export interface PhaseScheduleInput {
  */
 export class PhaseScheduleService {
   /** Ambil semua jadwal fase untuk sebuah gelombang. */
-  async listByCohort(cohortId: string) {
+  async listByCohort(cohortId: string, actor?: { id: string; role: Role; cohortId?: string | null }) {
     const cohort = await cohortRepository.findById(cohortId);
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
+    const staffRoles: Role[] = [Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH];
+    if (!staffRoles.includes(actor?.role as Role) && actor?.cohortId !== cohortId) {
+      throw new ForbiddenError('Jadwal gelombang ini tidak dapat diakses');
+    }
     return phaseScheduleRepository.findByCohort(cohortId);
   }
 
@@ -96,8 +100,8 @@ export class PhaseScheduleService {
   }
 
   /** Jadwal fase + fase aktif untuk dashboard/hint. */
-  async getOverview(cohortId: string) {
-    const schedules = await this.listByCohort(cohortId);
+  async getOverview(cohortId: string, actor?: { id: string; role: Role; cohortId?: string | null }) {
+    const schedules = await this.listByCohort(cohortId, actor);
     const currentPhase = await this.getCurrentPhase(cohortId);
     return { schedules, currentPhase };
   }

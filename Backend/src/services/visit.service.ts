@@ -1,7 +1,6 @@
 import { Prisma, Visit, VisitStatus, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { visitRepository } from '../repositories/visit.repository';
-import { groupRepository } from '../repositories/group.repository';
 import { auditService } from './audit.service';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
@@ -17,33 +16,39 @@ export interface VisitPhotoFile {
 const PHOTO_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png']);
 
 export interface CreateVisitInput {
-  groupId?: string | null;
+  studentId?: string | null;
   companyId?: string | null;
   scheduledAt: string;
   note?: string | null;
 }
 
 /**
- * Service kunjungan/monitoring guru pembimbing (Fase 3).
- * Guru hanya boleh menjadwalkan kunjungan untuk kelompok yang dibimbingnya.
+ * Service kunjungan/monitoring guru pembimbing (Fase 3) — per siswa.
+ * Guru hanya boleh menjadwalkan kunjungan untuk siswa bimbingannya.
  */
 export class VisitService {
   async create(
     supervisorId: string,
     input: CreateVisitInput,
-    ctx: { ipAddress?: string; userAgent?: string }
+    ctx: { ipAddress?: string; userAgent?: string },
+    role?: string
   ) {
-    // Bila menargetkan group, pastikan guru adalah pembimbingnya.
-    if (input.groupId) {
-      const group = await groupRepository.findByIdWithRelations(input.groupId);
-      if (!group) throw new NotFoundError('Kelompok tidak ditemukan');
-      const isSupervisor = group.supervisors.some((s) => s.userId === supervisorId);
-      if (!isSupervisor) throw new ForbiddenError(MESSAGES.VISIT.NOT_SUPERVISOR);
+    // Bila menargetkan siswa, pastikan guru adalah pembimbingnya (admin bebas).
+    if (input.studentId) {
+      const isStaff =
+        role === Role.ADMIN || role === Role.SUPER_ADMIN || role === Role.KEPALA_SEKOLAH;
+      if (!isStaff) {
+        const link = await prisma.studentSupervisor.findUnique({
+          where: { studentId: input.studentId },
+          select: { supervisorId: true },
+        });
+        if (link?.supervisorId !== supervisorId) throw new BadRequestError(MESSAGES.SCOPE);
+      }
     }
 
     const visit = await visitRepository.create({
       supervisor: { connect: { id: supervisorId } },
-      ...(input.groupId ? { group: { connect: { id: input.groupId } } } : {}),
+      ...(input.studentId ? { student: { connect: { id: input.studentId } } } : {}),
       ...(input.companyId ? { company: { connect: { id: input.companyId } } } : {}),
       scheduledAt: new Date(input.scheduledAt),
       note: input.note ?? null,
@@ -54,28 +59,24 @@ export class VisitService {
       action: AUDIT_ACTIONS.CREATE_VISIT,
       entityType: ENTITY_TYPES.VISIT,
       entityId: visit.id,
-      metadata: { groupId: input.groupId ?? null },
+      metadata: { studentId: input.studentId ?? null },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
     });
 
-    // sendMonitoring: umumkan jadwal monitoring ke semua anggota kelompok
-    if (input.groupId) {
-      const members = await prisma.groupMember.findMany({
-        where: { groupId: input.groupId },
-        select: { userId: true },
-      });
+    // sendMonitoring: umumkan jadwal monitoring ke siswa terkait
+    if (input.studentId) {
       const when = new Date(input.scheduledAt).toLocaleDateString('id-ID', {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
       });
-      await prisma.notification.createMany({
-        data: members.map((m) => ({
-          userId: m.userId,
+      await prisma.notification.create({
+        data: {
+          userId: input.studentId,
           title: 'Jadwal Monitoring PKL',
           body: `Guru pembimbing menjadwalkan monitoring pada ${when}.${input.note ? ' Catatan: ' + input.note : ''}`,
           type: 'VISIT_SCHEDULE',
           link: '/pengaduan',
-        })),
+        },
       });
     }
 
@@ -115,6 +116,12 @@ export class VisitService {
     }
     if (!PHOTO_MIME.has(file.mimetype)) {
       throw new BadRequestError('Bukti foto harus berupa gambar JPG atau PNG');
+    }
+    const validSignature = file.mimetype === 'image/png'
+      ? file.buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      : file.buffer[0] === 0xff && file.buffer[1] === 0xd8 && file.buffer[2] === 0xff;
+    if (!validSignature) {
+      throw new BadRequestError('Isi file foto tidak sesuai dengan tipe gambar');
     }
 
     const ext = file.mimetype === 'image/png' ? 'png' : 'jpg';
@@ -182,7 +189,7 @@ export class VisitService {
     return visitRepository.findWithRelations(id);
   }
 
-  /** Ambil bukti foto monitoring — guru/admin, atau siswa anggota kelompoknya. */
+  /** Ambil bukti foto monitoring — guru/admin, atau siswa yang dimonitor. */
   async getPhoto(
     actorId: string,
     id: string,
@@ -192,12 +199,7 @@ export class VisitService {
     if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
 
     if (role === Role.SISWA) {
-      if (!visit.groupId) throw new ForbiddenError(MESSAGES.SCOPE);
-      const member = await prisma.groupMember.findFirst({
-        where: { groupId: visit.groupId, userId: actorId },
-        select: { id: true },
-      });
-      if (!member) throw new ForbiddenError(MESSAGES.SCOPE);
+      if (!visit.studentId || visit.studentId !== actorId) throw new ForbiddenError(MESSAGES.SCOPE);
     } else {
       this.assertAccess(visit, actorId, role);
     }
@@ -219,11 +221,11 @@ export class VisitService {
 
   /** Daftar kunjungan (admin) dengan filter; guru: hanya kunjungan miliknya sendiri. */
   async list(
-    params: { page: number; perPage: number; groupId?: string; supervisorId?: string },
+    params: { page: number; perPage: number; studentId?: string; supervisorId?: string },
     actor?: { id: string; role: string }
   ) {
     const where: Prisma.VisitWhereInput = {
-      ...(params.groupId ? { groupId: params.groupId } : {}),
+      ...(params.studentId ? { studentId: params.studentId } : {}),
       ...(params.supervisorId ? { supervisorId: params.supervisorId } : {}),
     };
     if (actor && actor.role === 'GURU_PEMBIMBING') {

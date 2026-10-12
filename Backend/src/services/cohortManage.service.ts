@@ -1,8 +1,9 @@
 import { CohortStatus, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
-import { NotFoundError } from '../errors/AppError';
+import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { auditService } from './audit.service';
+import { settingService } from './setting.service';
 import { CreateCohortDTO, UpdateCohortDTO } from '../validators/cohort.validator';
 
 /** Status yang dianggap gelombang selesai (ditutup/diarsipkan). */
@@ -108,7 +109,7 @@ export class CohortService {
 
   async list(params: { page: number; perPage: number; status?: string }) {
     const where = params.status ? { status: params.status as never } : {};
-    const [items, total] = await Promise.all([
+    const [items, total, activeId] = await Promise.all([
       prisma.cohort.findMany({
         where,
         skip: (params.page - 1) * params.perPage,
@@ -116,14 +117,73 @@ export class CohortService {
         orderBy: { createdAt: 'desc' },
       }),
       prisma.cohort.count({ where }),
+      this.resolveActiveCohortId(),
     ]);
-    return { items, total };
+    const enriched = items.map((c) => ({ ...c, isActive: c.id === activeId }));
+    return { items: enriched, total };
   }
 
   async getById(id: string) {
     const cohort = await prisma.cohort.findUnique({ where: { id } });
     if (!cohort) throw new NotFoundError(MESSAGES.NOT_FOUND);
-    return cohort;
+    const activeId = await this.resolveActiveCohortId();
+    return { ...cohort, isActive: cohort.id === activeId };
+  }
+
+  /**
+   * Ambil gelombang aktif TANPA validasi status (dipakai internal/enrich list).
+   * Mengembalikan hanya bila gelombangnya ada & tidak dihapus.
+   */
+  private async resolveActiveCohortId(): Promise<string | null> {
+    const id = await settingService.getActiveCohortId();
+    if (!id) return null;
+    const cohort = await prisma.cohort.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
+    return cohort?.id ?? null;
+  }
+
+  /** Gelombang aktif global (untuk gerbang login): ada, tidak dihapus, berstatus OPEN. */
+  async getActiveCohortId(): Promise<string | null> {
+    const id = await this.resolveActiveCohortId();
+    if (!id) return null;
+    const cohort = await prisma.cohort.findFirst({
+      where: { id, status: CohortStatus.OPEN },
+      select: { id: true },
+    });
+    return cohort?.id ?? null;
+  }
+
+  /**
+   * Tetapkan gelombang aktif global. Wajib gelombang valid (ada, tidak
+   * dihapus) dan berstatus OPEN agar siswa-nya bisa login.
+   */
+  async setActive(
+    cohortId: string,
+    actorId?: string,
+    ctx?: { ipAddress?: string; userAgent?: string }
+  ) {
+    const cohort = await prisma.cohort.findFirst({
+      where: { id: cohortId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+    });
+    if (!cohort) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    if (cohort.status !== CohortStatus.OPEN) {
+      throw new BadRequestError('Hanya gelombang berstatus OPEN yang dapat dijadikan gelombang aktif');
+    }
+
+    await settingService.setActiveCohortId(cohort.id, actorId);
+    await auditService.record({
+      actorId,
+      action: AUDIT_ACTIONS.SET_ACTIVE_COHORT,
+      entityType: ENTITY_TYPES.COHORT,
+      entityId: cohort.id,
+      metadata: { name: cohort.name, status: cohort.status },
+      ipAddress: ctx?.ipAddress,
+      userAgent: ctx?.userAgent,
+    });
+    return { ...cohort, isActive: true };
   }
 }
 

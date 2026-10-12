@@ -7,12 +7,10 @@ export interface StudentRegistryRemoveResult {
   fullName: string;
   nisn: string;
   accounts: number;
-  memberRows: number;
   attendance: number;
   journals: number;
   grades: number;
   documents: number;
-  groupMemberships: number;
   registrations: number;
 }
 
@@ -105,31 +103,20 @@ export class StudentRegistryService {
       fullName: row.fullName,
       nisn,
       accounts: userIds.length,
-      memberRows: 0,
       attendance: 0,
       journals: 0,
       grades: 0,
       documents: 0,
-      groupMemberships: 0,
       registrations: 0,
     };
-
-    // Baris anggota pendaftaran: milik akun ini ATAU tercatat via NISN tanpa akun.
-    counts.memberRows = (
-      await prisma.registrationMember.deleteMany({
-        where: { OR: [...(userIds.length ? [{ userId: { in: userIds } }] : []), { nisn }] },
-      })
-    ).count;
 
     for (const uid of userIds) {
       counts.attendance += (await prisma.attendance.deleteMany({ where: { userId: uid } })).count;
       counts.journals += (await prisma.journal.deleteMany({ where: { userId: uid } })).count;
       counts.grades += (await prisma.grade.deleteMany({ where: { studentId: uid } })).count;
       counts.documents += (await prisma.document.deleteMany({ where: { ownerId: uid } })).count;
-      counts.groupMemberships += (await prisma.groupMember.deleteMany({ where: { userId: uid } })).count;
-      // Pendaftaran yang diajukan siswa ini (dia = pengaju) ikut terhapus;
-      // pendaftaran kelompok lain tempat dia hanya anggota TETAP ADA.
-      counts.registrations += (await prisma.registration.deleteMany({ where: { leaderId: uid } })).count;
+      // Pendaftaran yang diajukan siswa ini ikut terhapus.
+      counts.registrations += (await prisma.registration.deleteMany({ where: { studentId: uid } })).count;
     }
 
     // Akun dihapus permanen -> relasi tersisa (StudentProfile + ParentData,

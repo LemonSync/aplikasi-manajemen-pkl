@@ -8,6 +8,7 @@ import routes from './routes';
 import { env } from './config/env';
 import { apiRateLimiter } from './middlewares/rateLimit';
 import { requestId } from './middlewares/requestId';
+import { intrusionDetect } from './middlewares/intrusionDetect';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
 
 /**
@@ -45,6 +46,9 @@ export const createApp = (): Application => {
 
   // Rate limiting
   app.use('/api', apiRateLimiter);
+
+  // Deteksi intrusi / honeypot (mencatat percobaan bypass, balas 404 generik)
+  app.use(intrusionDetect);
 
   // Routes
   app.use('/api', routes);

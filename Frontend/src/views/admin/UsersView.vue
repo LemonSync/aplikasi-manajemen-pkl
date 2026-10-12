@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { userManageService, cohortService, companyService, type UserRecord, type CohortRecord, type StudentPklData } from '@/services/api.service';
+import {
+  userManageService,
+  cohortService,
+  registrationService,
+  documentService,
+  downloadFile,
+  type UserRecord,
+  type CohortRecord,
+  type StudentPklData,
+  type ProvisionStudentsResult,
+} from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
@@ -14,14 +24,11 @@ const TABS = [
   { key: 'SISWA', label: 'Siswa' },
   { key: 'ADMIN', label: 'Admin' },
   { key: 'GURU_PEMBIMBING', label: 'Guru' },
-  { key: 'DUDI', label: 'DUDI' },
-  { key: 'KETUA', label: 'Ketua' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
 const users = ref<UserRecord[]>([]);
 const cohorts = ref<CohortRecord[]>([]);
-const companies = ref<Array<{ id: string; name: string }>>([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
@@ -37,8 +44,8 @@ const cohortFilter = ref('ACTIVE'); // ACTIVE = gelombang aktif (default) | ALL 
 
 const activeUser = (u: UserRecord): boolean => (statusFilter.value === 'AKTIF' ? u.isActive : statusFilter.value === 'NONAKTIF' ? !u.isActive : true);
 
-// Akun tanpa gelombang (staf: ADMIN/GURU/DUDI global) selalu tampil;
-// akun ber-gelombang (SISWA/KETUA) tampil jika cocok dengan pilihan filter gelombang.
+// Akun tanpa gelombang (staf: ADMIN/GURU global) selalu tampil;
+// akun ber-gelombang (SISWA) tampil jika cocok dengan pilihan filter gelombang.
 const inActiveCohort = (u: UserRecord): boolean => {
   if (cohortFilter.value === 'ALL') return true;
   if (cohortFilter.value === 'ACTIVE') return !u.cohortId || u.cohortId === cohortStore.activeCohortId;
@@ -56,8 +63,6 @@ const matchesSearch = (u: UserRecord): boolean => {
     u.studentProfile?.nisn ?? '',
     u.teacherProfile?.fullName ?? '',
     u.teacherProfile?.nip ?? '',
-    u.companyMentor?.fullName ?? '',
-    u.companyMentor?.company?.name ?? '',
   ]
     .join(' ')
     .toLowerCase();
@@ -75,14 +80,12 @@ const baseFiltered = computed(() =>
 );
 
 const counts = computed<Record<TabKey, number>>(() => {
-  const out = { ALL: 0, SISWA: 0, ADMIN: 0, GURU_PEMBIMBING: 0, DUDI: 0, KETUA: 0 } as Record<TabKey, number>;
+  const out = { ALL: 0, SISWA: 0, ADMIN: 0, GURU_PEMBIMBING: 0 } as Record<TabKey, number>;
   for (const u of baseFiltered.value) {
     out.ALL++;
     if (u.role === 'SISWA') out.SISWA++;
     if (u.role === 'ADMIN' || u.role === 'SUPER_ADMIN') out.ADMIN++;
     if (u.role === 'GURU_PEMBIMBING') out.GURU_PEMBIMBING++;
-    if (u.role === 'DUDI') out.DUDI++;
-    if (u.role === 'KETUA') out.KETUA++;
   }
   return out;
 });
@@ -104,33 +107,61 @@ const emptyText = computed(() => {
 });
 
 const userFullName = (u: UserRecord): string =>
-  u.studentProfile?.fullName ?? u.teacherProfile?.fullName ?? u.companyMentor?.fullName ?? '-';
+  u.studentProfile?.fullName ?? u.teacherProfile?.fullName ?? '-';
 
 const showForm = ref(false);
-const form = ref({ username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '', companyId: '' });
-const newAccountResult = ref<{ username: string; password: string } | null>(null);
+const form = ref({ username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '' });
 
 const confirmDelete = ref<UserRecord | null>(null);
 const showResetPassword = ref<UserRecord | null>(null);
 const resetPasswordResult = ref<string | null>(null);
 
-// --- Data PKL siswa (Fase 1 pendaftaran + Fase 2 daftar ulang) ---
+// --- Data PKL siswa (pendaftaran + Fase 2 daftar ulang + pembimbing) ---
 const showStudentData = ref(false);
 const studentData = ref<StudentPklData | null>(null);
 const loadingStudentData = ref(false);
+// ID dokumen Surat Permohonan milik siswa (untuk tombol unduh).
+const permohonanDocId = ref<string | null>(null);
 
 const fmtDate = (v?: string | null): string =>
   v ? new Date(v).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 const fmtDateTime = (v?: string | null): string =>
   v ? new Date(v).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
 
+/**
+ * Cari dokumen Surat Permohonan milik siswa — admin tidak punya endpoint
+ * khusus per siswa, jadi dicocokkan dari daftar pendaftaran & daftar dokumen.
+ */
+const findPermohonanDocId = async (studentId: string): Promise<string | null> => {
+  try {
+    const [regs, docs] = await Promise.all([
+      registrationService.list(),
+      documentService.list(undefined, 'SURAT_PERMOHONAN'),
+    ]);
+    const fromReg = regs.items.find((r) => r.student?.id === studentId)?.document?.id;
+    if (fromReg) return fromReg;
+    const fromDoc = (docs.items as unknown as Array<{ id: string; ownerId?: string }>).find(
+      (d) => d.ownerId === studentId
+    );
+    return fromDoc?.id ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const openStudentData = async (u: UserRecord): Promise<void> => {
   showStudentData.value = true;
   studentData.value = null;
+  permohonanDocId.value = null;
   loadingStudentData.value = true;
   error.value = '';
   try {
-    studentData.value = await userManageService.getStudentData(u.id);
+    const [data, docId] = await Promise.all([
+      userManageService.getStudentData(u.id),
+      findPermohonanDocId(u.id),
+    ]);
+    studentData.value = data;
+    permohonanDocId.value = docId;
   } catch (e) {
     error.value = extractErrorMessage(e);
     showStudentData.value = false;
@@ -141,6 +172,19 @@ const openStudentData = async (u: UserRecord): Promise<void> => {
 const closeStudentData = (): void => {
   showStudentData.value = false;
   studentData.value = null;
+  permohonanDocId.value = null;
+};
+
+const downloadPermohonan = async (): Promise<void> => {
+  if (!permohonanDocId.value) return;
+  try {
+    await downloadFile(
+      `/documents/${permohonanDocId.value}/download`,
+      `surat-permohonan-${studentData.value?.pendaftaran?.code ?? 'pkl'}.pdf`
+    );
+  } catch (e) {
+    error.value = extractErrorMessage(e);
+  }
 };
 
 /** Ambil SEMUA user (backend default 10/halaman) supaya tab & count akurat. */
@@ -158,15 +202,13 @@ const fetchAllUsers = async (): Promise<UserRecord[]> => {
 const load = async (): Promise<void> => {
   loading.value = true;
   try {
-    const [userList, cohortResult, companyResult] = await Promise.all([
+    const [userList, cohortResult] = await Promise.all([
       fetchAllUsers(),
       cohortService.list(),
-      companyService.list(),
       cohortStore.ensureLoaded(),
     ]);
     users.value = userList;
     cohorts.value = cohortResult.items;
-    companies.value = companyResult.items as Array<{ id: string; name: string }>;
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -175,33 +217,18 @@ const load = async (): Promise<void> => {
 };
 
 const submit = async (): Promise<void> => {
-  if (form.value.role === 'KETUA' && !form.value.cohortId) {
-    error.value = 'Gelombang wajib dipilih untuk akun Ketua.';
-    return;
-  }
-  if (form.value.role !== 'KETUA' && (!form.value.username || !form.value.password)) return;
+  if (!form.value.username || !form.value.password) return;
   saving.value = true;
   error.value = '';
   success.value = '';
-  newAccountResult.value = null;
   try {
-    const payload = {
+    await userManageService.create({
       ...form.value,
       cohortId: form.value.cohortId || null,
-      companyId: form.value.role === 'DUDI' ? (form.value.companyId || null) : null,
-      // Untuk KETUA: kosongkan username/password, backend auto-generate
-      username: form.value.role === 'KETUA' ? `KETUA${Date.now()}` : form.value.username,
-      password: form.value.role === 'KETUA' ? 'auto' : form.value.password,
-    };
-    const result = await userManageService.create(payload);
-    if (form.value.role === 'KETUA' && result.username) {
-      newAccountResult.value = { username: result.username, password: result.password ?? '(cek backend)' };
-      success.value = 'Akun Ketua berhasil dibuat.';
-    } else {
-      success.value = 'User berhasil dibuat.';
-    }
+    });
+    success.value = 'User berhasil dibuat.';
     showForm.value = false;
-    form.value = { username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '', companyId: '' };
+    form.value = { username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '' };
     await load();
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -263,6 +290,59 @@ const doResetPassword = async (generateRandom: boolean): Promise<void> => {
   }
 };
 
+// --- Bulk: buat akun siswa dari Master Siswa (per NISN) ---
+const showProvision = ref(false);
+const provisionResult = ref<ProvisionStudentsResult | null>(null);
+
+const activeCohortName = computed(
+  () => cohorts.value.find((c) => c.id === cohortStore.activeCohortId)?.name ?? 'gelombang aktif'
+);
+
+const openProvision = (): void => {
+  provisionResult.value = null;
+  showProvision.value = true;
+};
+
+const doProvision = async (): Promise<void> => {
+  const cohortId = cohortStore.activeCohortId;
+  if (!cohortId) {
+    showProvision.value = false;
+    error.value = 'Tidak ada gelombang aktif. Pilih gelombang dulu di header.';
+    return;
+  }
+  saving.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const result = await userManageService.provisionStudents(cohortId);
+    provisionResult.value = result;
+    success.value = `${result.created.length} akun siswa dibuat.`;
+    await load();
+  } catch (e) {
+    // Tutup modal supaya banner error di halaman terbaca admin.
+    error.value = extractErrorMessage(e);
+    showProvision.value = false;
+  } finally {
+    saving.value = false;
+  }
+};
+
+const copyAccounts = async (): Promise<void> => {
+  if (!provisionResult.value?.created.length) return;
+  const lines = [
+    'NISN\tNama\tUsername\tPassword',
+    ...provisionResult.value.created.map(
+      (c) => `${c.nisn}\t${c.fullName}\t${c.username}\t${c.password}`
+    ),
+  ];
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'));
+    success.value = 'Daftar akun disalin ke clipboard.';
+  } catch {
+    error.value = 'Gagal menyalin ke clipboard.';
+  }
+};
+
 onMounted(load);
 </script>
 
@@ -271,7 +351,10 @@ onMounted(load);
     <div class="card">
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-800">Manajemen User</h2>
-        <button class="btn-primary" @click="showForm = true">Tambah User</button>
+        <div class="flex items-center gap-2">
+          <button class="btn-secondary" @click="openProvision">Buat Akun dari Master Siswa</button>
+          <button class="btn-primary" @click="showForm = true">Tambah User</button>
+        </div>
       </div>
       <div v-if="error" class="mb-3 mt-3 bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       <div v-if="success" class="mb-3 mt-3 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
@@ -283,54 +366,108 @@ onMounted(load);
         <div><label class="label">Role</label>
           <select v-model="form.role" class="input">
             <option value="SISWA">Siswa</option>
-            <option value="KETUA">Ketua Kelompok</option>
-            <option value="GURU_PEMBIMBING">Guru</option>
+            <option value="GURU_PEMBIMBING">Guru Pembimbing</option>
             <option value="ADMIN">Admin</option>
-            <option value="DUDI">DUDI</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
+            <option value="KEPALA_SEKOLAH">Kepala Sekolah</option>
           </select>
         </div>
-        <template v-if="form.role !== 'KETUA'">
-          <div><label class="label">Username</label><input v-model="form.username" class="input" /></div>
-          <div><label class="label">Password</label><input v-model="form.password" type="password" class="input" /></div>
-          <div><label class="label">Nama Lengkap</label><input v-model="form.fullName" class="input" /></div>
-          <div v-if="form.role === 'SISWA'"><label class="label">NISN</label><input v-model="form.nisn" class="input" /></div>
-          <div v-if="form.role === 'GURU_PEMBIMBING'"><label class="label">NIP</label><input v-model="form.nip" class="input" /></div>
-          <div v-if="form.role === 'SISWA'"><label class="label">Gelombang</label>
-            <select v-model="form.cohortId" class="input">
-              <option value="">— Pilih —</option>
-              <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
-          </div>
-          <div v-if="form.role === 'DUDI'"><label class="label">Perusahaan</label>
-            <select v-model="form.companyId" class="input">
-              <option value="">— Pilih —</option>
-              <option v-for="c in companies" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
-          </div>
-        </template>
-        <div v-if="form.role === 'KETUA'" class="sm:col-span-2">
-          <p class="mb-3 bg-blue-50 px-3 py-2 text-sm text-blue-700">
-            Kredensial dibuat otomatis — berikan ke siswa setelah akun dibuat.
-          </p>
-          <div>
-            <label class="label">Gelombang</label>
-            <select v-model="form.cohortId" class="input" required>
-              <option value="">— Pilih —</option>
-              <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
-          </div>
+        <div><label class="label">Username</label><input v-model="form.username" class="input" /></div>
+        <div><label class="label">Password</label><input v-model="form.password" type="password" class="input" /></div>
+        <div><label class="label">Nama Lengkap</label><input v-model="form.fullName" class="input" /></div>
+        <div v-if="form.role === 'SISWA'"><label class="label">NISN</label><input v-model="form.nisn" class="input" /></div>
+        <div v-if="form.role === 'GURU_PEMBIMBING'"><label class="label">NIP</label><input v-model="form.nip" class="input" /></div>
+        <div v-if="form.role === 'SISWA'"><label class="label">Gelombang</label>
+          <select v-model="form.cohortId" class="input">
+            <option value="">— Pilih —</option>
+            <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
         </div>
       </div>
       <template #footer>
         <button class="btn-secondary" :disabled="saving" @click="showForm = false">Batal</button>
         <button
           class="btn-primary"
-          :disabled="saving || (form.role !== 'KETUA' && (!form.username || !form.password))"
+          :disabled="saving || !form.username || !form.password"
           @click="submit"
         >
           <LoadingSpinner v-if="saving" inline />
           {{ saving ? 'Menyimpan…' : 'Simpan' }}
         </button>
+      </template>
+    </Modal>
+
+    <!-- Modal Buat Akun dari Master Siswa (bulk per NISN) -->
+    <Modal :open="showProvision" title="Buat Akun dari Master Siswa" size="xl" :busy="saving" @close="showProvision = false">
+      <template v-if="!provisionResult">
+        <div class="space-y-2 text-sm text-gray-700">
+          <p>
+            Buat akun <b>Siswa</b> untuk semua baris <b>Master Siswa</b> gelombang aktif
+            (<b>{{ activeCohortName }}</b>) yang belum punya akun.
+          </p>
+          <ul class="list-disc space-y-1 pl-5">
+            <li>Username = NISN, password acak ditampilkan sekali setelah pembuatan.</li>
+            <li>Siswa diwajibkan mengganti password saat login pertama.</li>
+            <li>Baris master yang sudah punya akun akan dilewati.</li>
+          </ul>
+        </div>
+      </template>
+      <template v-else>
+        <div class="space-y-4 text-sm">
+          <p class="text-gray-800">
+            Berhasil membuat <b>{{ provisionResult.created.length }}</b> akun dari
+            {{ provisionResult.total }} baris master
+            <span v-if="provisionResult.skipped.length">
+              · {{ provisionResult.skipped.length }} dilewati</span
+            ><span v-if="provisionResult.classBackfilled">
+              · {{ provisionResult.classBackfilled }} kelas terisi</span
+            >.
+            <b>Catat/salin password sekarang — hanya ditampilkan sekali.</b>
+          </p>
+          <div v-if="provisionResult.created.length" class="overflow-x-auto rounded border border-gray-200">
+            <table class="min-w-full text-left text-xs">
+              <thead class="bg-gray-50 text-gray-500">
+                <tr>
+                  <th class="px-3 py-2">NISN</th>
+                  <th class="px-3 py-2">Nama</th>
+                  <th class="px-3 py-2">Username</th>
+                  <th class="px-3 py-2">Password</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr v-for="c in provisionResult.created" :key="c.userId">
+                  <td class="px-3 py-1.5 font-mono">{{ c.nisn }}</td>
+                  <td class="px-3 py-1.5">{{ c.fullName }}</td>
+                  <td class="px-3 py-1.5 font-mono">{{ c.username }}</td>
+                  <td class="px-3 py-1.5 font-mono">{{ c.password }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="provisionResult.skipped.length" class="rounded border border-amber-200 bg-amber-50 p-3">
+            <p class="mb-1 font-medium text-amber-800">Dilewati:</p>
+            <ul class="space-y-0.5 text-xs text-amber-800">
+              <li v-for="s in provisionResult.skipped" :key="s.nisn">
+                <span class="font-mono">{{ s.nisn }}</span> — {{ s.fullName }} ({{ s.reason }})
+              </li>
+            </ul>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <template v-if="!provisionResult">
+          <button class="btn-secondary" :disabled="saving" @click="showProvision = false">Batal</button>
+          <button class="btn-primary" :disabled="saving" @click="doProvision">
+            <LoadingSpinner v-if="saving" inline />
+            {{ saving ? 'Membuat akun…' : 'Buat Akun' }}
+          </button>
+        </template>
+        <template v-else>
+          <button class="btn-secondary" @click="showProvision = false">Tutup</button>
+          <button class="btn-primary" :disabled="!provisionResult.created.length" @click="copyAccounts">
+            Salin Semua
+          </button>
+        </template>
       </template>
     </Modal>
 
@@ -344,7 +481,7 @@ onMounted(load);
             v-model="search"
             class="input pl-9"
             type="search"
-            placeholder="Cari username, nama, NISN/NIP, atau perusahaan…"
+            placeholder="Cari username, nama, NISN, atau NIP…"
           />
           <AppIcon name="search" :size="16" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         </div>
@@ -389,14 +526,12 @@ onMounted(load);
 
       <div v-if="loading" class="loading" />
       <table v-else class="table">
-        <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Username</th><th>Nama</th><th>Kelas</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead>
         <tbody>
           <tr v-for="u in filteredUsers" :key="u.id">
-            <td>
-              <span class="font-mono">{{ u.username }}</span>
-              <p v-if="u.companyMentor" class="text-xs text-gray-400">{{ u.companyMentor.company?.name ?? '' }}</p>
-            </td>
+            <td class="font-mono">{{ u.username }}</td>
             <td>{{ userFullName(u) }}</td>
+            <td>{{ u.studentProfile?.class?.name ?? '-' }}</td>
             <td>{{ u.role }}</td>
             <td><StatusBadge :status="u.isActive ? 'AKTIF' : 'NONAKTIF'" /></td>
             <td class="flex gap-2">
@@ -406,7 +541,7 @@ onMounted(load);
               <button class="text-sm text-red-600 hover:underline" @click="askDelete(u)">Hapus</button>
             </td>
           </tr>
-          <tr v-if="!loading && filteredUsers.length === 0"><td colspan="5" class="py-4 text-center text-gray-400">{{ emptyText }}</td></tr>
+          <tr v-if="!loading && filteredUsers.length === 0"><td colspan="6" class="py-4 text-center text-gray-400">{{ emptyText }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -414,7 +549,7 @@ onMounted(load);
     <!-- Modal Data PKL Siswa -->
     <Modal :open="!!showStudentData" title="Data PKL Siswa" size="xl" @close="closeStudentData">
       <p v-if="studentData" class="mb-4 text-sm text-gray-500">
-        {{ studentData.fase2?.profile.fullName ?? studentData.fase1?.member.fullName ?? studentData.user.username }}
+        {{ studentData.fase2?.profile.fullName ?? studentData.user.username }}
         <span class="font-mono">({{ studentData.user.username }})</span>
       </p>
 
@@ -429,43 +564,36 @@ onMounted(load);
             <span>Login terakhir: <strong>{{ fmtDateTime(studentData.user.lastLoginAt) }}</strong></span>
           </div>
 
-          <!-- FASE 1 -->
+          <!-- PENDAFTARAN (per siswa) -->
           <section>
-            <h4 class="mb-2 font-semibold text-gray-800">Fase 1 — Pendaftaran Awal</h4>
-            <p v-if="!studentData.fase1" class="bg-gray-50 px-3 py-2 text-sm text-gray-500">
-              Belum ada data Fase 1.
+            <h4 class="mb-2 font-semibold text-gray-800">Pendaftaran</h4>
+            <p v-if="!studentData.pendaftaran" class="bg-gray-50 px-3 py-2 text-sm text-gray-500">
+              Belum ada pendaftaran.
             </p>
             <div v-else class="space-y-3">
               <div class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg bg-gray-50 p-3 text-sm sm:grid-cols-2">
-                <span>Kode pendaftaran: <strong>{{ studentData.fase1.registration.code }}</strong></span>
-                <span class="flex items-center gap-2">Status: <StatusBadge :status="studentData.fase1.registration.status" /></span>
-                <span>Kelompok: <strong>{{ studentData.fase1.registration.groupName }}</strong></span>
-                <span>Gelombang: <strong>{{ studentData.fase1.registration.cohort?.name ?? '-' }}</strong></span>
-                <span>Diajukan: <strong>{{ fmtDate(studentData.fase1.registration.submittedAt) }}</strong></span>
-                <span>Bidang industri: <strong>{{ studentData.fase1.registration.company.industry ?? '-' }}</strong></span>
-                <span class="sm:col-span-2">
-                  Perusahaan: <strong>{{ studentData.fase1.registration.company.name }}</strong>
-                  — {{ studentData.fase1.registration.company.address }}<template v-if="studentData.fase1.registration.company.city">, {{ studentData.fase1.registration.company.city }}</template>
-                  <template v-if="studentData.fase1.registration.company.phone"> (Telp: {{ studentData.fase1.registration.company.phone }})</template>
+                <span>Kode: <strong class="font-mono">{{ studentData.pendaftaran.code }}</strong></span>
+                <span class="flex items-center gap-2">Status: <StatusBadge :status="studentData.pendaftaran.status" /></span>
+                <span>Gelombang: <strong>{{ studentData.pendaftaran.cohort?.name ?? '-' }}</strong></span>
+                <span>Jurusan: <strong>{{ studentData.pendaftaran.majorName ?? '-' }}</strong></span>
+                <span>Diajukan: <strong>{{ fmtDate(studentData.pendaftaran.submittedAt) }}</strong></span>
+                <span>
+                  Surat Permohonan:
+                  <strong>{{ studentData.pendaftaran.permohonanDownloadedAt ? 'sudah diunduh' : 'belum diunduh' }}</strong>
                 </span>
+                <span v-if="studentData.pendaftaran.company" class="sm:col-span-2">
+                  Perusahaan: <strong>{{ studentData.pendaftaran.company.name }}</strong>
+                  — {{ studentData.pendaftaran.company.address }}<template v-if="studentData.pendaftaran.company.city">, {{ studentData.pendaftaran.company.city }}</template>
+                  <template v-if="studentData.pendaftaran.company.phone"> (Telp: {{ studentData.pendaftaran.company.phone }})</template>
+                </span>
+                <span v-else class="sm:col-span-2">Perusahaan: <strong>-</strong></span>
               </div>
 
-              <div>
-                <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Anggota Kelompok &amp; No. HP (diisi di form Fase 1)</p>
-                <table class="table">
-                  <thead><tr><th>Nama</th><th>NISN</th><th>Kelas</th><th>No. HP</th></tr></thead>
-                  <tbody>
-                    <tr v-for="(m, i) in studentData.fase1.members" :key="i" :class="m.isLeader ? 'bg-amber-50' : ''">
-                      <td>
-                        {{ m.fullName }}
-                        <span v-if="m.isLeader" class="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Ketua</span>
-                      </td>
-                      <td class="font-mono">{{ m.nisn ?? '-' }}</td>
-                      <td>{{ m.className ?? '-' }}</td>
-                      <td class="font-mono">{{ m.phone ?? '-' }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="flex flex-wrap items-center gap-2">
+                <button v-if="permohonanDocId" class="btn-secondary" @click="downloadPermohonan">
+                  Unduh Surat Permohonan
+                </button>
+                <span v-else class="text-xs text-gray-400">Surat Permohonan belum ditemukan.</span>
               </div>
             </div>
           </section>
@@ -505,14 +633,15 @@ onMounted(load);
             </div>
           </section>
 
-          <!-- KELOMPOK (setelah surat penerimaan disetujui) -->
-          <section v-if="studentData.group">
-            <h4 class="mb-2 font-semibold text-gray-800">Kelompok PKL</h4>
-            <div class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg bg-emerald-50 p-3 text-sm sm:grid-cols-2">
-              <span>Kode: <strong>{{ studentData.group.code }}</strong></span>
-              <span>Nama: <strong>{{ studentData.group.name }}</strong></span>
-              <span>Perusahaan: <strong>{{ studentData.group.company?.name ?? '-' }}</strong></span>
-              <span>Akun DUDI: <strong class="font-mono">{{ studentData.group.dudiMentors[0]?.dudi.username ?? '-' }}</strong></span>
+          <!-- PEMBIMBING -->
+          <section>
+            <h4 class="mb-2 font-semibold text-gray-800">Pembimbing</h4>
+            <p v-if="!studentData.pembimbing" class="bg-gray-50 px-3 py-2 text-sm text-gray-500">
+              Belum ada guru pembimbing.
+            </p>
+            <div v-else class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg bg-emerald-50 p-3 text-sm sm:grid-cols-2">
+              <span>Nama: <strong>{{ studentData.pembimbing.supervisorName }}</strong></span>
+              <span>Sejak: <strong>{{ fmtDateTime(studentData.pembimbing.assignedAt) }}</strong></span>
             </div>
           </section>
         </div>
@@ -540,24 +669,6 @@ onMounted(load);
           <LoadingSpinner v-if="saving" inline />
           {{ saving ? 'Generating…' : 'Generate Random' }}
         </button>
-      </template>
-    </Modal>
-
-    <!-- Modal Kredensial KETUA Baru -->
-    <Modal :open="!!newAccountResult" title="Akun Ketua Dibuat" size="sm" @close="newAccountResult = null">
-      <div class="bg-emerald-50 p-4 space-y-2">
-        <div>
-          <p class="text-xs text-emerald-600">Username:</p>
-          <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult?.username }}</p>
-        </div>
-        <div>
-          <p class="text-xs text-emerald-600">Password:</p>
-          <p class="font-mono text-lg font-bold text-emerald-700">{{ newAccountResult?.password }}</p>
-        </div>
-      </div>
-      <p class="mt-3 text-xs text-gray-500">Siswa diminta ganti password saat login pertama.</p>
-      <template #footer>
-        <button class="btn-primary" @click="newAccountResult = null">Tutup</button>
       </template>
     </Modal>
 

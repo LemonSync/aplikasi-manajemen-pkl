@@ -25,9 +25,23 @@ export const signRefreshToken = (payload: JwtRefreshPayload): string => {
 };
 
 export const verifyAccessToken = (token: string): JwtAccessPayload => {
-  return jwt.verify(token, env.JWT_ACCESS_SECRET) as JwtAccessPayload;
+  const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET);
+  if (!decoded || typeof decoded !== 'object' || typeof decoded.sub !== 'string') {
+    throw new Error('Invalid access token claims');
+  }
+  if (!Object.values(Role).includes(decoded.role as Role)) {
+    throw new Error('Invalid access token role');
+  }
+  if (decoded.phase !== undefined && decoded.phase !== null && !Object.values(StudentPhase).includes(decoded.phase as StudentPhase)) {
+    throw new Error('Invalid access token phase');
+  }
+  return decoded as JwtAccessPayload;
 };
 
 export const verifyRefreshToken = (token: string): JwtRefreshPayload => {
-  return jwt.verify(token, env.JWT_REFRESH_SECRET) as JwtRefreshPayload;
+  const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET);
+  if (!decoded || typeof decoded !== 'object' || typeof decoded.sub !== 'string' || typeof decoded.jti !== 'string') {
+    throw new Error('Invalid refresh token claims');
+  }
+  return decoded as JwtRefreshPayload;
 };

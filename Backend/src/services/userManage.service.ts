@@ -1,10 +1,11 @@
 import { prisma } from '../config/prisma';
-import { DocumentType, RegistrationStatus } from '@prisma/client';
+import { DocumentType, RegistrationStatus, Role } from '@prisma/client';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { encryptCredential } from '../utils/credentialCipher';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
-import { MESSAGES } from '../config/constants';
-import { autoAssignDudiMentors } from './dudiAssignment.service';
+import { MESSAGES, AUDIT_ACTIONS, ENTITY_TYPES } from '../config/constants';
+import { auditService } from './audit.service';
+import { resolveOrCreateClass, classNameWithFallback } from './classResolver.service';
 import { CreateUserDTO, UpdateUserDTO, ResetPasswordDTO } from '../validators/user.validator';
 
 /**
@@ -12,25 +13,12 @@ import { CreateUserDTO, UpdateUserDTO, ResetPasswordDTO } from '../validators/us
  */
 export class UserManageService {
   async create(dto: CreateUserDTO) {
-    // Untuk KETUA: auto-generate username & password
-    let username = dto.username;
-    let plainPassword = dto.password;
+    const username = dto.username;
+    const plainPassword = dto.password;
 
-    if (dto.role === 'KETUA') {
-      // Generate username unik
-      let counter = 1;
-      username = `KETUA${String(counter).padStart(3, '0')}`;
-      while (await prisma.user.findFirst({ where: { username } })) {
-        counter++;
-        username = `KETUA${String(counter).padStart(3, '0')}`;
-      }
-      // Generate password random
-      plainPassword = generateRandomPassword();
-    } else {
-      // Validasi username & password untuk role lain
-      if (!username || !plainPassword) {
-        throw new BadRequestError('Username dan password wajib diisi');
-      }
+    // Validasi username & password
+    if (!username || !plainPassword) {
+      throw new BadRequestError('Username dan password wajib diisi');
     }
 
     const existing = await prisma.user.findFirst({
@@ -53,8 +41,6 @@ export class UserManageService {
     });
 
     // Buat profil berdasarkan role
-    // KETUA adalah akun kerja sementara, bukan identitas siswa. Profil siswa
-    // hanya dibuat saat provisioning anggota (termasuk siswa ketua kelompok).
     if (dto.role === 'SISWA' && dto.fullName && dto.nisn) {
       await prisma.studentProfile.create({
         data: {
@@ -77,31 +63,122 @@ export class UserManageService {
       });
     }
 
-    // DUDI: link ke perusahaan via companyMentor
-    if (dto.role === 'DUDI' && dto.companyId) {
-      await prisma.companyMentor.create({
-        data: {
-          userId: user.id,
-          companyId: dto.companyId,
-          fullName: dto.fullName || dto.username,
-        },
-      });
+    return user;
+  }
 
-      // Otomatis tugaskan ke kelompok aktif perusahaan ini (jika sudah ada)
-      const companyGroups = await prisma.group.findMany({
-        where: { companyId: dto.companyId, deletedAt: null, status: { not: 'DIBUBARKAN' } },
-        select: { id: true },
+  /**
+   * Bulk: buat akun siswa dari baris Master Siswa (StudentRegistry) satu gelombang.
+   * - Username = NISN, password acak dihasilkan sekali (disimpan terenkripsi di
+   *   InitialCredential selama akun masih wajib ganti password).
+   * - Baris master yang sudah punya akun (atau pernah punya, kini terhapus)
+   *   dilewati dan dilaporkan beserta alasannya.
+   * - Kelas dari Master Siswa ("XII-RPL-2") dipetakan ke baris Class
+   *   ("XII RPL 2") dan diisi ke StudentProfile.classId; akun lama yang
+   *   classId-nya masih null ikut di-backfill saat tombol dijalankan ulang.
+   */
+  async createStudentsFromRegistry(
+    cohortId: string,
+    actorId: string,
+    ctx: { ipAddress?: string; userAgent?: string }
+  ) {
+    const cohort = await prisma.cohort.findUnique({ where: { id: cohortId }, select: { name: true } });
+    if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
+
+    const rows = await prisma.studentRegistry.findMany({
+      where: { cohortId, isActive: true },
+      orderBy: { nisn: 'asc' },
+    });
+    if (!rows.length) throw new BadRequestError('Master siswa gelombang ini masih kosong');
+
+    const created: Array<{
+      userId: string;
+      username: string;
+      nisn: string;
+      fullName: string;
+      password: string;
+    }> = [];
+    const skipped: Array<{ nisn: string; fullName: string; reason: string }> = [];
+    let classBackfilled = 0;
+
+    for (const row of rows) {
+      const existing = await prisma.user.findFirst({
+        where: { OR: [{ username: row.nisn }, { studentProfile: { nisn: row.nisn } }] },
+        select: { id: true, deletedAt: true, studentProfile: { select: { id: true, classId: true } } },
       });
-      for (const group of companyGroups) {
-        await autoAssignDudiMentors(group.id, dto.companyId);
+      if (existing) {
+        skipped.push({
+          nisn: row.nisn,
+          fullName: row.fullName,
+          reason: existing.deletedAt ? 'pernah punya akun (terhapus)' : 'sudah punya akun',
+        });
+        // Backfill kelas untuk akun lama yang classId-nya masih null.
+        if (!existing.deletedAt && existing.studentProfile && !existing.studentProfile.classId) {
+          const backfillClassId = await resolveOrCreateClass(cohortId, row.className);
+          if (backfillClassId) {
+            await prisma.studentProfile.update({
+              where: { id: existing.studentProfile.id },
+              data: { classId: backfillClassId },
+            });
+            classBackfilled++;
+          }
+        }
+        continue;
+      }
+
+      const classId = await resolveOrCreateClass(cohortId, row.className);
+      const password = generateRandomPassword();
+      const passwordHash = await hashPassword(password);
+      try {
+        const user = await prisma.$transaction(async (tx) => {
+          const u = await tx.user.create({
+            data: {
+              username: row.nisn,
+              identifier: row.nisn,
+              passwordHash,
+              role: Role.SISWA,
+              cohortId,
+              phase: 'PRA_PKL',
+              mustChangePassword: true,
+            },
+            select: { id: true, username: true },
+          });
+          await tx.studentProfile.create({
+            data: { userId: u.id, fullName: row.fullName, nisn: row.nisn, majorId: row.majorId, classId },
+          });
+          await tx.initialCredential.upsert({
+            where: { userId: u.id },
+            create: { userId: u.id, encryptedPassword: encryptCredential(password) },
+            update: { encryptedPassword: encryptCredential(password) },
+          });
+          return u;
+        });
+        created.push({
+          userId: user.id,
+          username: user.username,
+          nisn: row.nisn,
+          fullName: row.fullName,
+          password,
+        });
+      } catch (err) {
+        skipped.push({
+          nisn: row.nisn,
+          fullName: row.fullName,
+          reason: `gagal dibuat: ${(err as Error).message?.slice(0, 90) ?? 'unknown'}`,
+        });
       }
     }
 
-    // Untuk KETUA, kembalikan plain password agar admin bisa berikan ke siswa
-    if (dto.role === 'KETUA') {
-      return { ...user, password: plainPassword };
-    }
-    return user;
+    await auditService.record({
+      actorId,
+      action: AUDIT_ACTIONS.CREATE_USER,
+      entityType: ENTITY_TYPES.COHORT,
+      entityId: cohortId,
+      metadata: { bulk: 'MASTER_SISWA', cohortName: cohort.name, total: rows.length, created: created.length, skipped: skipped.length, classBackfilled },
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+    });
+
+    return { total: rows.length, created, skipped, classBackfilled };
   }
 
   async update(id: string, dto: UpdateUserDTO) {
@@ -130,12 +207,8 @@ export class UserManageService {
         take: params.perPage,
         orderBy: { createdAt: 'desc' },
         include: {
-          studentProfile: true,
+          studentProfile: { include: { class: { select: { name: true } } } },
           teacherProfile: true,
-          // DUDI: nama mentor + perusahaan agar tampil & bisa dicari di Manajemen User
-          companyMentor: {
-            select: { fullName: true, company: { select: { name: true } } },
-          },
         },
       }),
       prisma.user.count({ where }),
@@ -146,7 +219,7 @@ export class UserManageService {
   async getById(id: string) {
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { studentProfile: true, teacherProfile: true, companyMentor: true },
+      include: { studentProfile: true, teacherProfile: true },
     });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
     return user;
@@ -154,10 +227,9 @@ export class UserManageService {
 
   /**
    * Data PKL siswa untuk Admin (Manajemen User).
-   * - Fase 1: pendaftaran awal — kelompok, perusahaan, no. HP anggota (diisi di form pra-pendaftaran).
-   * - Fase 2: daftar ulang — profil siswa, data orang tua, status Surat Pernyataan.
-   * Akun siswa baru dibuat saat Fase 2, jadi baris data di bawah hanya ada
-   * untuk siswa yang sudah melalui pendaftaran (bagian kosong dikembalikan null).
+   * - Pendaftaran: pendaftaran milik siswa + perusahaan tujuan.
+   * - Fase 2: profil siswa, data orang tua, status Surat Pernyataan.
+   * - Pembimbing: guru pembimbing yang menaungi siswa ini.
    */
   async getStudentData(id: string) {
     const user = await prisma.user.findUnique({
@@ -190,42 +262,22 @@ export class UserManageService {
     });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
 
-    const membership = await prisma.registrationMember.findFirst({
-      where: { userId: id, registration: { deletedAt: null } },
-      orderBy: { registration: { createdAt: 'desc' } },
+    const registration = await prisma.registration.findFirst({
+      where: { studentId: id, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
       include: {
-        registration: {
-          select: {
-            code: true,
-            status: true,
-            groupName: true,
-            createdAt: true,
-            submittedAt: true,
-            companyName: true,
-            companyAddress: true,
-            companyPhone: true,
-            companyCity: true,
-            companyIndustry: true,
-            cohort: { select: { name: true, academicYear: true } },
-            members: {
-              select: { fullName: true, nisn: true, className: true, phone: true, isLeader: true },
-              orderBy: { createdAt: 'asc' },
-            },
-          },
-        },
+        company: { include: { industry: { select: { name: true } } } },
+        major: { select: { name: true } },
+        cohort: { select: { name: true, academicYear: true } },
       },
     });
 
-    const group = await prisma.group.findFirst({
-      where: { members: { some: { userId: id } }, deletedAt: null },
+    const supervision = await prisma.studentSupervisor.findUnique({
+      where: { studentId: id },
       select: {
-        name: true,
-        code: true,
-        status: true,
-        company: { select: { name: true } },
-        dudiMentors: {
-          where: { isPrimary: true },
-          select: { dudi: { select: { username: true } } },
+        assignedAt: true,
+        supervisor: {
+          select: { username: true, teacherProfile: { select: { fullName: true } } },
         },
       },
     });
@@ -237,6 +289,8 @@ export class UserManageService {
     });
 
     const profile = user.studentProfile;
+    // Kelas: preferensi Class.name, fallback ke Master Siswa (NISN).
+    const registryClassName = await classNameWithFallback(profile);
     return {
       user: {
         id: user.id,
@@ -250,30 +304,23 @@ export class UserManageService {
         createdAt: user.createdAt,
         cohort: user.cohort,
       },
-      fase1: membership
+      pendaftaran: registration
         ? {
-            registration: {
-              code: membership.registration.code,
-              status: membership.registration.status,
-              groupName: membership.registration.groupName,
-              submittedAt: membership.registration.submittedAt,
-              cohort: membership.registration.cohort,
-              company: {
-                name: membership.registration.companyName,
-                address: membership.registration.companyAddress,
-                phone: membership.registration.companyPhone,
-                city: membership.registration.companyCity,
-                industry: membership.registration.companyIndustry,
-              },
-            },
-            member: {
-              fullName: membership.fullName,
-              nisn: membership.nisn,
-              className: membership.className,
-              phone: membership.phone,
-              isLeader: membership.isLeader,
-            },
-            members: membership.registration.members,
+            code: registration.code,
+            status: registration.status,
+            submittedAt: registration.submittedAt,
+            permohonanDownloadedAt: registration.permohonanDownloadedAt,
+            cohort: registration.cohort,
+            majorName: registration.major?.name ?? null,
+            company: registration.company
+              ? {
+                  name: registration.company.name,
+                  address: registration.company.address,
+                  phone: registration.company.phone,
+                  city: registration.company.city,
+                  industry: registration.company.industry?.name ?? null,
+                }
+              : null,
           }
         : null,
       fase2: profile
@@ -285,14 +332,21 @@ export class UserManageService {
               address: profile.address,
               gender: profile.gender,
               birthDate: profile.birthDate,
-              className: profile.class?.name ?? null,
+              className: registryClassName,
               majorName: profile.major?.name ?? null,
             },
             parentData: profile.parentData,
             pernyataan,
           }
         : null,
-      group,
+      pembimbing: supervision
+        ? {
+            supervisorName:
+              supervision.supervisor.teacherProfile?.fullName ??
+              supervision.supervisor.username,
+            assignedAt: supervision.assignedAt,
+          }
+        : null,
     };
   }
 
@@ -300,8 +354,8 @@ export class UserManageService {
    * Hapus akun user (soft delete — disembunyikan & tidak bisa login).
    * Aturan:
    *  - Tidak boleh menghapus diri sendiri.
-   *  - Hanya role SISWA, GURU_PEMBIMBING, DUDI yang boleh dihapus (admin & super_admin dilindungi).
-   *  - Pendaftaran yang dipimpin user & belum membentuk kelompok ikut dinonaktifkan.
+   *  - Admin & super_admin dilindungi.
+   *  - Pendaftaran milik user yang belum selesai ikut dinonaktifkan.
    */
   async delete(id: string, actorId: string) {
     if (id === actorId) {
@@ -320,12 +374,9 @@ export class UserManageService {
     // (auth mengecek deletedAt), tetapi data terkait — absensi, jurnal,
     // nilai, dokumen, surat — TETAP tersimpan di database.
     //
-    // Pendaftaran yang dipimpin user ini IKUT dinonaktifkan bila belum
-    // membentuk kelompok: pendaftaran yatim (ketua dihapus) akan terus
-    // mengikat NISN anggota lewat assertMembersFree sehingga NISN tidak
-    // bisa didaftarkan ulang oleh ketua baru, padahal di halaman Kelompok
-    // tidak ada kelompoknya. Pendaftaran yang SUDAH menjadi kelompok tetap
-    // dipertahankan (Group.registration menunjuk ke sana).
+    // Pendaftaran milik user ini IKUT dinonaktifkan bila belum selesai
+    // (DRAFT/DIAJUKAN/DISETUJUI) supaya tidak menggantung setelah akun
+    // siswa dinonaktifkan.
     const [, orphanedRegs] = await prisma.$transaction([
       prisma.user.update({
         where: { id },
@@ -333,9 +384,8 @@ export class UserManageService {
       }),
       prisma.registration.updateMany({
         where: {
-          leaderId: id,
+          studentId: id,
           deletedAt: null,
-          group: null,
           status: {
             in: [
               RegistrationStatus.DRAFT,
@@ -369,8 +419,8 @@ export class UserManageService {
       where: { id },
       data: { passwordHash, mustChangePassword: true },
     });
-    // Simpan versi terenkripsi agar ketua pengaju dapat membagikan ulang
-    // kredensial akun siswa yang diprovisioning.
+    // Simpan versi terenkripsi agar password awal tetap bisa ditampilkan
+    // oleh admin selama akun masih wajib mengganti password.
     await prisma.initialCredential.upsert({
       where: { userId: id },
       create: { userId: id, encryptedPassword: encryptCredential(plainPassword) },

@@ -13,7 +13,7 @@ import {
 } from '../validators/phase3.validator';
 
 /**
- * Router jurnal kegiatan — prefix /api/journals
+ * Router jurnal kegiatan — prefix /api/journals (per siswa, tanpa kelompok PKL)
  */
 const router = Router();
 
@@ -37,15 +37,18 @@ router.patch(
   journalController.update
 );
 
-router.get('/dudi', authorizeRoles(Role.DUDI), validate({ query: listJournalQuerySchema }), journalController.dudiList);
-router.post('/:id/dudi-verify', authorizeRoles(Role.DUDI), validate({ body: verifyJournalSchema }), journalController.dudiVerify);
-
-// --- Guru pembimbing ---
+// --- Guru pembimbing / admin: catatan & pengesahan jurnal siswa bimbingan ---
 router.post(
   '/:id/supervisor-note',
   authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
   validate({ body: supervisorNoteSchema }),
   journalController.supervisorNote
+);
+router.post(
+  '/:id/verify',
+  authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
+  validate({ body: verifyJournalSchema }),
+  journalController.verify
 );
 
 // --- Admin / Guru / Kepsek ---

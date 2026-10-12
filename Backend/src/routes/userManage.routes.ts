@@ -3,12 +3,20 @@ import { Role } from '@prisma/client';
 import { userManageController } from '../controllers/userManage.controller';
 import { authenticate, authorizeRoles } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
-import { createUserSchema, updateUserSchema, resetPasswordSchema, listUserQuerySchema } from '../validators/user.validator';
+import {
+  createUserSchema,
+  updateUserSchema,
+  resetPasswordSchema,
+  listUserQuerySchema,
+  provisionStudentsSchema,
+} from '../validators/user.validator';
 
 const router = Router();
 router.use(authenticate);
 
 router.post('/', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN), validate({ body: createUserSchema }), userManageController.create);
+// Bulk akun siswa dari Master Siswa — diletakkan sebelum /:id agar tidak tertutupi rute param
+router.post('/provision-students', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN), validate({ body: provisionStudentsSchema }), userManageController.provisionStudents);
 router.patch('/:id', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN), validate({ body: updateUserSchema }), userManageController.update);
 router.post('/:id/reset-password', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN), validate({ body: resetPasswordSchema }), userManageController.resetPassword);
 router.get('/', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN), validate({ query: listUserQuerySchema }), userManageController.list);

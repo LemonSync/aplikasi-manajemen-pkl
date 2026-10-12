@@ -14,6 +14,9 @@ const loading = ref(true);
 const error = ref('');
 const statusFilter = ref('');
 const search = ref('');
+// Filter opsional per penulis (param authorId) — dipilih dengan mengklik nama penulis.
+const authorId = ref('');
+const authorName = ref('');
 const busy = ref(false);
 const replyBody = ref('');
 const activeId = ref<string | null>(null);
@@ -22,18 +25,22 @@ const active = computed<ComplaintRecord | null>(
   () => complaints.value.find((c) => c.id === activeId.value) ?? null
 );
 
-/** Cari subjek, penulis, atau nama kelompok (FE-side, daftar tidak dipaginasi). */
+/** Cari subjek atau penulis (FE-side, daftar sudah difilter server per gelombang). */
 const filteredComplaints = computed(() => {
   const q = search.value.trim().toLowerCase();
   if (!q) return complaints.value;
   return complaints.value.filter((c) =>
-    [c.subject, c.author?.studentProfile?.fullName ?? '', c.author?.username ?? '', c.group?.name ?? '']
+    [c.subject, c.author?.studentProfile?.fullName ?? '', c.author?.username ?? '']
       .join(' ')
       .toLowerCase()
       .includes(q)
   );
 });
 
+/**
+ * Muat daftar pengaduan: filter server memakai status + gelombang (cohortId);
+ * penyaring per penulis (authorId) tersedia bila dibutuhkan.
+ */
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
@@ -41,6 +48,7 @@ const load = async (): Promise<void> => {
     const res = await complaintService.list({
       ...(statusFilter.value ? { status: statusFilter.value } : {}),
       ...(cohortStore.activeCohortId ? { cohortId: cohortStore.activeCohortId } : {}),
+      ...(authorId.value ? { authorId: authorId.value } : {}),
     });
     complaints.value = res.items;
   } catch (e) {
@@ -48,6 +56,19 @@ const load = async (): Promise<void> => {
   } finally {
     loading.value = false;
   }
+};
+
+/** Klik nama penulis → saring pengaduan hanya milik penulis tersebut (authorId). */
+const filterByAuthor = (c: ComplaintRecord): void => {
+  authorId.value = c.authorId;
+  authorName.value = c.author?.studentProfile?.fullName ?? c.author?.username ?? c.authorId;
+  void load();
+};
+
+const clearAuthorFilter = (): void => {
+  authorId.value = '';
+  authorName.value = '';
+  void load();
 };
 
 const open = async (id: string): Promise<void> => {
@@ -114,7 +135,7 @@ watch(
             v-model="search"
             class="input w-56"
             type="search"
-            placeholder="Cari subjek, penulis, kelompok…"
+            placeholder="Cari subjek atau penulis…"
           />
           <select v-model="statusFilter" class="input w-auto" @change="load">
             <option value="">Semua Status</option>
@@ -125,6 +146,17 @@ watch(
           <button class="btn-secondary" :disabled="loading" @click="load">Muat Ulang</button>
         </div>
       </div>
+
+      <p
+        v-if="authorId"
+        class="mb-3 flex items-center gap-2 text-xs text-gray-500"
+      >
+        Filter penulis:
+        <span class="badge bg-primary-100 text-primary-700">{{ authorName }}</span>
+        <button class="text-primary-600 underline hover:text-primary-800" @click="clearAuthorFilter">
+          Hapus
+        </button>
+      </p>
 
       <SkeletonTable v-if="loading" :rows="6" :cols="4" />
       <div v-else class="divide-y divide-gray-100">
@@ -137,15 +169,20 @@ watch(
           <div class="min-w-0">
             <p class="truncate font-medium text-gray-800">{{ c.subject }}</p>
             <p class="truncate text-xs text-gray-400">
-              {{ c.author?.studentProfile?.fullName ?? c.author?.username ?? '-' }}
+              <span
+                class="cursor-pointer text-primary-600 underline decoration-dotted hover:text-primary-800"
+                title="Saring pengaduan penulis ini"
+                @click.stop="filterByAuthor(c)"
+              >
+                {{ c.author?.studentProfile?.fullName ?? c.author?.username ?? '-' }}
+              </span>
               · {{ new Date(c.createdAt).toLocaleDateString('id-ID') }}
-              <template v-if="c.group"> · {{ c.group.name }}</template>
             </p>
           </div>
           <StatusBadge :status="c.status" />
         </button>
         <p v-if="filteredComplaints.length === 0" class="py-4 text-center text-gray-400">
-          {{ search.trim() ? 'Tidak ada pengaduan yang cocok dengan pencarian.' : 'Belum ada pengaduan.' }}
+          {{ search.trim() || authorId ? 'Tidak ada pengaduan yang cocok dengan filter.' : 'Belum ada pengaduan.' }}
         </p>
       </div>
     </div>

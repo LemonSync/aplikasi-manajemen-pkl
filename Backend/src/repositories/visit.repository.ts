@@ -4,13 +4,13 @@ import { prisma } from '../config/prisma';
 export type VisitWithRelations = Prisma.VisitGetPayload<{
   include: {
     supervisor: { select: { id: true; username: true } };
-    group: { select: { id: true; name: true } };
+    student: { select: { id: true; username: true; studentProfile: { select: { fullName: true } } } };
     company: { select: { id: true; name: true } };
   };
 }>;
 
 /**
- * Repository kunjungan/monitoring guru (Fase 3).
+ * Repository kunjungan/monitoring guru (Fase 3) — per siswa.
  */
 export class VisitRepository {
   async findById(id: string): Promise<Visit | null> {
@@ -23,7 +23,7 @@ export class VisitRepository {
       where: { id },
       include: {
         supervisor: { select: { id: true, username: true } },
-        group: { select: { id: true, name: true } },
+        student: { select: { id: true, username: true, studentProfile: { select: { fullName: true } } } },
         company: { select: { id: true, name: true } },
       },
     });
@@ -50,7 +50,7 @@ export class VisitRepository {
         orderBy: { scheduledAt: 'desc' },
         include: {
           supervisor: { select: { id: true, username: true } },
-          group: { select: { id: true, name: true } },
+          student: { select: { id: true, username: true, studentProfile: { select: { fullName: true } } } },
           company: { select: { id: true, name: true } },
         },
       }),

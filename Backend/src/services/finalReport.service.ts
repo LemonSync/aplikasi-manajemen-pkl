@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma';
 import { renderFinalReportPdf, FinalReportData } from '../templates/finalReport.template';
 import { readStoredFile, saveBuffer } from '../utils/storage';
 import { settingService } from './setting.service';
+import { classNameWithFallback } from './classResolver.service';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { MESSAGES } from '../config/constants';
 
@@ -33,26 +34,38 @@ const fmtDateTime = (d: Date | string): string =>
   });
 
 /**
- * Laporan hasil akhir PKL per kelompok (PDF).
+ * Laporan hasil akhir PKL per siswa (PDF).
  * - Diterbitkan satu kali (generate-once) setelah masa PKL selesai.
- * - Bisa diunduh hanya oleh siswa anggota kelompok.
- * - Isi nilai DUDI di-snapshot saat terbit: bila DUDI belum menginput nilai,
+ * - Siswa mengunduh laporannya sendiri; guru pembimbing hanya untuk siswa
+ *   bimbingannya; admin/kepsek bebas memilih siswa (query ?studentId=).
+ * - Rekap absensi/jurnal/kunjungan/nilai di-query per studentId.
+ * - Isi nilai di-snapshot saat terbit: bila belum ada nilai,
  *   bagian nilai terbit dalam keadaan KOSONG (sel tanpa angka).
  */
 export class FinalReportService {
-  async getOrCreateForStudent(studentId: string): Promise<{ buffer: Buffer; filename: string }> {
-    const student = await prisma.user.findUnique({ where: { id: studentId } });
-    if (!student || student.role !== Role.SISWA) throw new ForbiddenError(MESSAGES.SCOPE);
+  async getOrCreateForStudent(
+    actor: { id: string; role: string },
+    studentId?: string
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const targetId = await this.resolveTargetStudent(actor, studentId);
 
-    const group = await prisma.group.findFirst({
-      where: { deletedAt: null, members: { some: { userId: studentId } } },
-      select: { id: true, code: true, cohortId: true },
+    const student = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: {
+        id: true,
+        role: true,
+        username: true,
+        cohortId: true,
+        studentProfile: { select: { nisn: true } },
+      },
     });
-    if (!group) throw new NotFoundError('Anda tidak tergabung dalam kelompok PKL');
+    if (!student || student.role !== Role.SISWA) throw new ForbiddenError(MESSAGES.SCOPE);
+    if (!student.cohortId) throw new NotFoundError('Siswa belum terdaftar pada gelombang PKL mana pun');
+    const cohortId = student.cohortId;
 
     // Hanya setelah masa PKL selesai (gelombang memasuki fase Pasca-PKL).
     const pasca = await prisma.phaseSchedule.findFirst({
-      where: { cohortId: group.cohortId, phase: StudentPhase.PKL_SELESAI },
+      where: { cohortId, phase: StudentPhase.PKL_SELESAI },
     });
     const today = new Date().toLocaleDateString('en-CA');
     const pklFinished =
@@ -63,36 +76,37 @@ export class FinalReportService {
       throw new BadRequestError('Laporan hasil PKL baru dapat diunduh setelah masa PKL selesai');
     }
 
-    const filename = `Laporan-Hasil-PKL-${group.code}.pdf`.replace(/[^\w.\-]+/g, '_');
+    const code = student.studentProfile?.nisn ?? student.username;
+    const filename = `Laporan-Hasil-PKL-${code}.pdf`.replace(/[^\w.\-]+/g, '_');
 
     // Sudah terbit? Pakai file snapshot-nya (isi tidak berubah walau data
     // bergerak setelah terbit — sesuai aturan "sudah terbit ya tetap").
-    const existing = await prisma.finalReport.findUnique({ where: { groupId: group.id } });
+    const existing = await prisma.finalReport.findUnique({ where: { studentId: targetId } });
     if (existing) {
       const buf = readStoredFile(existing.pdfPath);
       if (buf) return { buffer: buf, filename };
       // File hilang dari storage → terbitkan ulang dan perbarui path.
     }
 
-    const pdfBuffer = await this.generate(group.id);
+    const pdfBuffer = await this.generate(targetId);
     const { relativePath } = saveBuffer(
       'letters',
-      `hasil-pkl-${group.code}-${Date.now()}.pdf`,
+      `hasil-pkl-${code}-${Date.now()}.pdf`,
       pdfBuffer
     );
 
     if (existing) {
-      await prisma.finalReport.update({ where: { groupId: group.id }, data: { pdfPath: relativePath } });
+      await prisma.finalReport.update({ where: { studentId: targetId }, data: { pdfPath: relativePath } });
       return { buffer: pdfBuffer, filename };
     }
 
     try {
       await prisma.finalReport.create({
-        data: { groupId: group.id, cohortId: group.cohortId, pdfPath: relativePath },
+        data: { studentId: targetId, cohortId, pdfPath: relativePath },
       });
     } catch {
       // Balapan dua permintaan bersamaan: pakai milik yang pertama terbit.
-      const raced = await prisma.finalReport.findUnique({ where: { groupId: group.id } });
+      const raced = await prisma.finalReport.findUnique({ where: { studentId: targetId } });
       if (!raced) throw new NotFoundError('Laporan hasil PKL gagal diterbitkan');
       const buf = readStoredFile(raced.pdfPath);
       if (!buf) throw new NotFoundError('File laporan hasil PKL tidak ditemukan di storage');
@@ -102,101 +116,114 @@ export class FinalReportService {
     return { buffer: pdfBuffer, filename };
   }
 
-  /** Kumpulkan seluruh data kelompok lalu render PDF. */
-  private async generate(groupId: string): Promise<Buffer> {
-    const [group, school] = await Promise.all([
-      prisma.group.findUnique({
-        where: { id: groupId },
-        include: {
-          cohort: { select: { name: true } },
-          major: { select: { name: true } },
-          registration: { select: { companyName: true, companyAddress: true, companyCity: true } },
-          members: {
-            orderBy: { isLeader: 'desc' },
-            include: {
-              user: {
-                select: {
-                  username: true,
-                  studentProfile: { select: { fullName: true, nisn: true } },
-                },
-              },
-            },
-          },
-          supervisors: {
-            include: {
-              user: { select: { username: true, teacherProfile: { select: { fullName: true } } } },
-            },
-          },
-        },
-      }),
-      settingService.getSchoolIdentity(),
-    ]);
-    if (!group) throw new NotFoundError('Kelompok tidak ditemukan');
-
-    const pklSchedule = await prisma.phaseSchedule.findFirst({
-      where: { cohortId: group.cohortId, phase: StudentPhase.PKL_AKTIF },
-    });
-
-    const members = group.members.map((m) => ({
-      userId: m.userId,
-      fullName: m.user.studentProfile?.fullName ?? m.user.username,
-      nisn: m.user.studentProfile?.nisn ?? m.user.username,
-    }));
-
-    const [attendances, visits, journals, grades] = await Promise.all([
-      prisma.attendance.findMany({
-        where: { groupId },
-        orderBy: [{ date: 'asc' }, { checkInAt: 'asc' }],
-        include: {
-          user: { select: { username: true, studentProfile: { select: { fullName: true } } } },
-        },
-      }),
-      prisma.visit.findMany({
-        where: { groupId },
-        orderBy: { scheduledAt: 'asc' },
-        include: {
-          supervisor: { select: { username: true, teacherProfile: { select: { fullName: true } } } },
-        },
-      }),
-      prisma.journal.findMany({
-        where: { groupId },
-        orderBy: [{ date: 'asc' }],
-        include: {
-          user: { select: { username: true, studentProfile: { select: { fullName: true } } } },
-        },
-      }),
-      prisma.grade.findMany({ where: { groupId, giverRole: Role.DUDI } }),
-    ]);
-
-    const nameOf = (u: {
-      username: string;
-      studentProfile?: { fullName?: string | null } | null;
-    }): string => u.studentProfile?.fullName ?? u.username;
-
-    // Rekap absensi per siswa
-    const summary = new Map(
-      members.map((m) => [
-        m.userId,
-        { fullName: m.fullName, hadir: 0, izin: 0, sakit: 0, alpha: 0 },
-      ])
-    );
-    for (const a of attendances) {
-      const s = summary.get(a.userId);
-      if (!s) continue;
-      if (a.status === 'HADIR') s.hadir += 1;
-      else if (a.status === 'IZIN') s.izin += 1;
-      else if (a.status === 'SAKIT') s.sakit += 1;
-      else s.alpha += 1;
+  /** Tentukan siswa yang laporan-nya diminta (scope per role). */
+  private async resolveTargetStudent(
+    actor: { id: string; role: string },
+    studentId?: string
+  ): Promise<string> {
+    // Siswa hanya boleh mengunduh laporannya sendiri.
+    if (actor.role === Role.SISWA) {
+      if (studentId && studentId !== actor.id) throw new ForbiddenError(MESSAGES.SCOPE);
+      return actor.id;
     }
 
-    // Nilai DUDI per siswa — bila belum diinput → null (sel kosong di PDF)
-    const gradeByStudent = new Map(grades.map((g) => [g.studentId, g]));
+    if (!studentId) throw new BadRequestError('ID siswa wajib diisi');
+
+    // Guru pembimbing hanya untuk siswa bimbingannya.
+    if (actor.role === Role.GURU_PEMBIMBING) {
+      const link = await prisma.studentSupervisor.findUnique({
+        where: { studentId },
+        select: { supervisorId: true },
+      });
+      if (link?.supervisorId !== actor.id) throw new BadRequestError(MESSAGES.SCOPE);
+    }
+
+    return studentId;
+  }
+
+  /** Kumpulkan seluruh data siswa lalu render PDF. */
+  private async generate(studentId: string): Promise<Buffer> {
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        username: true,
+        cohortId: true,
+        cohort: { select: { name: true } },
+        studentProfile: {
+          select: {
+            fullName: true,
+            nisn: true,
+            class: { select: { name: true } },
+            major: { select: { name: true } },
+          },
+        },
+        supervision: {
+          select: {
+            supervisor: { select: { username: true, teacherProfile: { select: { fullName: true } } } },
+          },
+        },
+      },
+    });
+    if (!student) throw new NotFoundError('Siswa tidak ditemukan');
+
+    const cohortId = student.cohortId;
+
+    const [registration, school, pklSchedule, attendances, visits, journals, grade] =
+      await Promise.all([
+        prisma.registration.findFirst({
+          where: {
+            studentId,
+            ...(cohortId ? { cohortId } : {}),
+            deletedAt: null,
+            status: { in: ['DIAJUKAN', 'DISETUJUI'] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { company: { select: { name: true, address: true, city: true } } },
+        }),
+        settingService.getSchoolIdentity(),
+        prisma.phaseSchedule.findFirst({
+          where: { phase: StudentPhase.PKL_AKTIF, ...(cohortId ? { cohortId } : {}) },
+        }),
+        prisma.attendance.findMany({
+          where: { userId: studentId },
+          orderBy: [{ date: 'asc' }, { checkInAt: 'asc' }],
+        }),
+        prisma.visit.findMany({
+          where: { studentId },
+          orderBy: { scheduledAt: 'asc' },
+          include: {
+            supervisor: { select: { username: true, teacherProfile: { select: { fullName: true } } } },
+          },
+        }),
+        prisma.journal.findMany({ where: { userId: studentId }, orderBy: [{ date: 'asc' }] }),
+        prisma.grade.findFirst({ where: { studentId }, orderBy: { createdAt: 'desc' } }),
+      ]);
+
+    const fullName = student.studentProfile?.fullName ?? student.username;
+    const nisn = student.studentProfile?.nisn ?? student.username;
+    // Kelas: preferensi Class.name, fallback ke Master Siswa (NISN).
+    const registryClassName = await classNameWithFallback(student.studentProfile);
+
+    // Rekap absensi siswa
+    const summary = { fullName, hadir: 0, izin: 0, sakit: 0, alpha: 0 };
+    for (const a of attendances) {
+      if (a.status === 'HADIR') summary.hadir += 1;
+      else if (a.status === 'IZIN') summary.izin += 1;
+      else if (a.status === 'SAKIT') summary.sakit += 1;
+      else summary.alpha += 1;
+    }
+
+    // Nilai — bila belum diinput → sel kosong di PDF
+    const score = grade ? grade.scoreDudi ?? grade.finalScore ?? null : null;
 
     const dates = attendances.map((a) => +new Date(a.date));
     const periodFrom =
       dates.length > 0 ? fmtDate(new Date(Math.min(...dates))) : pklSchedule?.startDate ? fmtDate(pklSchedule.startDate) : null;
     const periodTo =
       dates.length > 0 ? fmtDate(new Date(Math.max(...dates))) : pklSchedule?.endDate ? fmtDate(pklSchedule.endDate) : null;
+
+    const supervisor = student.supervision?.supervisor;
 
     const data: FinalReportData = {
       school: {
@@ -207,26 +234,25 @@ export class FinalReportService {
         city: school.city,
       },
       issuedAt: new Date(),
-      group: {
-        code: group.code,
-        name: group.name,
-        cohortName: group.cohort?.name ?? null,
-        majorName: group.major?.name ?? null,
+      student: {
+        fullName,
+        nisn,
+        className: registryClassName,
+        majorName: student.studentProfile?.major?.name ?? null,
+        cohortName: student.cohort?.name ?? null,
       },
       company: {
-        name: group.registration?.companyName ?? '-',
-        address: group.registration?.companyAddress ?? '-',
-        city: group.registration?.companyCity ?? null,
+        name: registration?.company?.name ?? '-',
+        address: registration?.company?.address ?? '-',
+        city: registration?.company?.city ?? null,
       },
       period: { from: periodFrom, to: periodTo },
-      supervisors: group.supervisors.map(
-        (s) => s.user.teacherProfile?.fullName ?? s.user.username
-      ),
-      members: members.map((m) => ({ nisn: m.nisn, fullName: m.fullName })),
-      attendanceSummary: [...summary.values()],
+      supervisors: supervisor
+        ? [supervisor.teacherProfile?.fullName ?? supervisor.username]
+        : [],
+      attendanceSummary: [summary],
       attendanceRows: attendances.map((a) => ({
         date: fmtDate(a.date),
-        fullName: nameOf(a.user),
         status: ATTENDANCE_LABEL[a.status] ?? a.status,
         activity: a.activity ?? '-',
       })),
@@ -239,21 +265,20 @@ export class FinalReportService {
       })),
       journals: journals.map((j) => ({
         date: fmtDate(j.date),
-        fullName: nameOf(j.user),
         activity: j.activity,
         result: j.result,
       })),
-      grades: members.map((m) => {
-        const g = gradeByStudent.get(m.userId);
-        const score = g?.scoreDudi ?? g?.finalScore ?? null;
-        return {
-          fullName: m.fullName,
-          nisn: m.nisn,
-          scoreDudi: score !== null ? String(Number(score)) : null,
-          predicate: g?.predicate ?? null,
-          note: g?.note ?? null,
-        };
-      }),
+      grades: grade
+        ? [
+            {
+              fullName,
+              nisn,
+              scoreDudi: score !== null ? String(Number(score)) : null,
+              predicate: grade.predicate,
+              note: grade.note,
+            },
+          ]
+        : [],
     };
 
     return renderFinalReportPdf(data);

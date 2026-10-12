@@ -54,6 +54,11 @@ export class CompanyController {
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 
+  /** GET /api/companies/options — opsi dropdown pendaftaran siswa (sisa kuota > 0). */
+  options = asyncHandler(async (_req: Request, res: Response) => {
+    return sendSuccess(res, await companyService.listOptions(), 'OK');
+  });
+
   /** GET /api/companies/:id */
   detail = asyncHandler(async (req: Request, res: Response) => {
     return sendSuccess(res, await companyService.getById(req.params.id as string), 'OK');

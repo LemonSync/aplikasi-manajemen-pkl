@@ -27,6 +27,9 @@ export const MESSAGES = {
     TOKEN_INVALID: 'Token tidak valid',
     ACCOUNT_INACTIVE: 'Akun Anda tidak aktif. Hubungi administrator',
     REFRESH_INVALID: 'Refresh token tidak valid atau sudah dicabut',
+    PHASE_UNSET: 'Fase PKL akun Anda belum ditetapkan. Hubungi administrator',
+    NO_ACTIVE_COHORT: 'Belum ada gelombang PKL yang aktif. Hubungi administrator',
+    COHORT_INACTIVE: 'Gelombang PKL akun Anda sedang tidak aktif',
   },
   VALIDATION: 'Data yang dikirim tidak valid',
   NOT_FOUND: 'Data tidak ditemukan',
@@ -124,6 +127,7 @@ export const AUDIT_ACTIONS = {
   CREATE_COHORT: 'CREATE_COHORT',
   CLOSE_COHORT: 'CLOSE_COHORT',
   REOPEN_COHORT: 'REOPEN_COHORT',
+  SET_ACTIVE_COHORT: 'SET_ACTIVE_COHORT',
   CREATE_COMPANY: 'CREATE_COMPANY',
   CHECK_IN: 'CHECK_IN',
   CHECK_OUT: 'CHECK_OUT',
@@ -133,6 +137,9 @@ export const AUDIT_ACTIONS = {
   CREATE_VISIT: 'CREATE_VISIT',
   CREATE_FEEDBACK: 'CREATE_FEEDBACK',
   GENERATE_WITHDRAWAL_LETTER: 'GENERATE_WITHDRAWAL_LETTER',
+  ASSIGN_SUPERVISOR: 'ASSIGN_SUPERVISOR',
+  UNASSIGN_SUPERVISOR: 'UNASSIGN_SUPERVISOR',
+  SECURITY_ALERT: 'SECURITY_ALERT',
 } as const;
 
 /** Jenis entitas untuk audit/approval */
@@ -148,6 +155,8 @@ export const ENTITY_TYPES = {
   JOURNAL: 'JOURNAL',
   COMPLAINT: 'COMPLAINT',
   VISIT: 'VISIT',
+  SUPERVISION: 'SUPERVISION',
+  SECURITY: 'SECURITY',
 } as const;
 
 /** Nama cookie refresh token */

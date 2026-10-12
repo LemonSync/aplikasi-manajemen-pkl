@@ -24,6 +24,12 @@ export const listCohortQuerySchema = z.object({
   status: z.nativeEnum(CohortStatus).optional(),
 });
 
+/** Tetapkan gelombang aktif global. */
+export const setActiveCohortSchema = z.object({
+  cohortId: z.string().min(1),
+});
+
 export type CreateCohortDTO = z.infer<typeof createCohortSchema>;
 export type UpdateCohortDTO = z.infer<typeof updateCohortSchema>;
 export type ListCohortQueryDTO = z.infer<typeof listCohortQuerySchema>;
+export type SetActiveCohortDTO = z.infer<typeof setActiveCohortSchema>;

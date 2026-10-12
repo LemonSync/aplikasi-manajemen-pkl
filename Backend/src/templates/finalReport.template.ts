@@ -1,23 +1,28 @@
 import PDFDocument from 'pdfkit';
 
 /**
- * Template Laporan Hasil PKL per kelompok (multi-halaman).
- * Bagian nilai akhir DUDI mengikuti data masuk: bila DUDI belum menginput
- * nilai, sel nilai dikosongkan (tabel tetap tampil tanpa angka).
+ * Template Laporan Hasil PKL per siswa (multi-halaman).
+ * Bagian nilai akhir mengikuti data masuk: bila nilai belum diinput,
+ * sel nilai dikosongkan (tabel tetap tampil tanpa angka).
  */
 
 export interface FinalReportData {
   school: { name: string; address: string; phone?: string; email?: string; city?: string };
   issuedAt: Date;
-  group: { code: string; name: string; cohortName: string | null; majorName: string | null };
+  student: {
+    fullName: string;
+    nisn: string;
+    className: string | null;
+    majorName: string | null;
+    cohortName: string | null;
+  };
   company: { name: string; address: string; city: string | null };
   period: { from: string | null; to: string | null };
   supervisors: string[];
-  members: Array<{ nisn: string; fullName: string }>;
   attendanceSummary: Array<{ fullName: string; hadir: number; izin: number; sakit: number; alpha: number }>;
-  attendanceRows: Array<{ date: string; fullName: string; status: string; activity: string }>;
+  attendanceRows: Array<{ date: string; status: string; activity: string }>;
   visits: Array<{ scheduledAt: string; visitedAt: string | null; status: string; supervisor: string; note: string | null }>;
-  journals: Array<{ date: string; fullName: string; activity: string; result: string | null }>;
+  journals: Array<{ date: string; activity: string; result: string | null }>;
   grades: Array<{ fullName: string; nisn: string; scoreDudi: string | null; predicate: string | null; note: string | null }>;
 }
 
@@ -111,12 +116,14 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
       const doc = new PDFDocument({
         size: 'A4',
         margin: MARGIN,
-        info: { Title: `Laporan Hasil PKL - ${data.group.name}` },
+        info: { Title: `Laporan Hasil PKL - ${data.student.fullName}` },
       });
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
+
+      const w = doc.page.width - MARGIN * 2;
 
       // --- Kop surat sekolah ---
       doc.font(FONT_BOLD).fontSize(15).text(data.school.name.toUpperCase(), { align: 'center' });
@@ -134,17 +141,16 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
 
       // --- Judul ---
       doc.font(FONT_BOLD).fontSize(13).text('LAPORAN HASIL PRAKTIK KER LAPANGAN', { align: 'center' });
-      doc.font(FONT).fontSize(10).text(`Kelompok ${data.group.name} (${data.group.code})`, {
-        align: 'center',
-      });
+      doc.font(FONT).fontSize(10).text(data.student.fullName, { align: 'center' });
       doc.moveDown(1.2);
 
-      // --- A. Identitas ---
-      sectionTitle(doc, 'A. IDENTITAS KELOMPOK');
-      infoLine(doc, 'Nama Kelompok', data.group.name);
-      infoLine(doc, 'Kode Kelompok', data.group.code);
-      infoLine(doc, 'Gelombang', data.group.cohortName ?? '-');
-      infoLine(doc, 'Jurusan', data.group.majorName ?? '-');
+      // --- A. Identitas siswa ---
+      sectionTitle(doc, 'A. IDENTITAS SISWA');
+      infoLine(doc, 'Nama Lengkap', data.student.fullName);
+      infoLine(doc, 'NISN', data.student.nisn);
+      infoLine(doc, 'Kelas', data.student.className ?? '-');
+      infoLine(doc, 'Jurusan', data.student.majorName ?? '-');
+      infoLine(doc, 'Gelombang', data.student.cohortName ?? '-');
       infoLine(doc, 'Perusahaan (DUDI)', data.company.name);
       infoLine(doc, 'Alamat Perusahaan', data.company.address);
       infoLine(doc, 'Kota', data.company.city ?? '-');
@@ -156,23 +162,10 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
       infoLine(doc, 'Guru Pembimbing', data.supervisors.length > 0 ? data.supervisors.join(', ') : '-');
       doc.moveDown(0.5);
 
-      // --- B. Anggota ---
-      sectionTitle(doc, 'B. ANGGOTA KELOMPOK');
-      drawTable(
-        doc,
-        [
-          { header: 'No', width: 34, align: 'center' },
-          { header: 'NISN', width: 110 },
-          { header: 'Nama Lengkap', width: doc.page.width - MARGIN * 2 - 144 },
-        ],
-        data.members.map((m, i) => [String(i + 1), m.nisn, m.fullName])
-      );
-
-      // --- C. Absensi ---
-      sectionTitle(doc, 'C. DAFTAR ABSENSI');
+      // --- B. Absensi ---
+      sectionTitle(doc, 'B. DAFTAR ABSENSI');
       doc.font(FONT_BOLD).fontSize(9).text('Rekapitulasi Kehadiran', { underline: true });
       doc.moveDown(0.3);
-      const w = doc.page.width - MARGIN * 2;
       drawTable(
         doc,
         [
@@ -195,16 +188,15 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
       drawTable(
         doc,
         [
-          { header: 'Tanggal', width: 90 },
-          { header: 'Nama', width: 150 },
-          { header: 'Status', width: 65, align: 'center' },
-          { header: 'Kegiatan', width: w - 305 },
+          { header: 'Tanggal', width: 100 },
+          { header: 'Status', width: 70, align: 'center' },
+          { header: 'Kegiatan', width: w - 170 },
         ],
-        data.attendanceRows.map((r) => [r.date, r.fullName, r.status, r.activity])
+        data.attendanceRows.map((r) => [r.date, r.status, r.activity])
       );
 
-      // --- D. Monitoring guru pembimbing ---
-      sectionTitle(doc, 'D. MONITORING GURU PEMBIMBING');
+      // --- C. Monitoring guru pembimbing ---
+      sectionTitle(doc, 'C. MONITORING GURU PEMBIMBING');
       drawTable(
         doc,
         [
@@ -217,21 +209,20 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
         data.visits.map((v) => [v.scheduledAt, v.visitedAt ?? '-', v.status, v.supervisor, v.note ?? '-'])
       );
 
-      // --- E. Jurnal kegiatan ---
-      sectionTitle(doc, 'E. JURNAL KEGIATAN');
+      // --- D. Jurnal kegiatan ---
+      sectionTitle(doc, 'D. JURNAL KEGIATAN');
       drawTable(
         doc,
         [
-          { header: 'Tanggal', width: 90 },
-          { header: 'Nama', width: 150 },
-          { header: 'Kegiatan', width: w * 0.45 },
-          { header: 'Hasil', width: w - 240 - w * 0.45 },
+          { header: 'Tanggal', width: 100 },
+          { header: 'Kegiatan', width: w * 0.55 },
+          { header: 'Hasil', width: w - 100 - w * 0.55 },
         ],
-        data.journals.map((j) => [j.date, j.fullName, j.activity, j.result ?? '-'])
+        data.journals.map((j) => [j.date, j.activity, j.result ?? '-'])
       );
 
-      // --- F. Nilai akhir DUDI (sel kosong bila belum diinput) ---
-      sectionTitle(doc, 'F. NILAI AKHIR (DARI DUDI)');
+      // --- E. Nilai akhir (sel kosong bila belum diinput) ---
+      sectionTitle(doc, 'E. NILAI AKHIR');
       drawTable(
         doc,
         [

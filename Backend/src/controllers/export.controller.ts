@@ -5,14 +5,19 @@ import { asyncHandler } from '../utils/asyncHandler';
 
 export class ExportController {
   grades = asyncHandler(async (req: Request, res: Response) => {
-    const groupId = req.query.groupId as string | undefined;
-    const data = await exportService.grades(groupId);
+    const { studentId, cohortId } = req.query as { studentId?: string; cohortId?: string };
+    const data = await exportService.grades({ studentId, cohortId });
     return sendSuccess(res, data, 'OK');
   });
 
   attendances = asyncHandler(async (req: Request, res: Response) => {
-    const { groupId, from, to } = req.query as { groupId?: string; from?: string; to?: string };
-    const data = await exportService.attendances({ groupId, from, to });
+    const { studentId, cohortId, from, to } = req.query as {
+      studentId?: string;
+      cohortId?: string;
+      from?: string;
+      to?: string;
+    };
+    const data = await exportService.attendances({ studentId, cohortId, from, to });
     return sendSuccess(res, data, 'OK');
   });
 }

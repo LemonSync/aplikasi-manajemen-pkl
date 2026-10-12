@@ -39,7 +39,7 @@ export class PernyataanService {
   /**
    * Kumpulkan data Surat Pernyataan.
    * - Nama siswa & kelas/program keahlian → data master siswa (StudentRegistry via NISN), tidak bisa diubah siswa
-   * - Tempat PKL & No. HP siswa           → hasil pendaftaran Fase 1 (perusahaan & RegistrationMember.phone), tidak bisa diubah siswa
+   * - Tempat PKL                        → hasil pendaftaran milik siswa (perusahaan), tidak bisa diubah siswa
    * - Nama ortu, alamat, No. HP ortu      → input siswa (boleh diubah)
    */
   private async collectStudentData(userId: string, input: PernyataanDataInput) {
@@ -54,15 +54,11 @@ export class PernyataanService {
 
     const profile = user.studentProfile;
 
-    const [membership, regMember, registry] = await Promise.all([
-      prisma.groupMember.findFirst({
-        where: { userId },
-        include: { group: { include: { company: true, cohort: true, registration: true } } },
-      }),
-      // Baris anggota pada pendaftaran Fase 1 milik siswa ini (No. HP diisi saat Fase 1)
-      prisma.registrationMember.findFirst({
-        where: { userId },
-        include: { registration: { select: { companyName: true } } },
+    const [registration, registry] = await Promise.all([
+      // Pendaftaran milik siswa ini (perusahaan tujuan & gelombang)
+      prisma.registration.findFirst({
+        where: { studentId: userId, deletedAt: null },
+        include: { company: true, cohort: true },
         orderBy: { createdAt: 'desc' },
       }),
       // Master siswa (NISN) — sumber nama & kelas/program keahlian
@@ -78,8 +74,7 @@ export class PernyataanService {
         : Promise.resolve(null),
     ]);
 
-    const group = membership?.group;
-    const cohort = group?.cohort ?? user.cohort;
+    const cohort = registration?.cohort ?? user.cohort;
 
     // [DIKUNCI] Dari data master siswa
     const namaSiswa = registry?.fullName ?? profile?.fullName ?? user.username;
@@ -91,9 +86,9 @@ export class PernyataanService {
     const namaOrtu = input.namaOrtu ?? parent?.fatherName ?? parent?.guardianName ?? '';
     const hpOrtu = input.hpOrtu ?? parent?.fatherPhone ?? parent?.guardianPhone ?? '';
     const alamatSiswa = input.alamatSiswa ?? profile?.address ?? '';
-    // [DIKUNCI] Dari pendaftaran Fase 1
-    const hpSiswa = regMember?.phone ?? profile?.phone ?? '';
-    const tempatPkl = group?.company?.name ?? regMember?.registration?.companyName ?? '';
+    // [DIKUNCI] Dari profil siswa + pendaftaran
+    const hpSiswa = profile?.phone ?? '';
+    const tempatPkl = registration?.company?.name ?? '';
 
     let tanggalPkl = '';
     let tahunPelajaran = '';
@@ -141,7 +136,7 @@ export class PernyataanService {
     const data = await this.collectStudentData(userId, input);
 
     if (!data.nama_siswa) throw new BadRequestError('Nama siswa wajib diisi');
-    if (!data.tempat_pkl) throw new BadRequestError('Tempat PKL belum diketahui (kelompok belum memiliki perusahaan)');
+    if (!data.tempat_pkl) throw new BadRequestError('Tempat PKL belum diketahui (pendaftaran belum memiliki perusahaan)');
 
     // Generate PDF
     const pdfBuffer = await renderPernyataanPdf({

@@ -4,7 +4,6 @@ import { ZodError } from 'zod';
 import { AppError } from '../errors/AppError';
 import { HTTP_STATUS, MESSAGES } from '../config/constants';
 import { logger } from '../config/logger';
-import { env } from '../config/env';
 
 /**
  * Middleware penanganan 404 (route tidak ditemukan).
@@ -14,7 +13,7 @@ export const notFoundHandler = (req: Request, res: Response): void => {
     success: false,
     message: MESSAGES.NOT_FOUND,
     data: null,
-    path: req.originalUrl,
+    path: req.path,
   });
 };
 
@@ -48,14 +47,14 @@ export const errorHandler = (err: unknown, req: Request, res: Response, _next: N
       statusCode = HTTP_STATUS.BAD_REQUEST;
       message = 'Kesalahan basis data';
     }
-    details = env.isProduction ? undefined : err.meta;
+    details = undefined;
   } else if (err instanceof Prisma.PrismaClientValidationError) {
     statusCode = HTTP_STATUS.BAD_REQUEST;
     message = 'Kesalahan validasi basis data';
   }
 
   // Logging: error 5xx sebagai error, 4xx sebagai warn
-  const logMeta = { statusCode, path: req.originalUrl, method: req.method };
+  const logMeta = { statusCode, path: req.path, method: req.method };
   if (statusCode >= 500) {
     logger.error(`${message}`, { ...logMeta, stack: (err as Error)?.stack });
   } else {
@@ -66,6 +65,5 @@ export const errorHandler = (err: unknown, req: Request, res: Response, _next: N
     success: false,
     message,
     ...(details ? { details } : {}),
-    ...(env.isDevelopment && err instanceof Error ? { stack: err.stack } : {}),
   });
 };

@@ -32,7 +32,7 @@ export class JournalRepository {
         skip,
         take,
         orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
-        include: { user: { select: { id: true, username: true, studentProfile: { select: { fullName: true, nisn: true } } } }, group: { select: { id: true, name: true } } },
+        include: { user: { select: { id: true, username: true, studentProfile: { select: { fullName: true, nisn: true } } } } },
       }),
       prisma.journal.count({ where }),
     ]);

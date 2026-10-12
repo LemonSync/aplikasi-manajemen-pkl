@@ -11,7 +11,6 @@ import {
   SummaryQueryDTO,
   SubmitAttendanceDTO,
   VerifyAttendanceDTO,
-  ListDudiAttendanceQueryDTO,
 } from '../validators/phase3.validator';
 
 /**
@@ -42,31 +41,18 @@ export class AttendanceController {
     return sendSuccess(res, result, 'Absensi berhasil dikirim', 201);
   });
 
-  /** POST /api/attendances/:id/verify - DUDI konfirmasi absensi */
+  /** POST /api/attendances/:id/verify - guru pembimbing konfirmasi absensi */
   verify = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as VerifyAttendanceDTO;
     const ctx = getRequestContext(req);
-    const result = await attendanceService.verifyByDudi(
+    const result = await attendanceService.verify(
       req.params.id as string,
-      req.user!.sub,
+      { id: req.user!.sub, role: req.user!.role },
       dto.action,
       dto.note,
       ctx
     );
     return sendSuccess(res, result, dto.action === 'APPROVE' ? 'Absensi dikonfirmasi' : 'Absensi ditolak');
-  });
-
-  /** GET /api/attendances/dudi - daftar absensi untuk konfirmasi DUDI */
-  listForDudi = asyncHandler(async (req: Request, res: Response) => {
-    const query = req.query as unknown as ListDudiAttendanceQueryDTO;
-    const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    const { items, total } = await attendanceService.listForDudi(req.user!.sub, {
-      page,
-      perPage,
-      status: query.status,
-      groupId: query.groupId,
-    });
-    return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 
   /** GET /api/attendances/today */
@@ -90,7 +76,6 @@ export class AttendanceController {
       {
         page,
         perPage,
-        groupId: query.groupId,
         userId: query.userId,
         status: query.status,
         from: query.from,
@@ -106,7 +91,7 @@ export class AttendanceController {
     const query = req.query as unknown as SummaryQueryDTO;
     const result = await attendanceService.summary(
       {
-        groupId: query.groupId,
+        userId: query.userId,
         from: query.from,
         to: query.to,
       },
@@ -115,7 +100,7 @@ export class AttendanceController {
     return sendSuccess(res, result, 'OK');
   });
 
-  /** GET /api/attendances/by-class - monitoring per kelas → kelompok → siswa (admin) */
+  /** GET /api/attendances/by-class - monitoring per kelas → siswa (admin) */
   listByClass = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as ListByClassQueryDTO;
     const result = await attendanceService.listByClass(

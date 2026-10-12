@@ -5,10 +5,10 @@ services:
     image: mysql:8.0
     container_name: pkl-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${DB_NAME:-pkl_db}
-      MYSQL_USER: ${DB_USER:-pkl_user}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-pkl_password}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD wajib diisi}
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME wajib diisi}
+      MYSQL_USER: ${DB_USER:?DB_USER wajib diisi}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi}
     ports:
       - "3306:3306"
     volumes:
@@ -25,9 +25,9 @@ services:
       dockerfile: Dockerfile
     container_name: pkl-backend
     environment:
-      DATABASE_URL: mysql://${DB_USER:-pkl_user}:${DB_PASSWORD:-pkl_password}@mysql:3306/${DB_NAME:-pkl_db}
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-refresh-secret-change-in-production}
+      DATABASE_URL: mysql://${DB_USER:?DB_USER wajib diisi}:${DB_PASSWORD:?DB_PASSWORD wajib diisi}@mysql:3306/${DB_NAME:?DB_NAME wajib diisi}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET wajib diisi}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET wajib diisi}
       STORAGE_ROOT: /app/storage
       PORT: 4000
       NODE_ENV: production

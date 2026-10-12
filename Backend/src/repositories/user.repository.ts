@@ -3,7 +3,7 @@ import { prisma } from '../config/prisma';
 
 /** Bentuk user beserta profil terkait yang biasa dibutuhkan untuk auth. */
 export type UserWithProfiles = Prisma.UserGetPayload<{
-  include: { studentProfile: true; teacherProfile: true; companyMentor: true };
+  include: { studentProfile: true; teacherProfile: true };
 }>;
 
 /**
@@ -27,7 +27,7 @@ export class UserRepository {
   async findByIdWithProfiles(id: string): Promise<UserWithProfiles | null> {
     return prisma.user.findUnique({
       where: { id },
-      include: { studentProfile: true, teacherProfile: true, companyMentor: true },
+      include: { studentProfile: true, teacherProfile: true },
     });
   }
 

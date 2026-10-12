@@ -3,12 +3,7 @@ import { Role } from '@prisma/client';
 import { phase4Controller } from '../controllers/phase4.controller';
 import { authenticate, authorizeRoles } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
-import {
-  generateWithdrawalLetterSchema,
-  completePhaseSchema,
-  generatePengantarLetterSchema,
-  generatePenugasanLetterSchema,
-} from '../validators/phase4.validator';
+import { generateBulkLetterSchema, completePhaseSchema } from '../validators/phase4.validator';
 
 /**
  * Router Fase 4 — prefix /api/phase4
@@ -17,41 +12,41 @@ const router = Router();
 
 router.use(authenticate);
 
-// SISWA: unduh Laporan Hasil PKL kelompoknya sendiri (generate-once setelah
-// masa PKL selesai; bagian nilai dikosongkan bila DUDI belum menginput)
-router.get('/final-report', authorizeRoles(Role.SISWA), phase4Controller.downloadFinalReport);
+// Laporan Hasil PKL per siswa (generate-once setelah masa PKL selesai;
+// bagian nilai dikosongkan bila belum ada nilai).
+// Siswa = laporannya sendiri; guru = siswa bimbingannya; admin/kepsek = semua
+router.get(
+  '/final-report',
+  authorizeRoles(
+    Role.SISWA,
+    Role.GURU_PEMBIMBING,
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+    Role.KEPALA_SEKOLAH
+  ),
+  phase4Controller.downloadFinalReport
+);
 
-// Admin: daftar surat hasil generate + unduh PDF-nya
-// Siswa: hanya surat milik kelompoknya (scope dicek di controller)
-router.get('/letters', authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.SISWA), phase4Controller.listLetters);
+// Admin/Guru: daftar surat hasil generate + unduh PDF-nya
+// (scope: staff = semua, guru = terbitan/atasmnya, siswa = memuat dirinya)
+router.get(
+  '/letters',
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH, Role.GURU_PEMBIMBING, Role.SISWA),
+  phase4Controller.listLetters
+);
 router.get(
   '/letters/:id/download',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.SISWA),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH, Role.GURU_PEMBIMBING, Role.SISWA),
   phase4Controller.downloadLetter
 );
 
-// Admin: generate surat pengantar PKL ke perusahaan
+// Guru/Admin: generate surat bulk (pengantar / monitoring / penjemputan)
+// sekali terbit berisi daftar seluruh siswa bimbingan + perusahaan
 router.post(
-  '/introduction-letter',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  validate({ body: generatePengantarLetterSchema }),
-  phase4Controller.generateIntroductionLetter
-);
-
-// Admin: generate surat penugasan pembimbing
-router.post(
-  '/assignment-letter',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  validate({ body: generatePenugasanLetterSchema }),
-  phase4Controller.generateAssignmentLetter
-);
-
-// Admin: generate surat penarikan siswa
-router.post(
-  '/withdrawal-letter',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  validate({ body: generateWithdrawalLetterSchema }),
-  phase4Controller.generateWithdrawalLetter
+  '/bulk-letter',
+  authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
+  validate({ body: generateBulkLetterSchema }),
+  phase4Controller.generateBulkLetter
 );
 
 // Admin: update fase pkl-aktif → pkl-selesai

@@ -21,17 +21,20 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   // Beranda
-  { label: 'Dashboard', routeName: 'dashboard', icon: 'grid', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'DUDI', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
-  { label: 'Pengumuman', routeName: 'announcements', icon: 'megaphone', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'DUDI', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
-  { label: 'Notifikasi', routeName: 'notifications', icon: 'bell', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'DUDI', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
+  { label: 'Dashboard', routeName: 'dashboard', icon: 'grid', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
+  { label: 'Pengumuman', routeName: 'announcements', icon: 'megaphone', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
+  { label: 'Notifikasi', routeName: 'notifications', icon: 'bell', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
   // Siswa
   { label: 'Absensi Harian', routeName: 'my-attendance', icon: 'calendar', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
   { label: 'Jurnal Kegiatan', routeName: 'my-journal', icon: 'book', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
   { label: 'Pengaduan', routeName: 'my-complaints', icon: 'alert', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
-  { label: 'Kelompok Saya', routeName: 'my-groups', icon: 'users', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
   { label: 'Dokumen Saya', routeName: 'my-documents', icon: 'file', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
   { label: 'Laporan Akhir', routeName: 'my-report', icon: 'clipboard', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
+  { label: 'Input Nilai PKL', routeName: 'grade-input', icon: 'award', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_SELESAI'] },
   // Guru
+  { label: 'Siswa Bimbingan', routeName: 'guru-bimbingan', icon: 'users', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
+  { label: 'Surat Pengantar dkk.', routeName: 'guru-bulk-letter', icon: 'fileCheck', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
+  { label: 'Verifikasi Absensi', routeName: 'guru-attendance-verify', icon: 'checkSquare', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Monitoring Jurnal', routeName: 'guru-journal-monitor', icon: 'book', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Kunjungan', routeName: 'guru-visits', icon: 'pin', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Penilaian & Approval', routeName: 'guru-grade-approval', icon: 'checkCircle', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
@@ -41,21 +44,18 @@ const navItems: NavItem[] = [
   { label: 'Pendaftaran', routeName: 'admin-registrations', icon: 'clipboard', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Verifikasi Dokumen', routeName: 'admin-documents', icon: 'folder', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Surat', routeName: 'admin-letters', icon: 'fileCheck', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
+  { label: 'Generator Surat', routeName: 'admin-letter-generator', icon: 'file', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Rekap Penilaian', routeName: 'admin-grade-recap', icon: 'chart', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
   // Admin — Data
-  { label: 'Kelompok', routeName: 'admin-groups', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
+  { label: 'Pembimbingan', routeName: 'admin-supervisions', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Manajemen User', routeName: 'admin-users', icon: 'user', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Master Siswa', routeName: 'admin-student-registry', icon: 'clipboard', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
+  { label: 'Master Guru', routeName: 'admin-teacher-registry', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
   { label: 'Perusahaan', routeName: 'admin-companies', icon: 'briefcase', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
   // Admin — Sistem
   { label: 'Gelombang', routeName: 'admin-cohorts', icon: 'layers', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Jadwal Fase', routeName: 'admin-phase-schedule', icon: 'calendar', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Audit Log', routeName: 'admin-audit-log', icon: 'shield', section: 'Sistem', roles: ['SUPER_ADMIN'] },
-  // DUDI
-  { label: 'Konfirmasi Absensi', routeName: 'dudi-attendance-verify', icon: 'checkSquare', section: 'DUDI', roles: ['DUDI'] },
-  { label: 'Konfirmasi Jurnal', routeName: 'dudi-journal-verify', icon: 'edit', section: 'DUDI', roles: ['DUDI'] },
-  { label: 'Input Nilai', routeName: 'dudi-grades', icon: 'award', section: 'DUDI', roles: ['DUDI'] },
-  { label: 'Lowongan Kerja', routeName: 'dudi-loker', icon: 'briefcase', section: 'DUDI', roles: ['DUDI'] },
 ];
 
 const auth = useAuthStore();
@@ -77,7 +77,6 @@ watch(
 );
 
 const hasSidebar = computed(() => {
-  if (auth.role === 'KETUA') return false;
   if (auth.role !== 'SISWA') return true;
   return auth.phase === 'PKL_AKTIF' || auth.phase === 'PKL_SELESAI';
 });
@@ -107,9 +106,7 @@ const navSections = computed<Array<{ section: string; items: typeof navItems }>>
   return out;
 });
 
-const isStudentGuided = computed(
-  () => (auth.role === 'SISWA' && !hasSidebar.value) || auth.role === 'KETUA'
-);
+const isStudentGuided = computed(() => auth.role === 'SISWA' && !hasSidebar.value);
 
 const roleLabel = computed(() => (auth.role ? ROLE_LABELS[auth.role] : ''));
 

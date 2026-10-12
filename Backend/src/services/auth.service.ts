@@ -8,6 +8,7 @@ import { UnauthorizedError, ForbiddenError, BadRequestError } from '../errors/Ap
 import { MESSAGES } from '../config/constants';
 import { env } from '../config/env';
 import { auditService } from './audit.service';
+import { cohortService } from './cohortManage.service';
 import { AUDIT_ACTIONS } from '../config/constants';
 
 export interface LoginInput {
@@ -87,6 +88,15 @@ export class AuthService {
     return { accessToken, refreshToken, refreshTokenExpiresAt };
   }
 
+  /** Terapkan aturan gelombang/fase yang sama pada login dan refresh. */
+  private async assertStudentAccess(user: User): Promise<void> {
+    if (user.role !== Role.SISWA) return;
+    if (!user.phase) throw new ForbiddenError(MESSAGES.AUTH.PHASE_UNSET);
+    const activeCohortId = await cohortService.getActiveCohortId();
+    if (!activeCohortId) throw new ForbiddenError(MESSAGES.AUTH.NO_ACTIVE_COHORT);
+    if (user.cohortId !== activeCohortId) throw new ForbiddenError(MESSAGES.AUTH.COHORT_INACTIVE);
+  }
+
   async login(input: LoginInput): Promise<LoginResult> {
     const user = await userRepository.findByIdentifierOrUsername(input.identifier.trim());
 
@@ -99,6 +109,9 @@ export class AuthService {
     if (!user.isActive) {
       throw new ForbiddenError(MESSAGES.AUTH.ACCOUNT_INACTIVE);
     }
+
+    // Gerbang login SISWA: fase valid + gelombang global aktif.
+    await this.assertStudentAccess(user);
 
     const tokens = await this.issueTokens(user, { userAgent: input.userAgent, ipAddress: input.ipAddress });
     await userRepository.updateLastLogin(user.id);
@@ -133,6 +146,12 @@ export class AuthService {
 
     const user = await userRepository.findById(payload.sub);
     if (!user || !user.isActive || user.deletedAt) {
+      throw new UnauthorizedError(MESSAGES.AUTH.REFRESH_INVALID);
+    }
+    try {
+      await this.assertStudentAccess(user);
+    } catch {
+      await refreshTokenRepository.revoke(stored.id);
       throw new UnauthorizedError(MESSAGES.AUTH.REFRESH_INVALID);
     }
 

@@ -18,7 +18,6 @@ export const checkOutSchema = geoBodySchema;
 export const listAttendanceQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),
-  groupId: z.string().cuid().optional(),
   userId: z.string().cuid().optional(),
   status: z.nativeEnum(AttendanceStatus).optional(),
   from: z.string().optional(),
@@ -26,12 +25,12 @@ export const listAttendanceQuerySchema = z.object({
 });
 
 export const summaryQuerySchema = z.object({
-  groupId: z.string().cuid().optional(),
+  userId: z.string().cuid().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
 });
 
-// Monitoring admin: absensi dikelompokkan kelas → kelompok → siswa
+// Monitoring admin: absensi dikelompokkan kelas → siswa
 export const listByClassQuerySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
@@ -57,16 +56,8 @@ export const verifyAttendanceSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 
-export const listDudiAttendanceQuerySchema = z.object({
-  page: z.coerce.number().int().positive().optional(),
-  perPage: z.coerce.number().int().positive().optional(),
-  status: z.nativeEnum(AttendanceStatus).optional(),
-  groupId: z.string().cuid().optional(),
-});
-
 export type SubmitAttendanceDTO = z.infer<typeof submitAttendanceSchema>;
 export type VerifyAttendanceDTO = z.infer<typeof verifyAttendanceSchema>;
-export type ListDudiAttendanceQueryDTO = z.infer<typeof listDudiAttendanceQuerySchema>;
 
 // --- Jurnal ---
 export const saveJournalSchema = z.object({
@@ -89,7 +80,6 @@ export const supervisorNoteSchema = z.object({
 export const listJournalQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),
-  groupId: z.string().cuid().optional(),
   userId: z.string().cuid().optional(),
 });
 
@@ -111,11 +101,11 @@ export const replyComplaintSchema = z.object({
   body: z.string().min(1, 'Balasan wajib diisi').max(5000),
 });
 
+// Filter monitoring admin: cohortId lewat relasi penulis (author.cohortId)
 export const listComplaintQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(ComplaintStatus).optional(),
-  groupId: z.string().cuid().optional(),
   authorId: z.string().cuid().optional(),
   cohortId: z.string().cuid().optional(),
 });
@@ -124,9 +114,9 @@ export type CreateComplaintDTO = z.infer<typeof createComplaintSchema>;
 export type ReplyComplaintDTO = z.infer<typeof replyComplaintSchema>;
 export type ListComplaintQueryDTO = z.infer<typeof listComplaintQuerySchema>;
 
-// --- Kunjungan ---
+// --- Kunjungan (per siswa) ---
 export const createVisitSchema = z.object({
-  groupId: z.string().cuid().optional().nullable(),
+  studentId: z.string().cuid().optional().nullable(),
   companyId: z.string().cuid().optional().nullable(),
   scheduledAt: z.string(),
   note: z.string().max(2000).optional().nullable(),
@@ -154,7 +144,7 @@ export const cancelVisitSchema = z.object({
 export const listVisitQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   perPage: z.coerce.number().int().positive().optional(),
-  groupId: z.string().cuid().optional(),
+  studentId: z.string().cuid().optional(),
   supervisorId: z.string().cuid().optional(),
 });
 

@@ -1,23 +1,19 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue';
 import {
-  groupService,
+  supervisionService,
   visitService,
   openFileInTab,
+  type SupervisionRow,
   type VisitRecord,
   type VisitStatus,
 } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 
-interface SimpleGroup {
-  id: string;
-  name: string;
-}
-
 type Action = 'complete' | 'postpone' | 'cancel';
 
-const groups = ref<SimpleGroup[]>([]);
+const students = ref<SupervisionRow[]>([]);
 const visits = ref<VisitRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
@@ -25,7 +21,8 @@ const busyId = ref('');
 const error = ref('');
 const success = ref('');
 
-const form = ref({ groupId: '', scheduledAt: '', note: '' });
+// Jadwal kunjungan per siswa (bukan kelompok)
+const form = ref({ studentId: '', scheduledAt: '', note: '' });
 
 // Modal aksi
 const action = ref<Action | null>(null);
@@ -53,14 +50,19 @@ const canSubmit = computed(() => {
   return true;
 });
 
+/** Nama siswa sebuah kunjungan (row.student, bukan kelompok). */
+const studentName = (v: VisitRecord): string =>
+  v.student?.studentProfile?.fullName ?? v.student?.username ?? 'Tanpa siswa';
+
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    groups.value = (await groupService.listSupervised()) as SimpleGroup[];
+    const res = await supervisionService.list({ page: 1, perPage: 100 });
+    students.value = res.items;
     visits.value = await visitService.listMine();
-    if (groups.value.length > 0 && !form.value.groupId) {
-      form.value.groupId = groups.value[0].id;
+    if (students.value.length > 0 && !form.value.studentId) {
+      form.value.studentId = students.value[0].studentId;
     }
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -80,7 +82,7 @@ const create = async (): Promise<void> => {
   success.value = '';
   try {
     await visitService.create({
-      groupId: form.value.groupId || null,
+      studentId: form.value.studentId || null,
       scheduledAt: new Date(form.value.scheduledAt).toISOString(),
       note: form.value.note || null,
     });
@@ -199,9 +201,11 @@ onMounted(load);
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Jadwalkan Kunjungan</h2>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
-          <label class="label">Kelompok</label>
-          <select v-model="form.groupId" class="input">
-            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+          <label class="label">Siswa</label>
+          <select v-model="form.studentId" class="input">
+            <option v-for="s in students" :key="s.studentId" :value="s.studentId">
+              {{ s.fullName ?? s.username }}<template v-if="s.className"> · {{ s.className }}</template>
+            </option>
           </select>
         </div>
         <div>
@@ -213,9 +217,12 @@ onMounted(load);
           <input v-model="form.note" class="input" placeholder="Agenda kunjungan" />
         </div>
       </div>
-      <button class="btn-primary mt-3" :disabled="saving || !form.groupId || !form.scheduledAt" @click="create">
+      <button class="btn-primary mt-3" :disabled="saving || !form.studentId || !form.scheduledAt" @click="create">
         {{ saving ? 'Menyimpan…' : 'Buat Jadwal' }}
       </button>
+      <p v-if="students.length === 0 && !loading" class="mt-2 text-sm text-amber-600">
+        Belum ada siswa bimbingan — tambahkan pembimbingan terlebih dahulu.
+      </p>
     </div>
 
     <div class="card">
@@ -225,7 +232,7 @@ onMounted(load);
         <div v-for="v in visits" :key="v.id" class="rounded-lg border border-gray-200 p-4">
           <div class="flex items-center justify-between">
             <div>
-              <p class="text-sm font-semibold text-gray-800">{{ v.group?.name ?? 'Kelompok' }}</p>
+              <p class="text-sm font-semibold text-gray-800">{{ studentName(v) }}</p>
               <p class="text-xs text-gray-500">
                 Dijadwalkan: {{ new Date(v.scheduledAt).toLocaleString('id-ID') }}
               </p>
@@ -274,7 +281,7 @@ onMounted(load);
     <Modal :open="action !== null" :title="actionTitle" size="md" :busy="saving" @close="closeAction">
       <div class="space-y-4">
         <p class="text-sm text-gray-600">
-          {{ activeVisit?.group?.name ?? 'Kelompok' }} ·
+          {{ activeVisit ? studentName(activeVisit) : '' }} ·
           {{ activeVisit ? new Date(activeVisit.scheduledAt).toLocaleString('id-ID') : '' }}
         </p>
 

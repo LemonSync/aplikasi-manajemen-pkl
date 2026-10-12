@@ -2,51 +2,56 @@ import http from './http';
 import type { ApiResponse, PaginationMeta } from '@/types';
 
 /**
- * Tipe data untuk modul pendaftaran & dokumen (subset yang dipakai FE).
+ * Tipe data untuk modul pendaftaran & dokumen (per-orang, tanpa kelompok).
  */
-export interface RegistrationMember {
-  id?: string;
-  userId?: string | null;
-  fullName: string;
-  nisn?: string | null;
-  className?: string | null;
-  phone?: string | null;
-  address?: string | null;
-  isLeader: boolean;
-}
-
 export interface Registration {
   id: string;
   code: string;
-  groupName: string;
   cohortId: string;
   majorId: string | null;
-  companyName: string;
-  companyAddress: string;
-  companyIndustry: string | null;
-  companyPhone: string | null;
-  companyCity: string | null;
-  companyWebsite: string | null;
-  companyContacts: string[] | null;
   status: string;
   note: string | null;
-  members: RegistrationMember[];
-  document?: { id: string; type: string; status: string } | null;
+  permohonanDownloadedAt: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
   createdAt: string;
+  student?: {
+    id: string;
+    username: string;
+    studentProfile: { fullName: string; nisn: string | null; class?: { name: string } | null } | null;
+  } | null;
+  company: {
+    id: string;
+    name: string;
+    address: string;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    website: string | null;
+    industry?: { name: string } | null;
+  };
+  cohort?: { id: string; name: string; academicYear: string | null } | null;
+  major?: { id: string; name: string; code: string } | null;
+  document?: { id: string; type: string; status: string; files?: Array<{ id: string; isActive: boolean }> } | null;
 }
 
 export interface SaveRegistrationPayload {
-  groupName: string;
-  cohortId: string;
+  companyId: string;
+  cohortId?: string | null;
   majorId?: string | null;
-  companyName: string;
-  companyAddress: string;
-  companyIndustry?: string | null;
-  companyPhone?: string | null;
-  companyCity?: string | null;
-  companyWebsite?: string | null;
-  companyContacts?: string[] | null;
-  members: RegistrationMember[];
+}
+
+/** Opsi perusahaan untuk dropdown pendaftaran (sisa kuota > 0). */
+export interface CompanyOption {
+  id: string;
+  name: string;
+  address: string;
+  city: string | null;
+  phone: string | null;
+  industryName: string | null;
+  quota: number | null;
+  terpakai: number;
+  sisa: number | null;
 }
 
 export interface MasterLookups {
@@ -72,57 +77,29 @@ export interface DocumentRecord {
   files?: Array<{ id: string; originalName: string; version: number; isActive: boolean }>;
 }
 
-export interface DocumentGroupMember {
-  userId: string;
-  fullName: string;
-  nisn: string | null;
-  className: string | null;
-  isLeader: boolean;
-}
-
-export interface DocumentGroupDetail {
+/** Penempatan pemilik dokumen: pendaftaran milik siswa + perusahaan + pembimbing. */
+export interface DocumentPlacement {
   id: string;
-  name: string;
   code: string;
   status: string;
   majorName: string | null;
-  source: 'GROUP' | 'REGISTRATION';
+  supervisorName: string | null;
+  student: {
+    userId: string;
+    username: string;
+    fullName: string | null;
+    nisn: string | null;
+    className: string | null;
+  };
   company: {
     name: string;
-    address: string | null;
+    address: string;
     phone: string | null;
     email: string | null;
     city: string | null;
     industryName: string | null;
     website: string | null;
-    contacts: string[] | null;
   } | null;
-  members: DocumentGroupMember[];
-}
-
-export interface GroupedRegistration {
-  groupName: string;
-  companyName: string;
-  companyAddress: string;
-  companyIndustry: string | null;
-  companyPhone: string | null;
-  companyCity: string | null;
-  companyWebsite: string | null;
-  companyContacts: string[] | null;
-  majorName: string | null;
-  cohortName: string | null;
-  cohortId: string | null;
-  registrations: Array<{
-    id: string;
-    code: string;
-    leaderId: string;
-    leaderName: string;
-    status: string;
-    createdAt: string;
-    members: RegistrationMember[];
-  }>;
-  totalCount: number;
-  approvedCount: number;
 }
 
 /**
@@ -139,8 +116,8 @@ export const registrationService = {
     return data.data;
   },
 
-  async submit(id: string): Promise<{ documentId: string }> {
-    const { data } = await http.post<ApiResponse<{ documentId: string }>>(
+  async submit(id: string): Promise<{ registration: Registration | null; documentId: string | null }> {
+    const { data } = await http.post<ApiResponse<{ registration: Registration | null; documentId: string | null }>>(
       `/registrations/${id}/submit`
     );
     return data.data;
@@ -148,12 +125,12 @@ export const registrationService = {
 
   async list(
     status?: string,
-    opts?: { withoutGroup?: boolean }
+    cohortId?: string
   ): Promise<{ items: Registration[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<Registration[]>>('/registrations', {
       params: {
         ...(status ? { status } : {}),
-        ...(opts?.withoutGroup ? { withoutGroup: 'true' } : {}),
+        ...(cohortId ? { cohortId } : {}),
       },
     });
     return { items: data.data, meta: data.meta };
@@ -163,12 +140,6 @@ export const registrationService = {
     const { data } = await http.post<ApiResponse<Registration>>(`/registrations/${id}/review`, {
       action,
       note,
-    });
-    return data.data;
-  },
-  async grouped(cohortId?: string): Promise<GroupedRegistration[]> {
-    const { data } = await http.get<ApiResponse<GroupedRegistration[]>>('/registrations/grouped', {
-      params: cohortId ? { cohortId } : {},
     });
     return data.data;
   },
@@ -186,13 +157,17 @@ export const documentService = {
   async list(
     status?: string,
     type?: string,
-    cohortId?: string
+    cohortId?: string,
+    page?: number,
+    perPage?: number
   ): Promise<{ items: DocumentRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<DocumentRecord[]>>('/documents', {
       params: {
         ...(status ? { status } : {}),
         ...(type ? { type } : {}),
         ...(cohortId ? { cohortId } : {}),
+        ...(page ? { page } : {}),
+        ...(perPage ? { perPage } : {}),
       },
     });
     return { items: data.data, meta: data.meta };
@@ -212,8 +187,8 @@ export const documentService = {
     await http.post(`/documents/${id}/verify`, { action, note });
   },
 
-  async getDetail(id: string): Promise<DocumentRecord & { group: DocumentGroupDetail | null }> {
-    const { data } = await http.get<ApiResponse<DocumentRecord & { group: DocumentGroupDetail | null }>>(
+  async getDetail(id: string): Promise<DocumentRecord & { placement: DocumentPlacement | null }> {
+    const { data } = await http.get<ApiResponse<DocumentRecord & { placement: DocumentPlacement | null }>>(
       `/documents/${id}`
     );
     return data.data;
@@ -235,42 +210,68 @@ export const masterService = {
 };
 
 /**
- * Service kelompok.
+ * Service pembimbingan per siswa (1 siswa = 1 guru).
  */
-export const groupService = {
-  async setDudiMentors(id: string, mentors: Array<{ dudiUserId: string; isPrimary: boolean }>): Promise<void> {
-    await http.put(`/groups/${id}/dudi-mentors`, { mentors });
-  },
-  async setSupervisors(id: string, supervisorIds: string[]): Promise<unknown> {
-    const { data } = await http.put<ApiResponse<unknown>>(`/groups/${id}/supervisors`, { supervisorIds });
-    return data.data;
-  },
-  async credentials(id: string): Promise<{ students: Array<{ userId: string; username: string; password: string; fullName: string; isLeader: boolean }>; dudi: Array<{ userId: string; username: string; password: string; fullName: string }> }> {
-    const { data } = await http.get<ApiResponse<{ students: Array<{ userId: string; username: string; password: string; fullName: string; isLeader: boolean }>; dudi: Array<{ userId: string; username: string; password: string; fullName: string }> }>>(`/groups/${id}/credentials`);
-    return data.data;
-  },
-  async listMine(): Promise<unknown[]> {
-    const { data } = await http.get<ApiResponse<unknown[]>>('/groups/me');
-    return data.data;
-  },
-  async listSupervised(): Promise<unknown[]> {
-    const { data } = await http.get<ApiResponse<unknown[]>>('/groups/supervised');
-    return data.data;
-  },
-  async list(params?: { cohortId?: string }): Promise<{ items: unknown[]; meta?: PaginationMeta }> {
-    const { data } = await http.get<ApiResponse<unknown[]>>('/groups', { params: params ?? {} });
+export interface SupervisionRow {
+  studentId: string;
+  username: string;
+  fullName: string | null;
+  nisn: string | null;
+  className: string | null;
+  majorName: string | null;
+  phase: string | null;
+  cohortId: string | null;
+  supervisorId: string | null;
+  supervisorName: string | null;
+  assignedAt: string | null;
+}
+
+export const supervisionService = {
+  async list(params?: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+    cohortId?: string;
+    supervisorId?: string;
+    unassigned?: boolean;
+  }): Promise<{ items: SupervisionRow[]; meta?: PaginationMeta }> {
+    const { data } = await http.get<ApiResponse<SupervisionRow[]>>('/supervisions', {
+      params: {
+        ...(params?.page ? { page: params.page } : {}),
+        ...(params?.perPage ? { perPage: params.perPage } : {}),
+        ...(params?.search ? { search: params.search } : {}),
+        ...(params?.cohortId ? { cohortId: params.cohortId } : {}),
+        ...(params?.supervisorId ? { supervisorId: params.supervisorId } : {}),
+        ...(params?.unassigned ? { unassigned: 'true' } : {}),
+      },
+    });
     return { items: data.data, meta: data.meta };
   },
-  async create(payload: unknown): Promise<unknown> {
-    const { data } = await http.post<ApiResponse<unknown>>('/groups', payload);
+
+  async assign(payload: { studentIds: string[]; supervisorId: string }): Promise<unknown> {
+    const { data } = await http.post<ApiResponse<unknown>>('/supervisions/assign', payload);
     return data.data;
   },
-  async getById(id: string): Promise<unknown> {
-    const { data } = await http.get<ApiResponse<unknown>>(`/groups/${id}`);
-    return data.data;
+
+  async unassign(studentId: string): Promise<void> {
+    await http.delete(`/supervisions/${studentId}`);
   },
-  async remove(id: string): Promise<void> {
-    await http.delete(`/groups/${id}`);
+
+  async forStudent(studentId: string): Promise<{
+    supervisorId: string;
+    supervisorName: string;
+    nip: string | null;
+    phone: string | null;
+    assignedAt: string;
+  } | null> {
+    const { data } = await http.get<ApiResponse<{
+      supervisorId: string;
+      supervisorName: string;
+      nip: string | null;
+      phone: string | null;
+      assignedAt: string;
+    } | null>>(`/supervisions/student/${studentId}`);
+    return data.data;
   },
 };
 
@@ -282,8 +283,16 @@ export const companyService = {
     const { data } = await http.get<ApiResponse<unknown[]>>('/companies', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
+  async options(): Promise<CompanyOption[]> {
+    const { data } = await http.get<ApiResponse<CompanyOption[]>>('/companies/options');
+    return data.data;
+  },
   async create(payload: unknown): Promise<unknown> {
     const { data } = await http.post<ApiResponse<unknown>>('/companies', payload);
+    return data.data;
+  },
+  async update(id: string, payload: unknown): Promise<unknown> {
+    const { data } = await http.patch<ApiResponse<unknown>>(`/companies/${id}`, payload);
     return data.data;
   },
 };
@@ -310,7 +319,6 @@ export interface AttendanceRecord {
   verifiedById: string | null;
   verifiedAt: string | null;
   user?: { id: string; username: string; studentProfile?: { fullName: string; nisn?: string | null } | null };
-  group?: { id: string; name: string } | null;
 }
 
 export interface AttendanceStudentGroup {
@@ -323,18 +331,10 @@ export interface AttendanceStudentGroup {
   records: AttendanceRecord[];
 }
 
-export interface AttendanceGroupSection {
-  groupId: string | null;
-  groupName: string;
-  companyName: string | null;
-  memberCount: number;
-  students: AttendanceStudentGroup[];
-}
-
 export interface AttendanceClassSection {
   className: string;
   studentCount: number;
-  groups: AttendanceGroupSection[];
+  students: AttendanceStudentGroup[];
 }
 
 export interface JournalRecord {
@@ -344,11 +344,10 @@ export interface JournalRecord {
   result: string | null;
   obstacles: string | null;
   supervisorNote: string | null;
-  dudiVerifiedAt?: string | null;
-  dudiVerifiedById?: string | null;
-  dudiVerificationNote?: string | null;
+  verifiedAt?: string | null;
+  verifiedById?: string | null;
+  verificationNote?: string | null;
   user?: { id: string; username: string; studentProfile?: { fullName: string; nisn?: string | null } | null };
-  group?: { id: string; name: string } | null;
 }
 
 export interface ComplaintRecord {
@@ -358,7 +357,6 @@ export interface ComplaintRecord {
   status: string;
   authorId: string;
   author?: { id: string; username: string; studentProfile?: { fullName: string } | null };
-  group?: { id: string; name: string } | null;
   replies?: Array<{ id: string; body: string; author?: { id: string; username: string }; createdAt: string }>;
   createdAt: string;
 }
@@ -374,7 +372,7 @@ export interface VisitRecord {
   photoPath?: string | null;
   photoName?: string | null;
   supervisor?: { id: string; username: string };
-  group?: { id: string; name: string } | null;
+  student?: { id: string; username: string; studentProfile?: { fullName: string } | null } | null;
   company?: { id: string; name: string } | null;
 }
 
@@ -402,10 +400,6 @@ export const attendanceService = {
     const { data } = await http.post<ApiResponse<AttendanceRecord>>(`/attendances/${id}/verify`, { action, note });
     return data.data;
   },
-  async listForDudi(params?: { status?: string; groupId?: string }): Promise<{ items: AttendanceRecord[]; meta?: PaginationMeta }> {
-    const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances/dudi', { params: params ?? {} });
-    return { items: data.data, meta: data.meta };
-  },
   async checkIn(geo: GeoPayload): Promise<AttendanceRecord> {
     const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/check-in', geo);
     return data.data;
@@ -418,15 +412,15 @@ export const attendanceService = {
     const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances/me');
     return data.data;
   },
-  async list(params?: { groupId?: string; status?: string; from?: string; to?: string }): Promise<{ items: AttendanceRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { userId?: string; status?: string; from?: string; to?: string; page?: number; perPage?: number }): Promise<{ items: AttendanceRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  async summary(params?: { groupId?: string; from?: string; to?: string; cohortId?: string }): Promise<Array<{ status: string; _count: number }>> {
+  async summary(params?: { userId?: string; from?: string; to?: string }): Promise<Array<{ status: string; _count: number }>> {
     const { data } = await http.get<ApiResponse<Array<{ status: string; _count: number }>>>('/attendances/summary', { params: params ?? {} });
     return data.data;
   },
-  /** Monitoring admin: absensi per kelas → kelompok → siswa (termasuk koordinat GPS). */
+  /** Monitoring admin/guru: absensi per kelas → siswa (termasuk koordinat GPS). */
   async byClass(params?: { from?: string; to?: string; status?: string; cohortId?: string }): Promise<{ classes: AttendanceClassSection[]; total: number }> {
     const { data } = await http.get<ApiResponse<{ classes: AttendanceClassSection[]; total: number }>>('/attendances/by-class', { params: params ?? {} });
     return data.data;
@@ -443,7 +437,7 @@ export const journalService = {
     const { data } = await http.get<ApiResponse<JournalRecord[]>>('/journals/me');
     return data.data;
   },
-  async list(params?: { groupId?: string; userId?: string }): Promise<{ items: JournalRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { userId?: string; page?: number; perPage?: number }): Promise<{ items: JournalRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<JournalRecord[]>>('/journals', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
@@ -451,12 +445,8 @@ export const journalService = {
     const { data } = await http.post<ApiResponse<JournalRecord>>(`/journals/${id}/supervisor-note`, { note });
     return data.data;
   },
-  async listForDudi(): Promise<JournalRecord[]> {
-    const { data } = await http.get<ApiResponse<JournalRecord[]>>('/journals/dudi');
-    return data.data;
-  },
-  async verifyByDudi(id: string, note?: string): Promise<JournalRecord> {
-    const { data } = await http.post<ApiResponse<JournalRecord>>(`/journals/${id}/dudi-verify`, { note });
+  async verify(id: string, note?: string): Promise<JournalRecord> {
+    const { data } = await http.post<ApiResponse<JournalRecord>>(`/journals/${id}/verify`, { note });
     return data.data;
   },
 };
@@ -471,7 +461,7 @@ export const complaintService = {
     const { data } = await http.get<ApiResponse<ComplaintRecord[]>>('/complaints/me');
     return data.data;
   },
-  async list(params?: { status?: string; groupId?: string; cohortId?: string }): Promise<{ items: ComplaintRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { status?: string; authorId?: string; cohortId?: string; page?: number; perPage?: number }): Promise<{ items: ComplaintRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<ComplaintRecord[]>>('/complaints', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
@@ -489,9 +479,9 @@ export const complaintService = {
   },
 };
 
-/** Service kunjungan/monitoring guru. */
+/** Service kunjungan/monitoring guru (per siswa). */
 export const visitService = {
-  async create(payload: { groupId?: string | null; companyId?: string | null; scheduledAt: string; note?: string | null }): Promise<VisitRecord> {
+  async create(payload: { studentId?: string | null; companyId?: string | null; scheduledAt: string; note?: string | null }): Promise<VisitRecord> {
     const { data } = await http.post<ApiResponse<VisitRecord>>('/visits', payload);
     return data.data;
   },
@@ -499,7 +489,7 @@ export const visitService = {
     const { data } = await http.get<ApiResponse<VisitRecord[]>>('/visits/me');
     return data.data;
   },
-  async list(params?: { groupId?: string; supervisorId?: string }): Promise<{ items: VisitRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { studentId?: string; supervisorId?: string; page?: number; perPage?: number }): Promise<{ items: VisitRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<VisitRecord[]>>('/visits', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
@@ -531,13 +521,19 @@ export const visitService = {
 };
 
 // ============================================================================
-// FASE 4 — Pasca-PKL (nilai, feedback, surat penarikan, transisi fase)
+// FASE 4 — Pasca-PKL (nilai per siswa + approval guru, feedback, surat bulk)
 // ============================================================================
+
+export interface GradeApprovalInfo {
+  status: string;
+  actorId: string | null;
+  note: string | null;
+  actedAt: string | null;
+}
 
 export interface GradeRecord {
   id: string;
   studentId: string;
-  groupId: string | null;
   giverId: string | null;
   giverRole: string;
   scoreDudi: number | string | null;
@@ -545,6 +541,7 @@ export interface GradeRecord {
   finalScore: number | string | null;
   predicate: string | null;
   note: string | null;
+  approval?: GradeApprovalInfo | null;
   aspects?: Array<{ id?: string; label: string; score: number | string }>;
   createdAt: string;
   student?: { id: string; username: string; studentProfile?: { fullName: string | null } | null };
@@ -555,22 +552,17 @@ export interface GradeRecapStudent {
   username: string;
   fullName: string;
   nisn: string | null;
-  grade: GradeRecord | null;
-}
-
-export interface GradeRecapGroup {
-  groupId: string;
-  groupName: string;
   companyName: string | null;
-  memberCount: number;
-  students: GradeRecapStudent[];
+  supervisorName: string | null;
+  approvalStatus: string | null;
+  grade: GradeRecord | null;
 }
 
 export interface GradeRecapClass {
   className: string;
   studentCount: number;
   gradedCount: number;
-  groups: GradeRecapGroup[];
+  students: GradeRecapStudent[];
 }
 
 export interface GradeRecapByClass {
@@ -583,17 +575,9 @@ export interface FeedbackRecord {
   id: string;
   authorId: string;
   studentId: string | null;
-  groupId: string | null;
   body: string;
   author?: { id: string; username: string };
   createdAt: string;
-}
-
-export interface WithdrawalLetterResult {
-  letterId: string;
-  relativePath: string;
-  signerName: string;
-  signerNip: string | null;
 }
 
 export interface PhaseTransitionResult {
@@ -602,14 +586,14 @@ export interface PhaseTransitionResult {
   to: string;
 }
 
-/** Service penilaian PKL. */
+/** Service penilaian PKL (input siswa/admin, approval guru). */
 export const gradeService = {
-  async dudiAssignments(): Promise<Array<{ id: string; name: string; members: Array<{ user: { id: string; username: string; studentProfile: { fullName: string } | null } }> }>> {
-    const { data } = await http.get<ApiResponse<Array<{ id: string; name: string; members: Array<{ user: { id: string; username: string; studentProfile: { fullName: string } | null } }> }>>>('/grades/dudi/assignments');
+  async inputGrade(payload: { studentId?: string; scoreDudi?: number; aspects?: Array<{ label: string; score: number }>; note?: string | null }): Promise<GradeRecord> {
+    const { data } = await http.post<ApiResponse<GradeRecord>>('/grades', payload);
     return data.data;
   },
-  async inputGrade(payload: { studentId: string; groupId?: string | null; scoreDudi?: number; aspects?: Array<{ label: string; score: number }>; note?: string | null }): Promise<GradeRecord> {
-    const { data } = await http.post<ApiResponse<GradeRecord>>('/grades', payload);
+  async approve(gradeId: string, payload: { approved: boolean; note?: string | null }): Promise<unknown> {
+    const { data } = await http.post<ApiResponse<unknown>>(`/grades/${gradeId}/approve`, payload);
     return data.data;
   },
   async inputGuidance(gradeId: string, payload: { scoreGuidance: number; note?: string | null }): Promise<GradeRecord> {
@@ -620,30 +604,24 @@ export const gradeService = {
     const { data } = await http.get<ApiResponse<GradeRecord[]>>('/grades/me');
     return data.data;
   },
-  async listForDudi(): Promise<GradeRecord[]> {
-    const { data } = await http.get<ApiResponse<GradeRecord[]>>('/grades/dudi');
-    return data.data;
-  },
-  async list(params?: { groupId?: string; studentId?: string }): Promise<{ items: GradeRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { page?: number; perPage?: number; studentId?: string }): Promise<{ items: GradeRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<GradeRecord[]>>('/grades', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  async recap(groupId?: string): Promise<GradeRecord[]> {
-    const { data } = await http.get<ApiResponse<GradeRecord[]>>('/grades/recap', {
-      params: groupId ? { groupId } : {},
-    });
+  async recap(): Promise<GradeRecord[]> {
+    const { data } = await http.get<ApiResponse<GradeRecord[]>>('/grades/recap');
     return data.data;
   },
-  /** Rekap admin: penilaian per kelas → kelompok → siswa (termasuk yang belum dinilai). */
+  /** Rekap admin: penilaian per kelas → siswa (termasuk yang belum dinilai). */
   async recapByClass(params?: { cohortId?: string }): Promise<GradeRecapByClass> {
     const { data } = await http.get<ApiResponse<GradeRecapByClass>>('/grades/recap-by-class', { params: params ?? {} });
     return data.data;
   },
 };
 
-/** Service feedback DUDI. */
+/** Service feedback (admin/guru → siswa). */
 export const feedbackService = {
-  async create(payload: { studentId: string; groupId?: string | null; body: string }): Promise<FeedbackRecord> {
+  async create(payload: { studentId: string; body: string }): Promise<FeedbackRecord> {
     const { data } = await http.post<ApiResponse<FeedbackRecord>>('/feedbacks', payload);
     return data.data;
   },
@@ -651,7 +629,7 @@ export const feedbackService = {
     const { data } = await http.get<ApiResponse<FeedbackRecord[]>>(`/feedbacks/student/${studentId}`);
     return data.data;
   },
-  async list(params?: { studentId?: string; groupId?: string }): Promise<{ items: FeedbackRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { studentId?: string; page?: number; perPage?: number }): Promise<{ items: FeedbackRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<FeedbackRecord[]>>('/feedbacks', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
@@ -663,29 +641,38 @@ export interface LetterRecord {
   number: string | null;
   subject: string | null;
   signerName: string;
-  relatedGroupId: string | null;
+  createdById: string | null;
+  supervisorName: string | null;
+  studentCount: number;
   createdAt: string;
 }
 
-/** Service Fase 4 — surat + transisi fase. */
+export interface BulkLetterResult {
+  letterId: string;
+  relativePath?: string;
+  signerName: string;
+  signerNip: string | null;
+  studentCount: number;
+  notified: number;
+}
+
+/** Service Fase 4 — surat bulk + transisi fase. */
 export const phase4Service = {
-  async generateIntroductionLetter(payload: { groupId: string; number?: string | null }): Promise<WithdrawalLetterResult> {
-    const { data } = await http.post<ApiResponse<WithdrawalLetterResult>>('/phase4/introduction-letter', payload);
-    return data.data;
-  },
-  async generateAssignmentLetter(payload: { groupId: string; supervisorId: string; number?: string | null }): Promise<WithdrawalLetterResult> {
-    const { data } = await http.post<ApiResponse<WithdrawalLetterResult>>('/phase4/assignment-letter', payload);
-    return data.data;
-  },
-  async generateWithdrawalLetter(payload: { groupId: string; studentIds: string[]; number?: string | null }): Promise<WithdrawalLetterResult[]> {
-    const { data } = await http.post<ApiResponse<WithdrawalLetterResult[]>>('/phase4/withdrawal-letter', payload);
+  async generateBulkLetter(payload: {
+    type: 'SURAT_PENGANTAR' | 'SURAT_MONITORING' | 'SURAT_PENJEMPUTAN';
+    number?: string | null;
+    subject?: string | null;
+    replyNumber?: string | null;
+    supervisorId?: string;
+  }): Promise<BulkLetterResult> {
+    const { data } = await http.post<ApiResponse<BulkLetterResult>>('/phase4/bulk-letter', payload);
     return data.data;
   },
   async completePhase(studentIds: string[]): Promise<{ results: PhaseTransitionResult[]; skipped: Array<{ studentId: string; reason: string }> }> {
     const { data } = await http.post<ApiResponse<{ results: PhaseTransitionResult[]; skipped: Array<{ studentId: string; reason: string }> }>>('/phase4/complete', { studentIds });
     return data.data;
   },
-  async listLetters(params?: { groupId?: string; type?: string }): Promise<LetterRecord[]> {
+  async listLetters(params?: { type?: string }): Promise<LetterRecord[]> {
     const { data } = await http.get<ApiResponse<LetterRecord[]>>('/phase4/letters', { params: params ?? {} });
     return data.data;
   },
@@ -693,9 +680,41 @@ export const phase4Service = {
     const num = letter.number ? `${letter.number}-` : '';
     await downloadFile(`/phase4/letters/${letter.id}/download`, `${letter.type}-${num}${letter.id}.pdf`);
   },
-  /** SISWA: unduh Laporan Hasil PKL kelompok (generate-once setelah PKL selesai). */
-  async downloadFinalReport(): Promise<void> {
-    await downloadFile('/phase4/final-report', 'Laporan-Hasil-PKL.pdf');
+  /** Unduh surat terbit berdasarkan ID (dipakai hasil generator surat admin). */
+  async downloadLetterById(letterId: string, filename = 'surat.pdf'): Promise<void> {
+    await downloadFile(`/phase4/letters/${letterId}/download`, filename);
+  },
+  /** Unduh Laporan Hasil PKL (per siswa; guru/staff boleh memilih siswa). */
+  async downloadFinalReport(studentId?: string): Promise<void> {
+    await downloadFile('/phase4/final-report', 'Laporan-Hasil-PKL.pdf', studentId ? { studentId } : undefined);
+  },
+};
+
+// ============================================================================
+// GENERATOR SURAT ADMIN (Surat Permohonan / Penugasan)
+// ============================================================================
+
+export interface LetterGeneratorResult {
+  letterId: string;
+  signerName: string;
+  signerNip: string | null;
+  /** Jumlah siswa tercantum di surat (permohonan: siswa per perusahaan; penugasan: siswa dibimbing). */
+  studentCount?: number;
+  /** Penugasan: jumlah perusahaan tujuan. */
+  tujuanCount?: number;
+}
+
+/** Service generator surat admin (Permohonan per-perusahaan, Penugasan per-guru pembimbing). */
+export const letterGeneratorService = {
+  /** Surat Permohonan PKL — satu surat untuk satu perusahaan, multi-siswa satu gelombang. */
+  async generatePermohonan(payload: { cohortId: string; companyId: string; number?: string | null }): Promise<LetterGeneratorResult> {
+    const { data } = await http.post<ApiResponse<LetterGeneratorResult>>('/letters/permohonan', payload);
+    return data.data;
+  },
+  /** Surat Penugasan Pembimbing — satu surat per guru pembimbing (dasar opsional override). */
+  async generatePenugasan(payload: { supervisorId: string; number?: string | null; dasar?: string | null }): Promise<LetterGeneratorResult> {
+    const { data } = await http.post<ApiResponse<LetterGeneratorResult>>('/letters/penugasan', payload);
+    return data.data;
   },
 };
 
@@ -783,12 +802,10 @@ export const studentRegistryService = {
     fullName: string;
     nisn: string;
     accounts: number;
-    memberRows: number;
     attendance: number;
     journals: number;
     grades: number;
     documents: number;
-    groupMemberships: number;
     registrations: number;
   }> {
     const { data } = await http.delete<
@@ -796,15 +813,128 @@ export const studentRegistryService = {
         fullName: string;
         nisn: string;
         accounts: number;
-        memberRows: number;
         attendance: number;
         journals: number;
         grades: number;
         documents: number;
-        groupMemberships: number;
         registrations: number;
       }>
     >(`/student-registry/${id}`);
+    return data.data;
+  },
+};
+
+// ============================================================================
+// MASTER GURU (TeacherRegistry) — akun login (username = NIP) dibuat otomatis
+// ============================================================================
+
+export interface TeacherRegistryRecord {
+  id: string;
+  nip: string;
+  fullName: string;
+  cohortId: string;
+  majorId: string | null;
+  major?: { name: string; code: string } | null;
+  isActive: boolean;
+}
+
+/** Akun guru yang baru dibuat otomatis — password hanya ditampilkan sekali. */
+export interface TeacherProvisionedAccount {
+  userId: string;
+  username: string;
+  nip: string;
+  fullName: string;
+  password: string;
+}
+
+export interface TeacherRegistryImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  duplicates: { nip: string; fullName: string; reason: string }[];
+  errors: string[];
+  /** Hasil pembuatan akun otomatis setelah import. */
+  accounts: {
+    created: TeacherProvisionedAccount[];
+    skipped: number;
+    errors: { nip: string; reason: string }[];
+  };
+}
+
+export interface TeacherRegistryInspectResult {
+  headers: string[];
+  detected: { nip: string | null; fullName: string | null; majorCode: string | null };
+}
+
+export interface TeacherRegistryHeaderMapping {
+  nip: string;
+  fullName: string;
+  majorCode?: string;
+}
+
+/** Service Master Guru. */
+export const teacherRegistryService = {
+  async list(cohortId: string, params?: { page?: number; perPage?: number; search?: string }): Promise<{ items: TeacherRegistryRecord[]; meta?: PaginationMeta }> {
+    const { data } = await http.get<ApiResponse<TeacherRegistryRecord[]>>('/teacher-registry', {
+      params: { cohortId, ...params },
+    });
+    return { items: data.data, meta: data.meta };
+  },
+  /** Tambah guru manual — akun (username = NIP) dibuat otomatis, password dikembalikan sekali. */
+  async create(input: { cohortId: string; nip: string; fullName: string; majorCode?: string }): Promise<{ record: TeacherRegistryRecord; account: TeacherProvisionedAccount | null; restored: boolean }> {
+    const { data } = await http.post<ApiResponse<{ record: TeacherRegistryRecord; account: TeacherProvisionedAccount | null; restored: boolean }>>('/teacher-registry', input);
+    return data.data;
+  },
+  async inspect(file: File): Promise<TeacherRegistryInspectResult> {
+    const form = new FormData();
+    form.append('file', file);
+    const { data } = await http.post<ApiResponse<TeacherRegistryInspectResult>>(
+      '/teacher-registry/inspect',
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return data.data;
+  },
+  async importExcel(cohortId: string, file: File, mapping?: TeacherRegistryHeaderMapping): Promise<TeacherRegistryImportResult> {
+    const form = new FormData();
+    form.append('cohortId', cohortId);
+    form.append('file', file);
+    if (mapping) {
+      form.append('mapNip', mapping.nip);
+      form.append('mapFullName', mapping.fullName);
+      if (mapping.majorCode) form.append('mapMajorCode', mapping.majorCode);
+    }
+    const { data } = await http.post<ApiResponse<TeacherRegistryImportResult>>(
+      '/teacher-registry/import',
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return data.data;
+  },
+  /** Tambal akun untuk baris master yang belum punya (idempoten). */
+  async ensureAccounts(cohortId: string): Promise<{ created: TeacherProvisionedAccount[]; skipped: number; errors: { nip: string; reason: string }[] }> {
+    const { data } = await http.post<ApiResponse<{ created: TeacherProvisionedAccount[]; skipped: number; errors: { nip: string; reason: string }[] }>>(
+      '/teacher-registry/ensure-accounts',
+      { cohortId }
+    );
+    return data.data;
+  },
+  async remove(id: string): Promise<{
+    fullName: string;
+    nip: string;
+    accounts: number;
+    supervisions: number;
+    visits: number;
+  }> {
+    const { data } = await http.delete<
+      ApiResponse<{
+        fullName: string;
+        nip: string;
+        accounts: number;
+        supervisions: number;
+        visits: number;
+      }>
+    >(`/teacher-registry/${id}`);
     return data.data;
   },
 };
@@ -821,6 +951,8 @@ export interface CohortRecord {
   endDate: string | null;
   status: string;
   description: string | null;
+  /** Gelombang aktif global (hanya satu). */
+  isActive?: boolean;
 }
 
 export interface UserRecord {
@@ -832,9 +964,8 @@ export interface UserRecord {
   isActive: boolean;
   phase: string | null;
   cohortId: string | null;
-  studentProfile?: { fullName: string; nisn: string } | null;
+  studentProfile?: { fullName: string; nisn: string; class?: { name: string } | null } | null;
   teacherProfile?: { fullName: string; nip: string } | null;
-  companyMentor?: { fullName: string; company?: { name: string } } | null;
 }
 
 export interface StudentPklData {
@@ -850,17 +981,20 @@ export interface StudentPklData {
     createdAt: string;
     cohort: { name: string; academicYear: string | null } | null;
   };
-  fase1: {
-    registration: {
-      code: string;
-      status: string;
-      groupName: string;
-      submittedAt: string | null;
-      cohort: { name: string; academicYear: string | null } | null;
-      company: { name: string; address: string; phone: string | null; city: string | null; industry: string | null };
-    };
-    member: { fullName: string; nisn: string | null; className: string | null; phone: string | null; isLeader: boolean };
-    members: Array<{ fullName: string; nisn: string | null; className: string | null; phone: string | null; isLeader: boolean }>;
+  pendaftaran: {
+    code: string;
+    status: string;
+    submittedAt: string | null;
+    permohonanDownloadedAt: string | null;
+    cohort: { name: string; academicYear: string | null } | null;
+    majorName: string | null;
+    company: {
+      name: string;
+      address: string;
+      phone: string | null;
+      city: string | null;
+      industry: string | null;
+    } | null;
   } | null;
   fase2: {
     profile: {
@@ -883,24 +1017,10 @@ export interface StudentPklData {
     } | null;
     pernyataan: { status: string; note: string | null; verifiedAt: string | null; createdAt: string } | null;
   } | null;
-  group: {
-    name: string;
-    code: string;
-    status: string;
-    company: { name: string } | null;
-    dudiMentors: Array<{ dudi: { username: string } }>;
+  pembimbing: {
+    supervisorName: string;
+    assignedAt: string;
   } | null;
-}
-
-export interface JobVacancyRecord {
-  id: string;
-  title: string;
-  description: string;
-  requirements: string | null;
-  location: string | null;
-  status: string;
-  company?: { id: string; name: string } | null;
-  createdAt: string;
 }
 
 export interface AnnouncementRecord {
@@ -952,6 +1072,11 @@ export const cohortService = {
     const { data } = await http.get<ApiResponse<CohortRecord[]>>('/cohorts', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
+  /** Tetapkan gelombang aktif global (hanya gelombang OPEN). */
+  async setActive(cohortId: string): Promise<CohortRecord> {
+    const { data } = await http.post<ApiResponse<CohortRecord>>('/cohorts/active', { cohortId });
+    return data.data;
+  },
 };
 
 /**
@@ -962,10 +1087,24 @@ export const cohortService = {
 export const pickActiveCohortId = (cohorts: Array<{ id: string; status?: string }>): string =>
   cohorts.find((c) => c.status === 'OPEN')?.id ?? cohorts[0]?.id ?? '';
 
+/** Hasil bulk pembuatan akun siswa dari Master Siswa. */
+export interface ProvisionStudentsResult {
+  total: number;
+  created: Array<{ userId: string; username: string; nisn: string; fullName: string; password: string }>;
+  skipped: Array<{ nisn: string; fullName: string; reason: string }>;
+  /** Jumlah profil siswa lama yang kelasnya di-backfill dari Master Siswa. */
+  classBackfilled: number;
+}
+
 /** Service manajemen user. */
 export const userManageService = {
-  async create(payload: { username: string; password: string; role: string; identifier?: string; fullName?: string; nisn?: string; nip?: string; cohortId?: string | null; companyId?: string | null; majorId?: string | null }): Promise<UserRecord & { password?: string }> {
+  async create(payload: { username: string; password: string; role: string; identifier?: string; fullName?: string; nisn?: string; nip?: string; cohortId?: string | null; majorId?: string | null }): Promise<UserRecord & { password?: string }> {
     const { data } = await http.post<ApiResponse<UserRecord & { password?: string }>>('/users', payload);
+    return data.data;
+  },
+  /** Bulk: buat akun siswa (username = NISN) dari baris Master Siswa gelombang tsb. */
+  async provisionStudents(cohortId: string): Promise<ProvisionStudentsResult> {
+    const { data } = await http.post<ApiResponse<ProvisionStudentsResult>>('/users/provision-students', { cohortId });
     return data.data;
   },
   async update(id: string, payload: Partial<UserRecord>): Promise<UserRecord> {
@@ -980,7 +1119,7 @@ export const userManageService = {
     const { data } = await http.get<ApiResponse<UserRecord[]>>('/users', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  /** Data PKL siswa (Fase 1 pendaftaran + Fase 2 daftar ulang) — khusus Admin. */
+  /** Data PKL siswa (pendaftaran per-orang + profil + pembimbing) — khusus Admin. */
   async getStudentData(id: string): Promise<StudentPklData> {
     const { data } = await http.get<ApiResponse<StudentPklData>>(`/users/${id}/student-data`);
     return data.data;
@@ -988,18 +1127,6 @@ export const userManageService = {
   async remove(id: string): Promise<UserRecord> {
     const { data } = await http.delete<ApiResponse<UserRecord>>(`/users/${id}`);
     return data.data;
-  },
-};
-
-/** Service loker. */
-export const jobVacancyService = {
-  async create(payload: { title: string; description: string; requirements?: string | null; location?: string | null; companyId?: string | null }): Promise<JobVacancyRecord> {
-    const { data } = await http.post<ApiResponse<JobVacancyRecord>>('/job-vacancies', payload);
-    return data.data;
-  },
-  async list(params?: { status?: string }): Promise<{ items: JobVacancyRecord[]; meta?: PaginationMeta }> {
-    const { data } = await http.get<ApiResponse<JobVacancyRecord[]>>('/job-vacancies', { params: params ?? {} });
-    return { items: data.data, meta: data.meta };
   },
 };
 
@@ -1062,14 +1189,8 @@ export interface StudentWorkflowStatus {
   nextSchedule: WorkflowPhaseInfo | null;
   registrationStatus: string | null;
   registrationDocumentId: string | null;
-  /** Gerbang Fase 1 → Fase 2: ketua sudah mengunduh Surat Permohonan? */
-  isKetuaDownloadSuratPermohonan: boolean;
-  isKetua: boolean;
-  /** Password null = disembunyikan (semua anggota sudah login + Surat Pernyataan di-ACC admin). */
-  groupMembers: Array<{ username: string; fullName: string; temporaryPassword: string | null }> | null;
-  dudiCredential: { fullName: string; username: string } | null;
-  hasGroup: boolean;
-  dudiConnected: boolean;
+  /** Gerbang Fase 1 → Fase 2: siswa sudah mengunduh Surat Permohonan? */
+  permohonanDownloaded: boolean;
   hasParentData: boolean;
   hasSuratPenerimaan: boolean;
   hasSuratPenerimaanPending: boolean;
@@ -1089,11 +1210,11 @@ export const studentWorkflowService = {
 
 /** Service export. */
 export const exportService = {
-  async grades(groupId?: string): Promise<unknown[]> {
-    const { data } = await http.get<ApiResponse<unknown[]>>('/export/grades', { params: groupId ? { groupId } : {} });
+  async grades(params?: { studentId?: string; cohortId?: string }): Promise<unknown[]> {
+    const { data } = await http.get<ApiResponse<unknown[]>>('/export/grades', { params: params ?? {} });
     return data.data;
   },
-  async attendances(params?: { groupId?: string; from?: string; to?: string }): Promise<unknown[]> {
+  async attendances(params?: { studentId?: string; cohortId?: string; from?: string; to?: string }): Promise<unknown[]> {
     const { data } = await http.get<ApiResponse<unknown[]>>('/export/attendances', { params: params ?? {} });
     return data.data;
   },
@@ -1178,8 +1299,8 @@ export const phaseScheduleService = {
 };
 
 /** Helper: download file via Axios (membawa token auth). */
-export const downloadFile = async (url: string, filename: string): Promise<void> => {
-  const { data } = await http.get(url, { responseType: 'blob' });
+export const downloadFile = async (url: string, filename: string, params?: Record<string, string>): Promise<void> => {
+  const { data } = await http.get(url, { responseType: 'blob', params: params ?? {} });
   const blob = new Blob([data]);
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);

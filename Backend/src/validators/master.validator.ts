@@ -11,7 +11,14 @@ export const createCompanySchema = z.object({
   phone: z.string().max(30).optional().nullable(),
   email: z.string().email().optional().nullable(),
   city: z.string().max(120).optional().nullable(),
-  website: z.string().max(255).optional().nullable(),
+  website: z
+    .string()
+    .max(255)
+    .url('Website harus berupa URL yang valid')
+    .refine((value) => /^https?:\/\//i.test(value), 'Website hanya boleh menggunakan http atau https')
+    .optional()
+    .nullable(),
+  quota: z.coerce.number().int().min(0).max(10000).optional().nullable(),
 });
 
 export const updateCompanySchema = createCompanySchema.partial();

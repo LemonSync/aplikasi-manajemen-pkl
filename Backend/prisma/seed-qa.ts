@@ -1,4 +1,4 @@
-import { PrismaClient, Role, CohortStatus, StudentPhase, RegistrationStatus, GroupStatus } from '@prisma/client';
+import { PrismaClient, Role, CohortStatus, StudentPhase, RegistrationStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 
@@ -63,6 +63,17 @@ async function main(): Promise<void> {
   const rplMajor = await prisma.major.findFirst({ where: { code: 'RPL' } });
   const dkvMajor = await prisma.major.findFirst({ where: { code: 'DKV' } });
 
+  /** Cari atau buat baris Class (mis. "XII RPL 1" dari "XII-RPL-1") — untuk profil siswa QA. */
+  const resolveClassId = async (className: string, majorId?: string | null): Promise<string | null> => {
+    const name = className.replace(/-/g, ' ').trim().toUpperCase();
+    const existing = await prisma.class.findUnique({ where: { cohortId_name: { cohortId: cohort.id, name } } });
+    if (existing) return existing.id;
+    const created = await prisma.class.create({
+      data: { name, grade: name.split(' ')[0] ?? null, cohortId: cohort.id, majorId: majorId ?? null },
+    });
+    return created.id;
+  };
+
   // =========================================================================
   // SISWA FASE 1: PRA_PKL (belum submit registrasi)
   // =========================================================================
@@ -87,6 +98,7 @@ async function main(): Promise<void> {
       fullName: 'Ahmad Fase 1',
       nisn: '001001',
       majorId: rplMajor?.id,
+      classId: await resolveClassId('XII-RPL-1', rplMajor?.id),
     },
   });
   console.log(`✅ Siswa Fase 1 (PRA_PKL): ${siswa1.username}`);
@@ -113,39 +125,41 @@ async function main(): Promise<void> {
       fullName: 'Budi Fase 2',
       nisn: '001002',
       majorId: rplMajor?.id,
+      classId: await resolveClassId('XII-RPL-1', rplMajor?.id),
     },
   });
 
-  // Buat registrasi DIAJUKAN untuk siswa2
-  const reg2 = await prisma.registration.upsert({
+  // Perusahaan untuk registrasi siswa2
+  const company2 = await prisma.company.upsert({
+    where: { id: 'qa_company_fase2' },
+    update: {},
+    create: {
+      id: 'qa_company_fase2',
+      name: 'PT Tech Solutions',
+      address: 'Jl. Sudirman No. 10, Medan',
+      industryId: undefined,
+    },
+  });
+
+  // Registrasi DIAJUKAN milik siswa2
+  await prisma.registration.upsert({
     where: { id: 'qa_reg_fase2' },
     update: {},
     create: {
       id: 'qa_reg_fase2',
       code: 'REG-QA-001',
-      groupName: 'Kelompok QA Fase 2',
-      companyName: 'PT Tech Solutions',
-      companyAddress: 'Jl. Sudirman No. 10, Medan',
-      companyIndustry: 'Teknologi Informasi',
+      studentId: siswa2.id,
+      companyId: company2.id,
       status: RegistrationStatus.DIAJUKAN,
-      leaderId: siswa2.id,
       cohortId: cohort.id,
       majorId: rplMajor?.id,
-    },
-  });
-  await prisma.registrationMember.create({
-    data: {
-      registrationId: reg2.id,
-      userId: siswa2.id,
-      fullName: 'Budi Fase 2',
-      nisn: '001002',
-      isLeader: true,
+      submittedAt: now,
     },
   });
   console.log(`✅ Siswa Fase 2 (NON_PKL): ${siswa2.username} + registrasi DIAJUKAN`);
 
   // =========================================================================
-  // SISWA FASE 3: PKL_AKTIF (sudah punya kelompok, sedang PKL)
+  // SISWA FASE 3: PKL_AKTIF (registrasi DISETUJUI, sedang PKL)
   // =========================================================================
   const siswa3 = await prisma.user.upsert({
     where: { username: 'siswa_fase3' },
@@ -166,11 +180,12 @@ async function main(): Promise<void> {
       fullName: 'Citra Fase 3',
       nisn: '001003',
       majorId: dkvMajor?.id,
+      classId: await resolveClassId('XII-DKV-1', dkvMajor?.id),
     },
   });
 
   // Buat perusahaan
-  const company = await prisma.company.upsert({
+  const company3 = await prisma.company.upsert({
     where: { id: 'qa_company_fase3' },
     update: {},
     create: {
@@ -181,49 +196,25 @@ async function main(): Promise<void> {
     },
   });
 
-  // Buat registrasi + group untuk siswa3
-  const reg3 = await prisma.registration.upsert({
+  // Registrasi DISETUJUI milik siswa3
+  await prisma.registration.upsert({
     where: { id: 'qa_reg_fase3' },
     update: {},
     create: {
       id: 'qa_reg_fase3',
       code: 'REG-QA-002',
-      groupName: 'Kelompok QA Fase 3',
-      companyName: 'PT Digital Kreatif',
-      companyAddress: 'Jl. Pemuda No. 20, Medan',
+      studentId: siswa3.id,
+      companyId: company3.id,
       status: RegistrationStatus.DISETUJUI,
-      leaderId: siswa3.id,
       cohortId: cohort.id,
       majorId: dkvMajor?.id,
+      submittedAt: now,
+      reviewedById: superAdmin.id,
+      reviewedAt: now,
+      permohonanDownloadedAt: now,
     },
   });
-
-  const group3 = await prisma.group.upsert({
-    where: { id: 'qa_group_fase3' },
-    update: {},
-    create: {
-      id: 'qa_group_fase3',
-      code: 'GRP-QA-001',
-      name: 'Kelompok QA Fase 3',
-      cohortId: cohort.id,
-      companyId: company.id,
-      registrationId: reg3.id,
-      status: GroupStatus.AKTIF,
-      startDate: now,
-      endDate: nextMonth,
-    },
-  });
-
-  await prisma.groupMember.upsert({
-    where: { groupId_userId: { groupId: group3.id, userId: siswa3.id } },
-    update: {},
-    create: {
-      groupId: group3.id,
-      userId: siswa3.id,
-      isLeader: true,
-    },
-  });
-  console.log(`✅ Siswa Fase 3 (PKL_AKTIF): ${siswa3.username} + group aktif`);
+  console.log(`✅ Siswa Fase 3 (PKL_AKTIF): ${siswa3.username} + registrasi DISETUJUI`);
 
   // =========================================================================
   // SISWA FASE 4: PKL_SELESAI (sudah selesai PKL)
@@ -247,12 +238,13 @@ async function main(): Promise<void> {
       fullName: 'Diana Fase 4',
       nisn: '001004',
       majorId: rplMajor?.id,
+      classId: await resolveClassId('XII-RPL-2', rplMajor?.id),
     },
   });
   console.log(`✅ Siswa Fase 4 (PKL_SELESAI): ${siswa4.username}`);
 
   // =========================================================================
-  // GURU PEMBIMBING
+  // GURU PEMBIMBING (+ pembimbingan siswa fase 3 & 4)
   // =========================================================================
   const guru = await prisma.user.upsert({
     where: { username: 'guru_pembimbing' },
@@ -273,38 +265,20 @@ async function main(): Promise<void> {
       nip: '198501012010011001',
     },
   });
-  await prisma.groupSupervisor.upsert({
-    where: { groupId_userId: { groupId: group3.id, userId: guru.id } },
-    update: {},
-    create: {
-      groupId: group3.id,
-      userId: guru.id,
-    },
-  });
-  console.log(`✅ Guru Pembimbing: ${guru.username}`);
 
-  // =========================================================================
-  // DUDI (perusahaan)
-  // =========================================================================
-  const dudi = await prisma.user.upsert({
-    where: { username: 'dudi_mentor' },
-    update: {},
-    create: {
-      username: 'dudi_mentor',
-      passwordHash: pwHash,
-      role: Role.DUDI,
-    },
-  });
-  await prisma.companyMentor.upsert({
-    where: { userId: dudi.id },
-    update: {},
-    create: {
-      userId: dudi.id,
-      companyId: company.id,
-      fullName: 'Bapak Mentor DUDI',
-    },
-  });
-  console.log(`✅ DUDI Mentor: ${dudi.username}`);
+  // Satu siswa = satu guru (StudentSupervisor)
+  for (const studentId of [siswa3.id, siswa4.id]) {
+    await prisma.studentSupervisor.upsert({
+      where: { studentId },
+      update: { supervisorId: guru.id },
+      create: {
+        studentId,
+        supervisorId: guru.id,
+        assignedById: superAdmin.id,
+      },
+    });
+  }
+  console.log(`✅ Guru Pembimbing: ${guru.username} (membimbing ${2} siswa)`);
 
   console.log('\n🎉 Seeding QA selesai! Semua fase sudah ada data contoh.');
   console.log('\n📋 Akun untuk testing:');
@@ -313,7 +287,6 @@ async function main(): Promise<void> {
   console.log('   Siswa Fase 3 (PKL_AKTIF):    siswa_fase3 / 123456');
   console.log('   Siswa Fase 4 (PKL_SELESAI):  siswa_fase4 / 123456');
   console.log('   Guru Pembimbing:              guru_pembimbing / 123456');
-  console.log('   DUDI Mentor:                  dudi_mentor / 123456');
   console.log('   Super Admin:                  superadmin / Admin#12345');
 }
 

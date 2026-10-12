@@ -1,13 +1,15 @@
 import { Request, Response } from 'express';
-import { journalService } from '../services/journal.service';
+import { journalService, JournalActor } from '../services/journal.service';
 import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
 import { SaveJournalDTO, UpdateJournalDTO, ListJournalQueryDTO } from '../validators/phase3.validator';
 
+const toActor = (req: Request): JournalActor => ({ id: req.user!.sub, role: req.user!.role });
+
 /**
- * Controller jurnal kegiatan (Fase 3).
+ * Controller jurnal kegiatan (Fase 3) — per siswa, tanpa kelompok PKL.
  */
 export class JournalController {
   /** POST /api/journals */
@@ -33,10 +35,9 @@ export class JournalController {
       {
         page,
         perPage,
-        groupId: query.groupId,
         userId: query.userId,
       },
-      { id: req.user!.sub, role: req.user!.role }
+      toActor(req)
     );
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
@@ -51,22 +52,15 @@ export class JournalController {
   /** POST /api/journals/:id/supervisor-note */
   supervisorNote = asyncHandler(async (req: Request, res: Response) => {
     const { note } = req.body as { note: string };
-    const result = await journalService.addSupervisorNote(req.user!.sub, req.params.id as string, note);
+    const result = await journalService.addSupervisorNote(toActor(req), req.params.id as string, note);
     return sendSuccess(res, result, 'Catatan pembimbing disimpan');
   });
 
-  dudiList = asyncHandler(async (req: Request, res: Response) => {
-    const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    const { items, total } = await journalService.listForDudi(req.user!.sub, {
-      page, perPage, groupId: req.query.groupId as string | undefined,
-    });
-    return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
-  });
-
-  dudiVerify = asyncHandler(async (req: Request, res: Response) => {
+  /** POST /api/journals/:id/verify */
+  verify = asyncHandler(async (req: Request, res: Response) => {
     const { note } = req.body as { note?: string };
-    const result = await journalService.verifyByDudi(req.user!.sub, req.params.id as string, note);
-    return sendSuccess(res, result, 'Jurnal dikonfirmasi DUDI');
+    const result = await journalService.verify(toActor(req), req.params.id as string, note);
+    return sendSuccess(res, result, 'Jurnal dikonfirmasi');
   });
 }
 

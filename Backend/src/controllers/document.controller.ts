@@ -24,7 +24,7 @@ export class DocumentController {
     const ctx = getRequestContext(req);
     const result = await documentService.uploadDocument({
       ownerId: req.user!.sub,
-      cohortId: dto.cohortId ?? req.user!.cohortId ?? null,
+      cohortId: req.user!.cohortId ?? null,
       type: dto.type,
       title: dto.title,
       file: req.file as Express.Multer.File,
@@ -65,8 +65,8 @@ export class DocumentController {
       id: req.user!.sub,
       role: req.user!.role,
     });
-    const group = await documentService.getOwnerGroup(doc.ownerId ?? null);
-    return sendSuccess(res, { ...doc, group }, 'OK');
+    const placement = await documentService.getOwnerPlacement(doc.ownerId ?? null);
+    return sendSuccess(res, { ...doc, placement }, 'OK');
   });
 
   /** GET /api/documents/:id/download — unduh file aktif (stream terkontrol). */
@@ -86,8 +86,10 @@ export class DocumentController {
       await documentService.markPermohonanDownloaded(doc.registrationId, req.user!.sub);
     }
 
-    res.setHeader('Content-Type', activeFile.mimeType ?? 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${activeFile.originalName}"`);
+    const downloadName = activeFile.originalName.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
     return res.send(buffer);
   });
 
@@ -103,7 +105,14 @@ export class DocumentController {
       });
       if (doc.type !== DocumentType.LAPORAN_AKHIR) throw new ForbiddenError(MESSAGES.SCOPE);
     }
-    const result = await documentService.verify(req.params.id as string, req.user!.sub, dto.action, dto.note, ctx);
+    const result = await documentService.verify(
+      req.params.id as string,
+      req.user!.sub,
+      req.user!.role,
+      dto.action,
+      dto.note,
+      ctx
+    );
     return sendSuccess(res, result, dto.action === 'APPROVE' ? 'Dokumen disetujui' : 'Dokumen ditolak');
   });
 
@@ -113,8 +122,10 @@ export class DocumentController {
     const file = await documentService.getActiveFileByType(req.user!.sub, type);
     const buffer = readStoredFile(file.storedPath);
     if (!buffer) throw new NotFoundError(MESSAGES.DOCUMENT.NOT_UPLOADED);
-    res.setHeader('Content-Type', file.mimeType ?? 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+    const downloadName = file.originalName.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
     return res.send(buffer);
   });
 }

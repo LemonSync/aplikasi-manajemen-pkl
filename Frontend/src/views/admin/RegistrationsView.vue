@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { registrationService, type GroupedRegistration } from '@/services/api.service';
+import { registrationService, type Registration } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
-const groups = ref<GroupedRegistration[]>([]);
 const loading = ref(true);
 const error = ref('');
 const success = ref('');
@@ -33,57 +33,44 @@ const EMPTY_TEXT: Record<StatusFilter, string> = {
   SEMUA: 'Belum ada pendaftaran.',
 };
 
-/** Jumlah pendaftaran per status (lintas gelombang aktif). */
-const statusCounts = computed<Record<StatusFilter, number>>(() => {
-  const counts: Record<StatusFilter, number> = { DIAJUKAN: 0, DISETUJUI: 0, DITOLAK: 0, SEMUA: 0 };
-  for (const g of groups.value) {
-    for (const r of g.registrations) {
-      if (r.status === 'DIAJUKAN') counts.DIAJUKAN += 1;
-      else if (r.status === 'DISETUJUI') counts.DISETUJUI += 1;
-      else if (r.status === 'DITOLAK') counts.DITOLAK += 1;
-      counts.SEMUA += 1;
-    }
-  }
-  return counts;
+// Daftar pendaftaran flat per tab status + jumlah total per status (meta.total).
+const itemsByStatus = ref<Record<StatusFilter, Registration[]>>({
+  DIAJUKAN: [],
+  DISETUJUI: [],
+  DITOLAK: [],
+  SEMUA: [],
 });
+const counts = ref<Record<StatusFilter, number>>({ DIAJUKAN: 0, DISETUJUI: 0, DITOLAK: 0, SEMUA: 0 });
 
-/** Kelompok yang disaring sesuai tab status + pencarian; kelompok tanpa kecocokan disembunyikan. */
-const filteredGroups = computed<GroupedRegistration[]>(() => {
-  const q = search.value.trim().toLowerCase();
-  const byStatus = groups.value
-    .map((g) =>
-      statusFilter.value === 'SEMUA'
-        ? g
-        : { ...g, registrations: g.registrations.filter((r) => r.status === statusFilter.value) }
-    )
-    .filter((g) => g.registrations.length > 0);
-  if (!q) return byStatus;
+const studentName = (r: Registration): string =>
+  r.student?.studentProfile?.fullName ?? r.student?.username ?? '-';
 
-  return byStatus
-    .map((g) => {
-      const groupLevelMatch = [g.groupName, g.companyName].join(' ').toLowerCase().includes(q);
-      if (groupLevelMatch) return g;
-      return { ...g, registrations: g.registrations.filter((r) =>
-        [r.leaderName, r.code, ...r.members.map((m) => `${m.fullName} ${m.nisn ?? ''}`)]
-          .join(' ')
-          .toLowerCase()
-          .includes(q)
-      ) };
-    })
-    .filter((g) => g.registrations.length > 0);
-});
-
-const showDetail = ref(false);
-const detailGroup = ref<GroupedRegistration | null>(null);
-
-const rejectingId = ref<string | null>(null);
-const rejectNote = ref('');
+const fmtDate = (v?: string | null): string =>
+  v ? new Date(v).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    groups.value = await registrationService.grouped(cohortStore.activeCohortId || undefined);
+    const cohortId = cohortStore.activeCohortId || undefined;
+    const [dDiajukan, dDisetujui, dDitolak, dSemua] = await Promise.all([
+      registrationService.list('DIAJUKAN', cohortId),
+      registrationService.list('DISETUJUI', cohortId),
+      registrationService.list('DITOLAK', cohortId),
+      registrationService.list(undefined, cohortId),
+    ]);
+    itemsByStatus.value = {
+      DIAJUKAN: dDiajukan.items,
+      DISETUJUI: dDisetujui.items,
+      DITOLAK: dDitolak.items,
+      SEMUA: dSemua.items,
+    };
+    counts.value = {
+      DIAJUKAN: dDiajukan.meta?.total ?? dDiajukan.items.length,
+      DISETUJUI: dDisetujui.meta?.total ?? dDisetujui.items.length,
+      DITOLAK: dDitolak.meta?.total ?? dDitolak.items.length,
+      SEMUA: dSemua.meta?.total ?? dSemua.items.length,
+    };
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -91,58 +78,67 @@ const load = async (): Promise<void> => {
   }
 };
 
-const openDetail = (g: GroupedRegistration): void => {
-  // Selalu tampilkan versi lengkap (semua status), bukan salinan tersaring.
-  detailGroup.value = groups.value.find((x) => x.groupName === g.groupName) ?? g;
-  rejectingId.value = null;
-  rejectNote.value = '';
-  showDetail.value = true;
-};
+/** Pendaftaran sesuai tab status + pencarian (FE-side). */
+const filteredRegs = computed<Registration[]>(() => {
+  const q = search.value.trim().toLowerCase();
+  const list = itemsByStatus.value[statusFilter.value];
+  if (!q) return list;
+  return list.filter((r) =>
+    [
+      r.code,
+      studentName(r),
+      r.student?.studentProfile?.nisn ?? '',
+      r.company.name,
+      r.major?.name ?? r.major?.code ?? '',
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(q)
+  );
+});
 
-const closeDetail = (): void => {
-  showDetail.value = false;
-  detailGroup.value = null;
-  rejectingId.value = null;
-  rejectNote.value = '';
-};
+// --- Tinjauan: setujui / tolak ---
+const rejecting = ref<Registration | null>(null);
+const rejectNote = ref('');
+const reviewing = ref(false);
 
 const doReview = async (regId: string, action: 'APPROVE' | 'REJECT', note?: string): Promise<void> => {
   error.value = '';
   success.value = '';
+  reviewing.value = true;
   try {
     await registrationService.review(regId, action, note);
     success.value = `Pendaftaran ${action === 'APPROVE' ? 'disetujui' : 'ditolak'}.`;
-    rejectingId.value = null;
+    rejecting.value = null;
     rejectNote.value = '';
     await load();
-    if (detailGroup.value) {
-      const fresh = groups.value.find((g) => g.groupName === detailGroup.value!.groupName);
-      if (fresh) detailGroup.value = fresh;
-    }
   } catch (e) {
     error.value = extractErrorMessage(e);
+  } finally {
+    reviewing.value = false;
   }
 };
 
-const approve = (regId: string): Promise<void> => doReview(regId, 'APPROVE');
+const approve = (reg: Registration): Promise<void> => doReview(reg.id, 'APPROVE');
 
-const startReject = (regId: string): void => {
-  rejectingId.value = regId;
+const startReject = (reg: Registration): void => {
+  rejecting.value = reg;
   rejectNote.value = '';
   error.value = '';
 };
 
 const cancelReject = (): void => {
-  rejectingId.value = null;
+  rejecting.value = null;
   rejectNote.value = '';
 };
 
-const submitReject = (regId: string): Promise<void> => {
+const submitReject = (): Promise<void> => {
+  if (!rejecting.value) return Promise.resolve();
   if (!rejectNote.value.trim()) {
     error.value = 'Alasan penolakan wajib diisi.';
     return Promise.resolve();
   }
-  return doReview(regId, 'REJECT', rejectNote.value.trim());
+  return doReview(rejecting.value.id, 'REJECT', rejectNote.value.trim());
 };
 
 onMounted(async () => {
@@ -152,10 +148,7 @@ onMounted(async () => {
 
 watch(
   () => cohortStore.activeCohortId,
-  () => {
-    closeDetail();
-    void load();
-  }
+  () => void load()
 );
 </script>
 
@@ -168,14 +161,14 @@ watch(
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div class="flex flex-1 flex-wrap items-end gap-3">
           <div>
-            <h2 class="text-lg font-semibold text-gray-800">Pendaftaran per Kelompok</h2>
-            <p class="text-sm text-gray-500">Digrup otomatis berdasarkan nama kelompok.</p>
+            <h2 class="text-lg font-semibold text-gray-800">Pendaftaran Siswa</h2>
+            <p class="text-sm text-gray-500">Satu baris untuk satu pendaftaran (per siswa).</p>
           </div>
           <input
             v-model="search"
             class="input ml-auto w-72"
             type="search"
-            placeholder="Cari kelompok, perusahaan, siswa, NISN…"
+            placeholder="Cari kode, nama siswa, NISN, perusahaan…"
           />
         </div>
 
@@ -197,7 +190,7 @@ watch(
               class="ml-1 font-mono"
               :class="statusFilter === tab.value ? 'text-primary-100' : 'text-gray-400'"
             >
-              {{ statusCounts[tab.value] }}
+              {{ counts[tab.value] }}
             </span>
           </button>
         </div>
@@ -207,137 +200,81 @@ watch(
       <table v-else class="table">
         <thead>
           <tr>
-            <th>Nama Kelompok</th>
+            <th>Kode</th>
+            <th>Nama Siswa</th>
             <th>Perusahaan</th>
-            <th>Jumlah</th>
+            <th>Jurusan</th>
             <th>Status</th>
+            <th>Diajukan</th>
             <th class="text-right">Aksi</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="g in filteredGroups" :key="g.groupName">
-            <td class="font-medium">{{ g.groupName }}</td>
-            <td>{{ g.companyName }}</td>
-            <td>
-              <span v-if="statusFilter !== 'SEMUA'">
-                {{ g.registrations.length }} ditampilkan ·
-              </span>
-              {{ g.approvedCount }}/{{ g.totalCount }} disetujui
+          <tr v-for="r in filteredRegs" :key="r.id">
+            <td class="font-mono text-xs text-gray-500">{{ r.code }}</td>
+            <td class="font-medium">
+              {{ studentName(r) }}
+              <p v-if="r.student?.studentProfile?.nisn" class="font-mono text-xs text-gray-400">
+                {{ r.student.studentProfile.nisn }}
+              </p>
             </td>
-            <td>
-              <span v-if="g.approvedCount === g.totalCount" class="text-xs font-medium text-emerald-600">Lengkap</span>
-              <span v-else-if="g.approvedCount > 0" class="text-xs font-medium text-amber-600">Sebagian</span>
-              <span v-else-if="g.registrations.some((r) => r.status === 'DITOLAK')" class="text-xs font-medium text-red-600">Ditolak</span>
-              <span v-else class="text-xs font-medium text-amber-600">Menunggu</span>
-            </td>
+            <td>{{ r.company.name }}</td>
+            <td>{{ r.major?.name ?? r.major?.code ?? '-' }}</td>
+            <td><StatusBadge :status="r.status" /></td>
+            <td class="whitespace-nowrap text-sm">{{ fmtDate(r.submittedAt) }}</td>
             <td class="text-right">
-              <button class="text-primary-600 hover:underline" @click="openDetail(g)">Detail</button>
+              <template v-if="r.status === 'DIAJUKAN'">
+                <button class="text-sm text-emerald-600 hover:underline" @click="approve(r)">Setujui</button>
+                <span class="mx-1 text-gray-300">|</span>
+                <button class="text-sm text-red-600 hover:underline" @click="startReject(r)">Tolak</button>
+              </template>
+              <span v-else class="text-xs text-gray-400">Sudah ditinjau</span>
             </td>
           </tr>
-          <tr v-if="filteredGroups.length === 0 && !loading">
-            <td colspan="5" class="py-4 text-center text-gray-400">
+          <tr v-if="filteredRegs.length === 0 && !loading">
+            <td colspan="7" class="py-4 text-center text-gray-400">
               {{ search.trim() ? 'Tidak ada pendaftaran yang cocok dengan pencarian.' : EMPTY_TEXT[statusFilter] }}
             </td>
           </tr>
         </tbody>
       </table>
+
+      <p
+        v-if="!loading && counts[statusFilter] > itemsByStatus[statusFilter].length"
+        class="mt-2 text-xs text-gray-400"
+      >
+        Menampilkan {{ itemsByStatus[statusFilter].length }} terbaru dari
+        {{ counts[statusFilter] }} pendaftaran — persempit dengan filter status atau gelombang.
+      </p>
     </div>
 
-    <!-- Modal Detail Kelompok -->
+    <!-- Modal Penolakan -->
     <Modal
-      :open="showDetail && !!detailGroup"
-      :title="`Detail Kelompok: ${detailGroup?.groupName ?? ''}`"
-      size="xl"
-      @close="closeDetail"
+      :open="!!rejecting"
+      title="Tolak Pendaftaran"
+      size="md"
+      :busy="reviewing"
+      @close="cancelReject"
     >
-      <template v-if="detailGroup">
-        <!-- Tempat PKL (diisi ketua saat Fase 1) -->
-        <div class="mb-4 bg-gray-50 p-3">
-          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Tempat PKL</h4>
-          <div class="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
-            <div><span class="text-gray-500">Perusahaan:</span> {{ detailGroup.companyName }}</div>
-            <div><span class="text-gray-500">Kota:</span> {{ detailGroup.companyCity ?? '-' }}</div>
-            <div class="sm:col-span-2"><span class="text-gray-500">Alamat:</span> {{ detailGroup.companyAddress }}</div>
-            <div><span class="text-gray-500">Bidang Industri:</span> {{ detailGroup.companyIndustry ?? '-' }}</div>
-            <div><span class="text-gray-500">Telepon:</span> {{ detailGroup.companyPhone ?? '-' }}</div>
-            <div><span class="text-gray-500">Website:</span> {{ detailGroup.companyWebsite ?? '-' }}</div>
-            <div>
-              <span class="text-gray-500">Kontak (WA):</span>
-              {{ detailGroup.companyContacts && detailGroup.companyContacts.length > 0 ? detailGroup.companyContacts.join(', ') : '-' }}
-            </div>
-            <div><span class="text-gray-500">Jurusan:</span> {{ detailGroup.majorName ?? '-' }}</div>
-            <div><span class="text-gray-500">Gelombang:</span> {{ detailGroup.cohortName ?? '-' }}</div>
-          </div>
-        </div>
-
-        <!-- Per pendaftaran: identitas anggota + aksi verifikasi -->
-        <div
-          v-for="r in detailGroup.registrations"
-          :key="r.id"
-          class="mb-3 border border-gray-200 p-3 last:mb-0"
-        >
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2 text-sm">
-              <span class="font-mono text-xs text-gray-500">{{ r.code }}</span>
-              <span class="font-medium text-gray-700">Pengaju: {{ r.leaderName }}</span>
-              <StatusBadge :status="r.status" />
-              <span class="text-xs text-gray-400">
-                diajukan {{ new Date(r.createdAt).toLocaleDateString('id-ID') }}
-              </span>
-            </div>
-            <div class="flex items-center gap-2 text-sm">
-              <template v-if="r.status === 'DIAJUKAN' && rejectingId !== r.id">
-                <button class="text-emerald-600 hover:underline" @click="approve(r.id)">Setujui</button>
-                <span class="text-gray-300">|</span>
-                <button class="text-red-600 hover:underline" @click="startReject(r.id)">Tolak</button>
-              </template>
-              <span v-else-if="r.status !== 'DIAJUKAN'" class="text-xs text-gray-400">Sudah ditinjau</span>
-            </div>
-          </div>
-
-          <div v-if="rejectingId === r.id" class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start">
-            <textarea
-              v-model="rejectNote"
-              rows="2"
-              class="input flex-1"
-              placeholder="Alasan penolakan (wajib diisi)"
-            ></textarea>
-            <div class="flex gap-2">
-              <button class="btn-danger" @click="submitReject(r.id)">Kirim Tolak</button>
-              <button class="btn-secondary" @click="cancelReject">Batal</button>
-            </div>
-          </div>
-
-          <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Anggota ({{ r.members.length }})
-          </h4>
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-500">
-                <th class="pb-1">NISN</th>
-                <th class="pb-1">Nama</th>
-                <th class="pb-1">Kelas</th>
-                <th class="pb-1">No. HP</th>
-                <th class="pb-1">Alamat</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in r.members" :key="m.id ?? `${m.nisn}-${m.fullName}`" class="border-t border-gray-100">
-                <td class="py-1.5 font-mono text-xs">{{ m.nisn ?? '-' }}</td>
-                <td class="py-1.5">
-                  {{ m.fullName }}
-                  <span v-if="m.isLeader" class="ml-1 badge bg-amber-100 text-amber-700">Ketua</span>
-                </td>
-                <td class="py-1.5">{{ m.className ?? '-' }}</td>
-                <td class="whitespace-nowrap py-1.5">{{ m.phone ?? '-' }}</td>
-                <td class="py-1.5 text-gray-500">{{ m.address ?? '-' }}</td>
-              </tr>
-              <tr v-if="r.members.length === 0">
-                <td colspan="5" class="py-2 text-center text-gray-400">Tidak ada data anggota.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <template v-if="rejecting">
+        <p class="mb-3 text-sm text-gray-600">
+          Pendaftaran <span class="font-mono">{{ rejecting.code }}</span> milik
+          <strong>{{ studentName(rejecting) }}</strong> ({{ rejecting.company.name }}).
+        </p>
+        <label class="label">Alasan Penolakan</label>
+        <textarea
+          v-model="rejectNote"
+          rows="3"
+          class="input"
+          placeholder="Alasan penolakan (wajib diisi)"
+        ></textarea>
+      </template>
+      <template #footer>
+        <button class="btn-secondary" :disabled="reviewing" @click="cancelReject">Batal</button>
+        <button class="btn-danger" :disabled="reviewing || !rejectNote.trim()" @click="submitReject">
+          <LoadingSpinner v-if="reviewing" inline />
+          {{ reviewing ? 'Mengirim…' : 'Kirim Tolak' }}
+        </button>
       </template>
     </Modal>
   </div>

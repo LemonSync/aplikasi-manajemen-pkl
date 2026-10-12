@@ -36,7 +36,10 @@ export class RegistrationController {
 
   /** GET /api/registrations/:id — detail (pemilik atau admin). */
   detail = asyncHandler(async (req: Request, res: Response) => {
-    const result = await registrationService.getById(req.params.id as string);
+    const result = await registrationService.getById(req.params.id as string, {
+      id: req.user!.sub,
+      role: req.user!.role,
+    });
     return sendSuccess(res, result, 'OK');
   });
 
@@ -49,7 +52,6 @@ export class RegistrationController {
       perPage,
       status: query.status,
       cohortId: query.cohortId,
-      withoutGroup: query.withoutGroup === 'true',
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
@@ -66,13 +68,6 @@ export class RegistrationController {
       ctx
     );
     return sendSuccess(res, result, dto.action === 'APPROVE' ? 'Pendaftaran disetujui' : 'Pendaftaran ditolak');
-  });
-
-  /** GET /api/registrations/grouped — pendaftaran digrup per nama kelompok (admin). */
-  grouped = asyncHandler(async (req: Request, res: Response) => {
-    const cohortId = req.query.cohortId as string | undefined;
-    const result = await registrationService.listGrouped(cohortId);
-    return sendSuccess(res, result, 'OK');
   });
 }
 

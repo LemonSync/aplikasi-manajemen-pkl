@@ -28,9 +28,9 @@ const detailClass = ref<GradeRecapClass | null>(null);
 const search = ref('');
 
 /**
- * Filter rekap per kelas + kelompok (FE-side).
+ * Filter rekap per kelas → siswa (FE-side).
  * Kelas cocok nama → tampil semua isinya; jika tidak, tampil hanya
- * kelompok/siswa yang cocok; kelas tanpa kecocokan disembunyikan.
+ * siswa yang cocok; kelas tanpa kecocokan disembunyikan.
  */
 const filteredClasses = computed<GradeRecapClass[]>(() => {
   const q = search.value.trim().toLowerCase();
@@ -39,17 +39,16 @@ const filteredClasses = computed<GradeRecapClass[]>(() => {
   return classes
     .map((cls) => {
       if (cls.className.toLowerCase().includes(q)) return cls;
-      return {
-        ...cls,
-        groups: cls.groups.filter((g) =>
-          [g.groupName, g.companyName ?? '', ...g.students.map((s) => `${s.fullName} ${s.nisn ?? ''}`)]
-            .join(' ')
-            .toLowerCase()
-            .includes(q)
-        ),
-      };
+      const students = cls.students.filter((s) =>
+        [s.fullName, s.username, s.nisn ?? '', s.companyName ?? '', s.supervisorName ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      );
+      if (students.length === 0) return null;
+      return { ...cls, students };
     })
-    .filter((cls) => cls.groups.length > 0);
+    .filter((cls): cls is GradeRecapClass => cls !== null);
 });
 
 const toNum = (v: number | string | null | undefined): number | null => {
@@ -64,13 +63,16 @@ const avgOf = (students: GradeRecapStudent[]): number | null => {
   return scores.reduce((a, b) => a + b, 0) / scores.length;
 };
 
-const classAvg = (cls: GradeRecapClass): number | null =>
-  avgOf(cls.groups.flatMap((g) => g.students));
+const classAvg = (cls: GradeRecapClass): number | null => avgOf(cls.students);
 
 const gradedIn = (students: GradeRecapStudent[]): number => students.filter((s) => s.grade !== null).length;
 
+/** Tooltip rincian aspek penilaian (per label: skor). */
+const aspectsTitle = (s: GradeRecapStudent): string =>
+  (s.grade?.aspects ?? []).map((a) => `${a.label}: ${a.score}`).join('\n');
+
 const allGradedStudents = (): GradeRecapStudent[] =>
-  (recap.value?.classes ?? []).flatMap((c) => c.groups.flatMap((g) => g.students)).filter((s) => s.grade?.finalScore != null);
+  (recap.value?.classes ?? []).flatMap((c) => c.students).filter((s) => s.grade?.finalScore != null);
 
 const load = async (): Promise<void> => {
   loading.value = true;
@@ -144,7 +146,7 @@ watch(
           v-model="search"
           class="input w-72"
           type="search"
-          placeholder="Cari kelas, kelompok, nama siswa, NISN…"
+          placeholder="Cari kelas, nama siswa, NISN, perusahaan…"
         />
       </div>
 
@@ -160,7 +162,6 @@ watch(
           <tr>
             <th>Kelas</th>
             <th class="text-center">Siswa</th>
-            <th class="text-center">Kelompok</th>
             <th class="text-center">Dinilai</th>
             <th class="text-center">Rata-rata</th>
             <th></th>
@@ -174,10 +175,9 @@ watch(
             @click="detailClass = cls"
           >
             <td class="font-medium text-gray-800">{{ cls.className }}</td>
-            <td class="text-center">{{ cls.studentCount }}</td>
-            <td class="text-center">{{ cls.groups.length }}</td>
+            <td class="text-center">{{ cls.students.length }}</td>
             <td class="text-center">
-              {{ cls.gradedCount }}<span class="text-gray-400">/{{ cls.studentCount }}</span>
+              {{ gradedIn(cls.students) }}<span class="text-gray-400">/{{ cls.students.length }}</span>
             </td>
             <td class="text-center font-semibold text-gray-800">
               {{ classAvg(cls) !== null ? classAvg(cls)!.toFixed(1) : '—' }}
@@ -188,80 +188,65 @@ watch(
       </table>
     </div>
 
-    <!-- Modal kelas: kelompok + nilai siswa -->
+    <!-- Modal kelas: nilai per siswa -->
     <Modal :open="!!detailClass" :title="detailClass?.className ?? 'Kelas'" size="xl" @close="detailClass = null">
       <template v-if="detailClass">
         <p class="mb-4 text-sm text-gray-500">
-          {{ detailClass.studentCount }} siswa · {{ detailClass.groups.length }} kelompok ·
-          {{ detailClass.gradedCount }} dinilai
+          {{ detailClass.students.length }} siswa · {{ gradedIn(detailClass.students) }} dinilai
         </p>
-        <div
-          v-for="g in detailClass.groups"
-          :key="g.groupId"
-          class="mb-4 border border-gray-200 p-3 last:mb-0"
-        >
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="font-semibold text-gray-800">{{ g.groupName }}</span>
-              <span v-if="g.companyName" class="text-sm text-gray-500">— {{ g.companyName }}</span>
-              <span
-                v-if="g.students.length < g.memberCount"
-                class="badge bg-amber-100 text-amber-700"
-                title="Sebagian anggota di kelas lain"
-              >
-                {{ g.students.length }}/{{ g.memberCount }} di kelas ini
-              </span>
-            </div>
-            <span class="text-xs text-gray-500">
-              {{ g.students.length }} siswa · {{ gradedIn(g.students) }} dinilai
-              <template v-if="avgOf(g.students) !== null"> · {{ avgOf(g.students)!.toFixed(1) }}</template>
-            </span>
-          </div>
 
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Siswa</th>
-                <th>NISN</th>
-                <th class="text-center">DUDI</th>
-                <th class="text-center">Indikator</th>
-                <th class="text-center">Bimbingan</th>
-                <th class="text-center">Akhir</th>
-                <th class="text-center">Predikat</th>
-                <th>Catatan</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="s in g.students" :key="s.userId" :class="{ 'opacity-70': !s.grade }">
-                <td>
-                  <div class="font-medium text-gray-800">{{ s.fullName }}</div>
-                  <div class="font-mono text-xs text-gray-400">{{ s.username }}</div>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Siswa</th>
+              <th>NISN</th>
+              <th>Perusahaan</th>
+              <th>Pembimbing</th>
+              <th class="text-center">Approval</th>
+              <th class="text-center">DUDI</th>
+              <th class="text-center">Indikator</th>
+              <th class="text-center">Bimbingan</th>
+              <th class="text-center">Akhir</th>
+              <th class="text-center">Predikat</th>
+              <th>Catatan</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in detailClass.students" :key="s.userId" :class="{ 'opacity-70': !s.grade }">
+              <td>
+                <div class="font-medium text-gray-800">{{ s.fullName }}</div>
+                <div class="font-mono text-xs text-gray-400">{{ s.username }}</div>
+              </td>
+              <td class="font-mono text-sm text-gray-600">{{ s.nisn ?? '—' }}</td>
+              <td class="text-gray-600">{{ s.companyName ?? '—' }}</td>
+              <td class="text-gray-600">{{ s.supervisorName ?? '—' }}</td>
+              <td class="text-center">
+                <StatusBadge v-if="s.approvalStatus" :status="s.approvalStatus" />
+                <span v-else class="text-gray-400">—</span>
+              </td>
+              <template v-if="s.grade">
+                <td class="text-center">{{ toNum(s.grade.scoreDudi) ?? '—' }}</td>
+                <td class="text-center">
+                  <span
+                    v-if="(s.grade.aspects ?? []).length > 0"
+                    class="cursor-help text-gray-600 underline decoration-dotted"
+                    :title="aspectsTitle(s)"
+                  >
+                    {{ (s.grade.aspects ?? []).length }} aspek
+                  </span>
+                  <span v-else class="text-gray-400">-</span>
                 </td>
-                <td class="font-mono text-sm text-gray-600">{{ s.nisn ?? '—' }}</td>
-                <template v-if="s.grade">
-                  <td class="text-center">{{ toNum(s.grade.scoreDudi) ?? '—' }}</td>
-                  <td class="text-center">
-                    <span
-                      v-if="(s.grade.aspects ?? []).length > 0"
-                      class="cursor-help text-gray-600 underline decoration-dotted"
-                      :title="(s.grade.aspects ?? []).map((a) => `${a.label}: ${a.score}`).join('\n')"
-                    >
-                      {{ (s.grade.aspects ?? []).length }} aspek
-                    </span>
-                    <span v-else class="text-gray-400">-</span>
-                  </td>
-                  <td class="text-center">{{ toNum(s.grade.scoreGuidance) ?? '—' }}</td>
-                  <td class="text-center font-semibold text-gray-800">{{ toNum(s.grade.finalScore) ?? '—' }}</td>
-                  <td class="text-center"><StatusBadge :status="s.grade.predicate ?? '-'" /></td>
-                  <td class="text-gray-500">{{ s.grade.note ?? '-' }}</td>
-                </template>
-                <template v-else>
-                  <td colspan="6" class="text-center text-sm text-gray-400">Belum dinilai</td>
-                </template>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                <td class="text-center">{{ toNum(s.grade.scoreGuidance) ?? '—' }}</td>
+                <td class="text-center font-semibold text-gray-800">{{ toNum(s.grade.finalScore) ?? '—' }}</td>
+                <td class="text-center"><StatusBadge :status="s.grade.predicate ?? '-'" /></td>
+                <td class="text-gray-500">{{ s.grade.note ?? '-' }}</td>
+              </template>
+              <template v-else>
+                <td colspan="6" class="text-center text-sm text-gray-400">Belum dinilai</td>
+              </template>
+            </tr>
+          </tbody>
+        </table>
       </template>
     </Modal>
 

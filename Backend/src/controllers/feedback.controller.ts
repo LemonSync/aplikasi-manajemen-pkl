@@ -7,10 +7,10 @@ import { parsePagination } from '../utils/pagination';
 import { CreateFeedbackDTO, ListFeedbackQueryDTO } from '../validators/phase4.validator';
 
 /**
- * Controller feedback DUDI (Fase 4).
+ * Controller feedback untuk siswa — dari admin/guru pembimbing (Fase 4).
  */
 export class FeedbackController {
-  /** POST /api/feedbacks — DUDI: input feedback */
+  /** POST /api/feedbacks — admin/guru: input feedback untuk siswa */
   create = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as CreateFeedbackDTO;
     const ctx = getRequestContext(req);
@@ -35,7 +35,6 @@ export class FeedbackController {
       page,
       perPage,
       studentId: query.studentId,
-      groupId: query.groupId,
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });

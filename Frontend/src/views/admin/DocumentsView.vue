@@ -4,7 +4,7 @@ import {
   documentService,
   downloadFile,
   type DocumentRecord,
-  type DocumentGroupDetail,
+  type DocumentPlacement,
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -24,7 +24,7 @@ const search = ref('');
 const activeId = ref<string | null>(null);
 const noteInput = ref('');
 const busy = ref(false);
-const detail = ref<(DocumentRecord & { group: DocumentGroupDetail | null }) | null>(null);
+const detail = ref<(DocumentRecord & { placement: DocumentPlacement | null }) | null>(null);
 const loadingDetail = ref(false);
 const detailError = ref('');
 
@@ -223,50 +223,58 @@ watch(
           <input v-model="noteInput" class="input" placeholder="Wajib bila tolak" />
         </div>
 
-        <!-- Info kelompok & perusahaan (konteks dokumen) -->
+        <!-- Penempatan pemilik dokumen: siswa, perusahaan, pembimbing -->
         <div class="mt-4 border-t border-gray-100 pt-4">
-          <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Kelompok &amp; Perusahaan</div>
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Penempatan Dokumen</div>
           <LoadingSpinner v-if="loadingDetail" />
           <div v-else-if="detailError" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ detailError }}</div>
           <template v-else-if="detail">
-            <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
-              <b>{{ detail.group?.name ?? 'Kelompok belum terbentuk' }}</b>
-              <span v-if="detail.group" class="text-gray-500">({{ detail.group.code }})</span>
-              <span v-if="detail.group?.majorName" class="text-gray-500">· {{ detail.group.majorName }}</span>
-            </div>
+            <div v-if="detail.placement" class="space-y-3">
+              <!-- Siswa pemilik dokumen -->
+              <div class="border border-gray-200 p-3 text-sm">
+                <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Siswa</p>
+                <p class="font-medium">
+                  {{ detail.placement.student.fullName ?? detail.placement.student.username }}
+                </p>
+                <p class="text-gray-600">
+                  <span class="font-mono">{{ detail.placement.student.username }}</span>
+                  <template v-if="detail.placement.student.nisn"> · NISN {{ detail.placement.student.nisn }}</template>
+                  <template v-if="detail.placement.student.className"> · {{ detail.placement.student.className }}</template>
+                </p>
+                <p class="flex flex-wrap items-center gap-2 text-gray-600">
+                  Kode pendaftaran: <span class="font-mono">{{ detail.placement.code }}</span>
+                  <StatusBadge :status="detail.placement.status" />
+                </p>
+                <p v-if="detail.placement.majorName" class="text-gray-600">
+                  Jurusan: {{ detail.placement.majorName }}
+                </p>
+              </div>
 
-            <table v-if="detail.group && detail.group.members.length > 0" class="table mb-3">
-              <thead>
-                <tr>
-                  <th class="w-8">#</th>
-                  <th>Nama</th>
-                  <th>NISN</th>
-                  <th>Kelas</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(m, i) in detail.group.members" :key="m.userId">
-                  <td>{{ i + 1 }}</td>
-                  <td class="font-medium">
-                    {{ m.fullName }}
-                    <span v-if="m.isLeader" class="badge ml-1 bg-amber-100 text-amber-800">Ketua</span>
-                  </td>
-                  <td>{{ m.nisn ?? '-' }}</td>
-                  <td>{{ m.className ?? '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else class="mb-3 text-sm text-gray-400">Belum ada daftar anggota.</p>
+              <!-- Perusahaan tempat PKL -->
+              <div v-if="detail.placement.company" class="border border-gray-200 p-3 text-sm">
+                <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Perusahaan</p>
+                <p class="font-medium">{{ detail.placement.company.name }}</p>
+                <p class="text-gray-600">{{ detail.placement.company.address ?? '-' }}</p>
+                <p class="text-gray-600">
+                  {{ detail.placement.company.city ?? '-' }}
+                  <template v-if="detail.placement.company.industryName"> · {{ detail.placement.company.industryName }}</template>
+                </p>
+                <p v-if="detail.placement.company.phone" class="text-gray-600">
+                  Telp: {{ detail.placement.company.phone }}
+                </p>
+              </div>
+              <p v-else class="text-sm text-gray-400">Perusahaan belum ditautkan.</p>
 
-            <div v-if="detail.group?.company" class="border border-gray-200 p-3 text-sm">
-              <p class="mb-1 font-medium">{{ detail.group.company.name }}</p>
-              <p class="text-gray-600">{{ detail.group.company.address ?? '-' }}</p>
-              <p class="text-gray-600">
-                {{ detail.group.company.city ?? '-' }}
-                <template v-if="detail.group.company.industryName"> · {{ detail.group.company.industryName }}</template>
-              </p>
+              <!-- Guru pembimbing -->
+              <div class="border border-gray-200 p-3 text-sm">
+                <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Guru Pembimbing</p>
+                <p v-if="detail.placement.supervisorName" class="font-medium">
+                  {{ detail.placement.supervisorName }}
+                </p>
+                <p v-else class="text-gray-400">Belum ada pembimbing.</p>
+              </div>
             </div>
-            <p v-else class="text-sm text-gray-400">Perusahaan belum ditautkan.</p>
+            <p v-else class="text-sm text-gray-400">Penempatan tidak tersedia untuk dokumen ini.</p>
           </template>
         </div>
       </template>

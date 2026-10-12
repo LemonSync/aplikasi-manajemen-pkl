@@ -12,6 +12,8 @@ import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppErr
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { saveBuffer } from '../utils/storage';
 import { studentWorkflowService } from './studentWorkflow.service';
+import { classNameWithFallback } from './classResolver.service';
+import { companyService } from './company.service';
 
 export interface UploadResult {
   documentId: string;
@@ -41,11 +43,29 @@ export class DocumentService {
 
     if (!file) throw new BadRequestError('File wajib diunggah');
     await studentWorkflowService.syncScheduledPhase(ownerId);
-    const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { role: true, phase: true } });
+    const owner = await prisma.user.findUnique({
+      where: { id: ownerId },
+      select: { role: true, phase: true, cohortId: true },
+    });
     if (!owner) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    if (cohortId !== (owner.cohortId ?? null)) {
+      throw new ForbiddenError(MESSAGES.SCOPE);
+    }
 
-    // Hanya tipe dokumen berikut yang boleh diunggah lewat endpoint siswa/ketua;
-    // tipe lain (surat permohonan/pengantar/penugasan/penarikan) dibuat sistem/admin.
+    const validSignatures: Record<string, (buffer: Buffer) => boolean> = {
+      'application/pdf': (b) => b.subarray(0, 5).toString('ascii') === '%PDF-',
+      'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+      'image/jpg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+      'image/png': (b) => b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+      'application/msword': (b) => b.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0])),
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': (b) => b.subarray(0, 2).toString('ascii') === 'PK',
+    };
+    if (!validSignatures[file.mimetype]?.(file.buffer)) {
+      throw new BadRequestError(MESSAGES.DOCUMENT.INVALID_FILE);
+    }
+
+    // Hanya tipe dokumen berikut yang boleh diunggah lewat endpoint siswa;
+    // tipe lain (surat permohonan/pengantar/monitoring/penjemputan) dibuat sistem/admin.
     const uploadableTypes: DocumentType[] = [
       DocumentType.SURAT_PENERIMAAN,
       DocumentType.SURAT_PERNYATAAN,
@@ -74,11 +94,6 @@ export class DocumentService {
         throw new ForbiddenError(
           `Unggah ${label} hanya dapat dilakukan pada fase ${window.join(' / ')} (fase Anda saat ini: ${owner.phase})`
         );
-      }
-    } else if (owner.role === 'KETUA') {
-      // Akun ketua sementara hanya dipakai untuk surat balasan perusahaan.
-      if (type !== DocumentType.SURAT_PENERIMAAN) {
-        throw new ForbiddenError('Akun Ketua hanya dapat mengunggah Surat Penerimaan');
       }
     }
 
@@ -121,15 +136,24 @@ export class DocumentService {
     }
 
     // Simpan file di luar webroot dengan nama generate
-    const ext = file.originalname.includes('.') ? `.${file.originalname.split('.').pop()}` : '';
+    const extensionByMime: Record<string, string> = {
+      'application/pdf': '.pdf',
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/png': '.png',
+      'application/msword': '.doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    };
+    const ext = extensionByMime[file.mimetype] ?? '';
     const safeName = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
     const { relativePath } = saveBuffer('documents', safeName, file.buffer);
 
     const nextVersion = await documentRepository.nextVersion(document.id);
+    const safeOriginalName = file.originalname.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
     const createdFile: DocumentFile = await documentRepository.createFile({
       document: { connect: { id: document.id } },
       uploadedBy: { connect: { id: ownerId } },
-      originalName: file.originalname,
+      originalName: safeOriginalName,
       storedPath: relativePath,
       mimeType: file.mimetype,
       sizeBytes: file.size,
@@ -142,7 +166,7 @@ export class DocumentService {
       action: AUDIT_ACTIONS.UPLOAD_DOCUMENT,
       entityType: ENTITY_TYPES.DOCUMENT,
       entityId: document.id,
-      metadata: { type, version: nextVersion, originalName: file.originalname },
+      metadata: { type, version: nextVersion, originalName: safeOriginalName },
       ipAddress: params.ctx.ipAddress,
       userAgent: params.ctx.userAgent,
     });
@@ -157,8 +181,8 @@ export class DocumentService {
   }
 
   /**
-   * Cek akses dokumen: pemilik, admin/kepsek, guru pembimbing kelompok pemilik,
-   * atau DUDI mentor kelompok pemilik. Lainnya ditolak (anti IDOR).
+   * Cek akses dokumen: pemilik, admin/kepsek, atau guru pembimbing pemilik
+   * dokumen. Lainnya ditolak (anti IDOR).
    */
   async assertCanAccess(docId: string, actor: { id: string; role: string }) {
     const doc = await this.getById(docId);
@@ -168,147 +192,86 @@ export class DocumentService {
     if (doc.ownerId === actor.id) return doc;
 
     if (actor.role === 'GURU_PEMBIMBING') {
-      const supervised = await prisma.groupSupervisor.findFirst({
-        where: { userId: actor.id, group: { deletedAt: null, members: { some: { userId: doc.ownerId } } } },
-        select: { groupId: true },
+      const supervision = await prisma.studentSupervisor.findUnique({
+        where: { studentId: doc.ownerId },
+        select: { supervisorId: true },
       });
-      if (supervised) return doc;
-    }
-
-    if (actor.role === 'DUDI') {
-      const mentor = await prisma.groupDudiMentor.findFirst({
-        where: { dudiUserId: actor.id, group: { deletedAt: null, members: { some: { userId: doc.ownerId } } } },
-        select: { groupId: true },
-      });
-      if (mentor) return doc;
+      if (supervision?.supervisorId === actor.id) return doc;
     }
 
     throw new ForbiddenError(MESSAGES.SCOPE);
   }
 
   /**
-   * Detail kelompok/penerimaan untuk dokumen (Surat Penerimaan):
-   * anggota + data perusahaan tempat PKL. Sumber data berurutan:
-   *  1. Kelompok tempat pemilik dokumen tercatat sebagai anggota.
-   *  2. Kelompok yang dibentuk dari pendaftaran milik pemilik (akun KETUA
-   *     sementara tidak pernah menjadi GroupMember).
-   *  3. Pendaftaran Fase 1 milik pemilik — fase di mana surat penerimaan
-   *     memang sudah bisa diupload (Group baru dibentuk setelah surat
-   *     disetujui / provisioning).
-   * null bila tidak ada ketiganya.
+   * Penempatan pemilik dokumen (Surat Penerimaan): pendaftaran milik siswa
+   * ini + data perusahaan tujuan + guru pembimbing. null bila tidak ada
+   * pendaftaran.
    */
-  async getOwnerGroup(ownerId: string | null) {
+  async getOwnerPlacement(ownerId: string | null) {
     if (!ownerId) return null;
 
-    const groupInclude = {
-      company: { include: { industry: { select: { name: true } } } },
-      major: { select: { name: true } },
-      members: {
-        orderBy: [{ isLeader: 'desc' as const }, { joinedAt: 'asc' as const }],
-        include: {
-          user: {
-            select: {
-              username: true,
-              role: true,
-              studentProfile: {
-                select: {
-                  fullName: true,
-                  nisn: true,
-                  class: { select: { name: true } },
-                },
+    const registration = await prisma.registration.findFirst({
+      where: { studentId: ownerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        company: { include: { industry: { select: { name: true } } } },
+        major: { select: { name: true } },
+        student: {
+          select: {
+            id: true,
+            username: true,
+            studentProfile: {
+              select: {
+                fullName: true,
+                nisn: true,
+                class: { select: { name: true } },
               },
             },
           },
         },
       },
-    };
-
-    // 1) owner adalah anggota kelompok
-    let group = await prisma.group.findFirst({
-      where: { deletedAt: null, members: { some: { userId: ownerId } } },
-      orderBy: { createdAt: 'desc' },
-      include: groupInclude,
     });
+    if (!registration) return null;
 
-    // 2) kelompok hasil pembentukan dari pendaftaran milik owner
-    if (!group) {
-      group = await prisma.group.findFirst({
-        where: { deletedAt: null, registration: { leaderId: ownerId } },
-        orderBy: { createdAt: 'desc' },
-        include: groupInclude,
-      });
-    }
-
-    // pendaftaran Fase 1 milik owner (untuk fallback anggota/perusahaan)
-    const registration = await prisma.registration.findFirst({
-      where: { leaderId: ownerId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        major: { select: { name: true } },
-        members: { orderBy: [{ isLeader: 'desc' as const }, { createdAt: 'asc' as const }] },
+    const supervision = await prisma.studentSupervisor.findUnique({
+      where: { studentId: ownerId },
+      select: {
+        supervisor: {
+          select: { username: true, teacherProfile: { select: { fullName: true } } },
+        },
       },
     });
 
-    if (!group && !registration) return null;
-
-    // Anggota: kelompok bila punya anggota, else baris anggota Fase 1
-    // (skip auto-row "(Ketua)" tanpa NISN yang dibuat sistem).
-    const groupMembers = group?.members ?? [];
-    const members =
-      groupMembers.length > 0
-        ? groupMembers.map((m) => ({
-            userId: m.userId,
-            fullName: m.user.studentProfile?.fullName ?? m.user.username,
-            nisn: m.user.studentProfile?.nisn ?? (m.user.role === 'SISWA' ? m.user.username : null),
-            className: m.user.studentProfile?.class?.name ?? null,
-            isLeader: m.isLeader,
-          }))
-        : (registration?.members ?? [])
-            .filter((rm) => !(rm.nisn === null && rm.fullName === '(Ketua)'))
-            .map((rm) => ({
-              userId: rm.userId,
-              fullName: rm.fullName,
-              nisn: rm.nisn,
-              className: rm.className,
-              isLeader: rm.isLeader,
-            }));
-
-    // Perusahaan: group.company bila ada, else snapshot dari pendaftaran Fase 1
-    const company = group?.company
+    const profile = registration.student?.studentProfile;
+    // Kelas: preferensi Class.name, fallback ke Master Siswa (NISN).
+    const registryClassName = await classNameWithFallback(profile);
+    const company = registration.company
       ? {
-          name: group.company.name,
-          address: group.company.address,
-          phone: group.company.phone,
-          email: group.company.email,
-          city: group.company.city,
-          industryName: group.company.industry?.name ?? null,
-          website: null as string | null,
-          contacts: null as string[] | null,
+          name: registration.company.name,
+          address: registration.company.address,
+          phone: registration.company.phone,
+          email: registration.company.email,
+          city: registration.company.city,
+          industryName: registration.company.industry?.name ?? null,
+          website: registration.company.website,
         }
-      : registration
-        ? {
-            name: registration.companyName,
-            address: registration.companyAddress,
-            phone: registration.companyPhone,
-            email: null as string | null,
-            city: registration.companyCity,
-            industryName: registration.companyIndustry,
-            website: registration.companyWebsite,
-            contacts: Array.isArray(registration.companyContacts)
-              ? (registration.companyContacts as string[])
-              : null,
-          }
-        : null;
+      : null;
 
     return {
-      id: group?.id ?? registration!.id,
-      name: group?.name ?? registration!.groupName,
-      code: group?.code ?? registration!.code,
-      status: (group?.status ?? registration!.status) as string,
-      majorName: group?.major?.name ?? registration?.major?.name ?? null,
+      id: registration.id,
+      code: registration.code,
+      status: registration.status as string,
+      majorName: registration.major?.name ?? null,
+      supervisorName:
+        supervision?.supervisor.teacherProfile?.fullName ?? supervision?.supervisor.username ?? null,
+      student: {
+        userId: registration.student?.id ?? ownerId,
+        fullName: profile?.fullName ?? registration.student?.username ?? null,
+        nisn: profile?.nisn ?? null,
+        className: registryClassName,
+      },
       company,
-      members,
-      source: (group ? 'GROUP' : 'REGISTRATION') as 'GROUP' | 'REGISTRATION',
+      source: 'REGISTRATION' as const,
     };
   }
 
@@ -328,16 +291,16 @@ export class DocumentService {
   }
 
   /**
-   * Tandai Surat Permohonan sudah diunduh ketua (gerbang Fase 1 → Fase 2).
-   * Hanya pemimpin pendaftaran yang menandai; unduhan admin/guru diabaikan
-   * karena tidak berarti ketua sudah menerima fisik suratnya.
+   * Tandai Surat Permohonan sudah diunduh siswa (gerbang Fase 1 → Fase 2).
+   * Hanya siswa pemilik pendaftaran yang menandai; unduhan admin/guru diabaikan
+   * karena tidak berarti siswa sudah menerima fisik suratnya.
    */
   async markPermohonanDownloaded(registrationId: string, requesterId: string): Promise<void> {
     const reg = await prisma.registration.findUnique({
       where: { id: registrationId },
-      select: { leaderId: true, deletedAt: true },
+      select: { studentId: true, deletedAt: true },
     });
-    if (!reg || reg.deletedAt || reg.leaderId !== requesterId) return;
+    if (!reg || reg.deletedAt || reg.studentId !== requesterId) return;
     await prisma.registration.update({
       where: { id: registrationId },
       data: { permohonanDownloadedAt: new Date() },
@@ -348,7 +311,7 @@ export class DocumentService {
     return documentRepository.findMany({ ownerId });
   }
 
-  /** Daftar dokumen. Guru dibatasi pada kelompok bimbingannya. */
+  /** Daftar dokumen. Guru dibatasi pada siswa bimbingannya. */
   async list(
     params: { page: number; perPage: number; status?: DocumentStatus; type?: DocumentType; cohortId?: string },
     actor?: { id: string; role: string }
@@ -360,19 +323,12 @@ export class DocumentService {
     };
 
     if (actor && actor.role === 'GURU_PEMBIMBING') {
-      const supervised = await prisma.groupSupervisor.findMany({
-        where: { userId: actor.id },
-        select: { groupId: true },
+      const links = await prisma.studentSupervisor.findMany({
+        where: { supervisorId: actor.id },
+        select: { studentId: true },
       });
-      const groupIds = supervised.map((s) => s.groupId);
-      if (groupIds.length === 0) return { items: [], total: 0 };
-      const owners = await prisma.groupMember.findMany({
-        where: { groupId: { in: groupIds } },
-        select: { userId: true },
-      });
-      const ownerIds = [...new Set(owners.map((o) => o.userId).filter((id): id is string => id !== null))];
-      if (ownerIds.length === 0) return { items: [], total: 0 };
-      where.ownerId = { in: ownerIds };
+      if (links.length === 0) return { items: [], total: 0 };
+      where.ownerId = { in: links.map((l) => l.studentId) };
     }
 
     return documentRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
@@ -382,17 +338,43 @@ export class DocumentService {
   async verify(
     id: string,
     actorId: string,
+    actorRole: string,
     action: 'APPROVE' | 'REJECT',
     note: string | undefined,
     ctx: { ipAddress?: string; userAgent?: string }
   ) {
     const doc = await documentRepository.findById(id);
     if (!doc) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    if (actorRole === 'GURU_PEMBIMBING') {
+      const scoped = await this.assertCanAccess(id, { id: actorId, role: actorRole });
+      if (scoped.type !== DocumentType.LAPORAN_AKHIR) throw new ForbiddenError(MESSAGES.SCOPE);
+    }
     if (doc.status === DocumentStatus.DISETUJUI) {
       throw new BadRequestError(MESSAGES.DOCUMENT.ALREADY_VERIFIED);
     }
     if (action === 'REJECT' && !note) {
       throw new BadRequestError('Alasan penolakan wajib diisi');
+    }
+
+    // Guard 2 (dua penjaga kuota): approve Surat Penerimaan menambah
+    // pemakaian kuota perusahaan — tolak bila sudah penuh SEBELUM status
+    // dokumen diubah (saat di-reject kembali, kuota otomatis tersedia lagi).
+    if (action === 'APPROVE' && doc.type === DocumentType.SURAT_PENERIMAAN) {
+      const activeReg = await prisma.registration.findFirst({
+        where: {
+          studentId: doc.ownerId,
+          deletedAt: null,
+          status: { in: ['DIAJUKAN', 'DISETUJUI'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { companyId: true },
+      });
+      if (!activeReg) {
+        throw new BadRequestError(
+          'Tidak ada pendaftaran aktif untuk menyetujui Surat Penerimaan siswa ini'
+        );
+      }
+      await companyService.assertSisaAvailable(activeReg.companyId);
     }
 
     const updated = await documentRepository.update(id, {
@@ -402,10 +384,10 @@ export class DocumentService {
       verifiedAt: new Date(),
     });
 
-    // Surat penerimaan adalah gerbang Fase 2: langsung provision akun anggota
-    // dan akun DUDI. Tidak lagi menunggu ketua membuka halaman workflow.
+    // Gerbang fase (PRA_PKL → NON_PKL → PKL_AKTIF) dihitung otomatis oleh
+    // StudentWorkflowService.checkPhaseCompletion — tidak ada provisioning akun.
     if (action === 'APPROVE' && doc.type === DocumentType.SURAT_PENERIMAAN) {
-      await studentWorkflowService.provisionAfterAcceptance(doc.ownerId);
+      await studentWorkflowService.syncScheduledPhase(doc.ownerId);
     }
 
     await auditService.record({
