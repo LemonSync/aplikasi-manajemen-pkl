@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+type PDFDocType = InstanceType<typeof PDFDocument>;
 
 /**
  * Template Laporan Hasil PKL per siswa (multi-halaman).
@@ -36,9 +37,9 @@ interface Column {
   align?: 'left' | 'center' | 'right';
 }
 
-const ROW_BOTTOM = (doc: PDFKit.PDFDocument): number => doc.page.height - MARGIN;
+const ROW_BOTTOM = (doc: PDFDocType): number => doc.page.height - MARGIN;
 
-const drawTable = (doc: PDFKit.PDFDocument, columns: Column[], rows: string[][]): void => {
+const drawTable = (doc: PDFDocType, columns: Column[], rows: string[][]): void => {
   const fontSize = 8.5;
   const pad = 4;
 
@@ -90,7 +91,7 @@ const drawTable = (doc: PDFKit.PDFDocument, columns: Column[], rows: string[][])
   doc.moveDown(0.8);
 };
 
-const sectionTitle = (doc: PDFKit.PDFDocument, text: string): void => {
+const sectionTitle = (doc: PDFDocType, text: string): void => {
   if (doc.y > doc.page.height - MARGIN - 70) doc.addPage();
   doc.moveDown(0.5);
   doc.font(FONT_BOLD).fontSize(11).fillColor('#1f2937').text(text);
@@ -103,7 +104,7 @@ const sectionTitle = (doc: PDFKit.PDFDocument, text: string): void => {
   doc.fillColor('#000000');
 };
 
-const infoLine = (doc: PDFKit.PDFDocument, label: string, value: string): void => {
+const infoLine = (doc: PDFDocType, label: string, value: string): void => {
   doc.font(FONT).fontSize(9.5);
   const y = doc.y;
   doc.font(FONT_BOLD).text(`${label}: `, MARGIN, y, { continued: true, width: 140 });

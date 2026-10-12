@@ -149,6 +149,7 @@ export class DocumentService {
     const { relativePath } = saveBuffer('documents', safeName, file.buffer);
 
     const nextVersion = await documentRepository.nextVersion(document.id);
+    // eslint-disable-next-line no-control-regex
     const safeOriginalName = file.originalname.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
     const createdFile: DocumentFile = await documentRepository.createFile({
       document: { connect: { id: document.id } },

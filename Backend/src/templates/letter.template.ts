@@ -2,6 +2,8 @@ import PDFDocument from 'pdfkit';
 import path from 'path';
 import { formatDate } from '../utils/date';
 
+type PDFDocType = InstanceType<typeof PDFDocument>;
+
 /**
  * Template surat resmi SMKN 9 Medan — reproduksi persis surat contoh resmi:
  * kop (logo Pemprov Sumut + blok instansi + garis double), font Times,
@@ -82,11 +84,11 @@ const FONT_BOLD = 'Times-Bold';
 const PAGE_BOTTOM = 780; // batas konten sebelum footer
 const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo-sumut.png');
 
-const pageWidth = (doc: PDFKit.PDFDocument): number => doc.page.width - MARGIN;
+const pageWidth = (doc: PDFDocType): number => doc.page.width - MARGIN;
 
 /** Gambar teks dengan dukungan **bold** inline. Mengembalikan y setelahnya. */
 const drawRich = (
-  doc: PDFKit.PDFDocument,
+  doc: PDFDocType,
   text: string,
   x: number,
   y: number,
@@ -101,7 +103,7 @@ const drawRich = (
     const bold = i % 2 === 1;
     doc.font(bold ? FONT_BOLD : FONT).fontSize(size);
     const isLast = i === parts.length - 1;
-    const textOpts: PDFKit.Mixins.TextOptions = {
+    const textOpts: Parameters<PDFDocType['text']>[1] = {
       width: opts.width,
       lineGap,
       ...(opts.align && opts.align !== 'left' ? { align: opts.align } : {}),
@@ -114,7 +116,7 @@ const drawRich = (
 };
 
 /** Kop surat persis surat contoh: logo + 4 baris instansi + garis double. */
-const drawKop = (doc: PDFKit.PDFDocument, header: SchoolHeader): void => {
+const drawKop = (doc: PDFDocType, header: SchoolHeader): void => {
   const right = pageWidth(doc);
   const logoW = 72;
   const textX = MARGIN + 82;
@@ -126,7 +128,7 @@ const drawKop = (doc: PDFKit.PDFDocument, header: SchoolHeader): void => {
     // logo opsional — bila gagal dimuat, kop tetap digambar
   }
 
-  let y = 36;
+  const y = 36;
   doc.font(FONT_BOLD).fontSize(11).text(header.government.toUpperCase(), textX, y, {
     width: textW,
     align: 'center',
@@ -177,7 +179,7 @@ const drawKop = (doc: PDFKit.PDFDocument, header: SchoolHeader): void => {
 
 /** Tabel resmi: kepala abu-abu tebal center, border tipis, header ulang saat pindah halaman. */
 const drawTable = (
-  doc: PDFKit.PDFDocument,
+  doc: PDFDocType,
   table: LetterTable,
   x: number,
   right: number,
@@ -233,7 +235,7 @@ const drawTable = (
 };
 
 /** Blok "Dengan Pembimbing Sekolah" (surat pengantar). */
-const drawPembimbing = (doc: PDFKit.PDFDocument, block: PembimbingBlock, x: number, right: number): void => {
+const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, x: number, right: number): void => {
   doc.font(FONT).fontSize(11);
   doc.text('Dengan Pembimbing Sekolah :', x, doc.y, { width: right - x });
   doc.moveDown(0.3);
@@ -254,7 +256,7 @@ const drawPembimbing = (doc: PDFKit.PDFDocument, block: PembimbingBlock, x: numb
 };
 
 /** Blok tanda tangan surat formal: jabatan center, jeda, nama tebal + NIP (tanpa baris tanggal). */
-const drawSignFormal = (doc: PDFKit.PDFDocument, signer: SignerBlock): void => {
+const drawSignFormal = (doc: PDFDocType, signer: SignerBlock): void => {
   // Blok tanda tangan tidak boleh terpotong antar halaman (butuh ~95pt).
   if (doc.y > 700) doc.addPage();
   const blockW = 250;
@@ -269,7 +271,7 @@ const drawSignFormal = (doc: PDFKit.PDFDocument, signer: SignerBlock): void => {
 };
 
 /** Footer nomor halaman "-- n of m --" (dipanggil setelah semua halaman terbentuk). */
-const drawFooters = (doc: PDFKit.PDFDocument): void => {
+const drawFooters = (doc: PDFDocType): void => {
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++) {
     doc.switchToPage(range.start + i);

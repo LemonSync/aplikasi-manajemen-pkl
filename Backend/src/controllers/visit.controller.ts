@@ -90,7 +90,7 @@ export class VisitController {
       req.user!.role
     );
     res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Content-Disposition', `inline; filename="${filename.replace(/[^\w.\-]+/g, '_')}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename.replace(/[^\w.-]+/g, '_')}"`);
     return res.send(buffer);
   });
 }

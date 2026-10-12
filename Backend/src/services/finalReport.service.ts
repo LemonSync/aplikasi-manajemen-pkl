@@ -77,7 +77,7 @@ export class FinalReportService {
     }
 
     const code = student.studentProfile?.nisn ?? student.username;
-    const filename = `Laporan-Hasil-PKL-${code}.pdf`.replace(/[^\w.\-]+/g, '_');
+    const filename = `Laporan-Hasil-PKL-${code}.pdf`.replace(/[^\w.-]+/g, '_');
 
     // Sudah terbit? Pakai file snapshot-nya (isi tidak berubah walau data
     // bergerak setelah terbit — sesuai aturan "sudah terbit ya tetap").

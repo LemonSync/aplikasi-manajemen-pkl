@@ -20,7 +20,7 @@ export const notFoundHandler = (req: Request, res: Response): void => {
 /**
  * Global error handler. Mengubah semua error menjadi response JSON konsisten.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 export const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction): void => {
   let statusCode: number = HTTP_STATUS.INTERNAL;
   let message: string = MESSAGES.INTERNAL;

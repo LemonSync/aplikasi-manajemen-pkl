@@ -85,7 +85,7 @@ export class DocumentController {
     if (doc.type === DocumentType.SURAT_PERMOHONAN && doc.registrationId) {
       await documentService.markPermohonanDownloaded(doc.registrationId, req.user!.sub);
     }
-
+    // eslint-disable-next-line no-control-regex
     const downloadName = activeFile.originalName.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -122,6 +122,7 @@ export class DocumentController {
     const file = await documentService.getActiveFileByType(req.user!.sub, type);
     const buffer = readStoredFile(file.storedPath);
     if (!buffer) throw new NotFoundError(MESSAGES.DOCUMENT.NOT_UPLOADED);
+    // eslint-disable-next-line no-control-regex
     const downloadName = file.originalName.replace(/[\u0000-\u001f"\\/]/g, '_').slice(0, 255);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', 'application/octet-stream');
