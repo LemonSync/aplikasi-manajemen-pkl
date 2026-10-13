@@ -4,6 +4,7 @@ import { teacherRegistryService, NIP_PATTERN, normalizeNip, TeacherProvisionResu
 import { majorRepository } from '../repositories/major.repository';
 import { cohortRepository } from '../repositories/cohort.repository';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { ensureSchoolMajors } from './schoolMajor.service';
 
 export interface TeacherImportRow {
   nip: string;
@@ -168,6 +169,7 @@ export class TeacherRegistryImportService {
     parseErrors: string[] = [],
     actor?: { actorId?: string; ipAddress?: string; userAgent?: string }
   ): Promise<TeacherImportResult> {
+    await ensureSchoolMajors();
     // Validasi cohort exists
     const cohort = await cohortRepository.findById(cohortId);
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');

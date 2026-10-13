@@ -10,6 +10,7 @@ import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const cohortStore = useCohortStore();
 // Mengikuti konteks gelombang global di header.
@@ -183,29 +184,6 @@ const submitAdd = async (): Promise<void> => {
   }
 };
 
-/** Tambal akun untuk baris master yang belum punya akun (idempoten). */
-const ensureAccounts = async (): Promise<void> => {
-  if (!selectedCohort.value) return;
-  importing.value = true;
-  error.value = '';
-  try {
-    const result = await teacherRegistryService.ensureAccounts(selectedCohort.value);
-    accountsModal.value = {
-      title: 'Hasil Pembuatan Akun',
-      accounts: result.created,
-      skipped: result.skipped,
-      errors: result.errors,
-    };
-    if (result.created.length === 0 && result.errors.length === 0) {
-      success.value = `Semua ${result.skipped} guru di gelombang ini sudah punya akun.`;
-    }
-  } catch (e) {
-    error.value = extractErrorMessage(e);
-  } finally {
-    importing.value = false;
-  }
-};
-
 const removeTeacher = async (t: TeacherRegistryRecord): Promise<void> => {
   const ok = window.confirm(
     `Hapus guru "${t.fullName}" (NIP ${t.nip})?\n\n` +
@@ -247,6 +225,15 @@ const copyAccounts = async (): Promise<void> => {
     success.value = 'Daftar akun disalin ke clipboard.';
   } catch {
     error.value = 'Gagal menyalin ke clipboard.';
+  }
+};
+
+const copyAccount = async (account: TeacherProvisionedAccount): Promise<void> => {
+  try {
+    await navigator.clipboard.writeText(`${account.username}\t${account.password}`);
+    success.value = `Kredensial ${account.username} disalin.`;
+  } catch {
+    error.value = 'Gagal menyalin kredensial.';
   }
 };
 
@@ -306,10 +293,15 @@ watch(
 
         <!-- Akun otomatis + password (tampilkan sekali) -->
         <div v-if="importResult.accounts.created.length > 0" class="mt-3">
-          <p class="font-medium text-emerald-700">
-            Akun login dibuat otomatis ({{ importResult.accounts.created.length }}) —
-            catat/salin password sekarang, hanya ditampilkan sekali:
-          </p>
+          <div class="flex items-center justify-between gap-2">
+            <p class="font-medium text-emerald-700">
+              Akun login dibuat otomatis ({{ importResult.accounts.created.length }}) —
+              catat/salin password sekarang, hanya ditampilkan sekali:
+            </p>
+            <button class="btn-secondary !px-2 !py-1 text-xs" title="Salin semua kredensial" aria-label="Salin semua kredensial" @click="copyAccounts">
+              <AppIcon name="clipboard" :size="14" /> Salin Semua
+            </button>
+          </div>
           <div class="mt-2 overflow-x-auto rounded border border-gray-200 bg-white">
             <table class="min-w-full text-left text-xs">
               <thead class="bg-gray-50 text-gray-500">
@@ -325,7 +317,12 @@ watch(
                   <td class="px-3 py-1.5 font-mono">{{ a.nip }}</td>
                   <td class="px-3 py-1.5">{{ a.fullName }}</td>
                   <td class="px-3 py-1.5 font-mono">{{ a.username }}</td>
-                  <td class="px-3 py-1.5 font-mono">{{ a.password }}</td>
+                  <td class="px-3 py-1.5 font-mono">
+                    {{ a.password }}
+                    <button class="ml-2 text-primary-600 hover:text-primary-800" title="Salin username dan password" :aria-label="`Salin kredensial ${a.username}`" @click="copyAccount(a)">
+                      <AppIcon name="clipboard" :size="14" />
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -368,7 +365,6 @@ watch(
       <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-3">
           <h2 class="text-lg font-semibold text-gray-800">Master Guru ({{ teachers.length }} data)</h2>
-          <button class="btn-secondary" :disabled="importing" @click="ensureAccounts">Buat Akun Tertinggal</button>
           <button class="btn-primary" @click="openAdd">+ Tambah Guru</button>
         </div>
         <input

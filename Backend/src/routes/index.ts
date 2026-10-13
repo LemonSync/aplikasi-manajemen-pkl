@@ -27,6 +27,7 @@ import teacherRegistryRoutes from './teacherRegistry.routes';
 import supervisionRoutes from './supervision.routes';
 import letterRoutes from './letter.routes';
 import decoyRoutes from './decoy.routes';
+import configRoutes from './config.routes';
 
 /**
  * Router utama API — prefix /api
@@ -35,6 +36,7 @@ const router = Router();
 
 // Route umpan lebih dulu: aktivitas probe ke jalur internal direkam lalu 404.
 router.use('/internal', decoyRoutes);
+router.use('/config', configRoutes);
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);

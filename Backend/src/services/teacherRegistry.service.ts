@@ -6,6 +6,7 @@ import { encryptCredential } from '../utils/credentialCipher';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES } from '../config/constants';
 import { auditService } from './audit.service';
+import { ensureSchoolMajors } from './schoolMajor.service';
 
 /** NIP: 18 digit angka (spasi diabaikan, format NIP lama "1985 01 01 ..." tetap diterima). */
 export const NIP_PATTERN = /^\d{18}$/;
@@ -136,6 +137,7 @@ export class TeacherRegistryService {
     account: ProvisionedTeacherAccount | null;
     restored: boolean;
   }> {
+    await ensureSchoolMajors();
     const cohortId = String(input.cohortId ?? '').trim();
     if (!cohortId) throw new BadRequestError('Gelombang wajib dipilih');
     const cohort = await prisma.cohort.findUnique({ where: { id: cohortId } });

@@ -5,6 +5,7 @@ import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const cohortStore = useCohortStore();
 // Mengikuti konteks gelombang global di header.
@@ -34,6 +35,29 @@ const showMapping = ref(false);
 const inspecting = ref(false);
 const mapHeaders = ref<string[]>([]);
 const mapForm = ref({ nisn: '', fullName: '', className: '', majorCode: '' });
+
+const copyStudentAccount = async (account: NonNullable<StudentRegistryImportResult['accounts']>['created'][number]): Promise<void> => {
+  try {
+    await navigator.clipboard.writeText(`${account.username}\t${account.password}`);
+    success.value = `Kredensial ${account.username} disalin.`;
+  } catch {
+    error.value = 'Gagal menyalin kredensial.';
+  }
+};
+
+const copyStudentAccounts = async (): Promise<void> => {
+  const accounts = importResult.value?.accounts?.created ?? [];
+  if (!accounts.length) return;
+  try {
+    await navigator.clipboard.writeText([
+      'NISN\tNama\tUsername\tPassword',
+      ...accounts.map((account) => `${account.nisn}\t${account.fullName}\t${account.username}\t${account.password}`),
+    ].join('\n'));
+    success.value = 'Semua kredensial siswa disalin.';
+  } catch {
+    error.value = 'Gagal menyalin kredensial.';
+  }
+};
 
 const loadStudents = async (): Promise<void> => {
   if (!selectedCohort.value) return;
@@ -156,7 +180,7 @@ const submitAdd = async (): Promise<void> => {
       majorCode: form.majorCode.trim() || undefined,
     });
     showAdd.value = false;
-    success.value = `Data siswa ${record.fullName} (${record.nisn}) ditambahkan ke Master Siswa.`;
+    success.value = `Data siswa ${record.record.fullName} (${record.record.nisn}) ditambahkan. ${record.accounts.created.length} akun dibuat otomatis.`;
     await loadStudents();
   } catch (e) {
     error.value = extractErrorMessage(e);
@@ -242,7 +266,29 @@ watch(
       <div v-if="importResult" class="mt-4 rounded-lg bg-gray-50 p-4 text-sm">
         <p><strong>Hasil Import:</strong></p>
         <p>Total baris valid: {{ importResult.total }}</p>
-        <p>Baru: {{ importResult.created }} | Diperbarui: {{ importResult.updated }} | Duplikat dilewati: {{ importResult.duplicates.length }}</p>
+          <p>Baru: {{ importResult.created }} | Diperbarui: {{ importResult.updated }} | Duplikat dilewati: {{ importResult.duplicates.length }}</p>
+          <p v-if="importResult.accounts" class="mt-1 text-emerald-700">
+            Akun otomatis dibuat: {{ importResult.accounts.created.length }}
+            <span v-if="importResult.accounts.classBackfilled">· Kelas terisi: {{ importResult.accounts.classBackfilled }}</span>
+          </p>
+          <div v-if="importResult.accounts?.created.length" class="mt-2 rounded border border-emerald-200 bg-emerald-50 p-2">
+            <div class="flex items-center justify-between gap-2">
+              <p class="font-medium text-emerald-800">Kredensial akun baru (simpan sekarang):</p>
+              <button class="btn-secondary !px-2 !py-1 text-xs" title="Salin semua kredensial" aria-label="Salin semua kredensial" @click="copyStudentAccounts">
+                <AppIcon name="clipboard" :size="14" /> Salin Semua
+              </button>
+            </div>
+            <div class="mt-2 space-y-1">
+              <div v-for="account in importResult.accounts.created" :key="account.userId" class="flex flex-wrap items-center gap-2 text-emerald-800">
+                <span class="w-24 font-mono text-xs">{{ account.nisn }}</span>
+                <span class="min-w-32 flex-1">{{ account.fullName }}</span>
+                <span class="font-mono">{{ account.username }}</span>
+                <button class="text-emerald-700 hover:text-emerald-900" title="Salin username dan password" :aria-label="`Salin kredensial ${account.username}`" @click="copyStudentAccount(account)">
+                  <AppIcon name="clipboard" :size="15" />
+                </button>
+              </div>
+            </div>
+          </div>
         <div v-if="importResult.duplicates.length > 0" class="mt-2">
           <p class="font-medium text-amber-700">Data sama tidak diduplikasi ({{ importResult.duplicates.length }}):</p>
           <ul class="list-disc pl-5 text-amber-700">

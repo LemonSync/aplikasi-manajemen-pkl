@@ -35,12 +35,12 @@ async function main(): Promise<void> {
   // 2. Master jurusan
   // ---------------------------------------------------------------------------
   const majors = [
-    { code: 'DKV', name: 'Desain Komunikasi Visual' },
     { code: 'RPL', name: 'Rekayasa Perangkat Lunak' },
-    { code: 'PSPT', name: 'Produksi Siaran Pertelevisian' },
-    { code: 'ANIMASI', name: 'Animasi' },
+    { code: 'DKV', name: 'Desain Komunikasi Visual' },
     { code: 'TKJ', name: 'Teknik Komputer dan Jaringan' },
     { code: 'PEKSOS', name: 'Pekerjaan Sosial' },
+    { code: 'PSPT', name: 'Produksi Siaran Pertelevisian' },
+    { code: 'ANIMASI', name: 'Animasi' },
   ];
   for (const major of majors) {
     await prisma.major.upsert({

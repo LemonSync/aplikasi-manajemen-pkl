@@ -35,13 +35,6 @@ router.post(
   teacherRegistryController.create
 );
 
-// Admin: tambal akun untuk baris yang belum punya (idempoten)
-router.post(
-  '/ensure-accounts',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
-  teacherRegistryController.ensureAccounts
-);
-
 // Admin: daftar master guru
 router.get(
   '/',

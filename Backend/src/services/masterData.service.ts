@@ -1,6 +1,8 @@
 import { cohortRepository } from '../repositories/cohort.repository';
 import { majorRepository } from '../repositories/major.repository';
 import { industryRepository } from '../repositories/industry.repository';
+import { ensureSchoolIndustries } from './schoolIndustry.service';
+import { ensureSchoolMajors } from './schoolMajor.service';
 
 /**
  * Service data master ringan (gelombang, jurusan, industri) untuk kebutuhan dropdown.
@@ -11,15 +13,19 @@ export class MasterDataService {
   }
 
   async listMajors() {
+    await ensureSchoolMajors();
     return majorRepository.findMany();
   }
 
   async listIndustries() {
+    await ensureSchoolIndustries();
     return industryRepository.findMany();
   }
 
   /** Bundel semua data master dalam satu panggilan (mengurangi round-trip). */
   async getLookups() {
+    await ensureSchoolIndustries();
+    await ensureSchoolMajors();
     const [cohorts, majors, industries] = await Promise.all([
       cohortRepository.findMany(),
       majorRepository.findMany(),

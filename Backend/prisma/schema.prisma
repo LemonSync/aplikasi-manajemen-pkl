@@ -101,6 +101,7 @@ enum RegistrationStatus {
   DIAJUKAN    // form dikirim & surat permohonan di-generate
   DISETUJUI   // admin menyetujui ajuan
   DITOLAK     // admin menolak (disertai alasan)
+  DIBATALKAN  // siswa berubah pikiran / ganti perusahaan (kuota dilepas)
 }
 
 // ============================================================================
@@ -733,6 +734,7 @@ model LetterSignatory {
   name      String
   nip       String?  @db.VarChar(40)
   position  String   @default("Kepala Sekolah")
+  signaturePath String?
   isActive  Boolean  @default(true)
   startDate DateTime?
   endDate   DateTime?

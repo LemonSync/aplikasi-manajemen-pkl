@@ -27,6 +27,13 @@ export class RegistrationController {
     return sendSuccess(res, result, 'OK');
   });
 
+  /** POST /api/registrations/change-company — siswa berubah pikiran, kembali Fase 1. */
+  changeCompany = asyncHandler(async (req: Request, res: Response) => {
+    const ctx = getRequestContext(req);
+    const result = await registrationService.cancelAndChangeCompany(req.user!.sub, ctx);
+    return sendSuccess(res, result, 'Pendaftaran dibatalkan. Kuota perusahaan lama dilepas — silakan pilih perusahaan baru.');
+  });
+
   /** POST /api/registrations/:id/submit — ajukan & generate surat permohonan. */
   submit = asyncHandler(async (req: Request, res: Response) => {
     const ctx = getRequestContext(req);

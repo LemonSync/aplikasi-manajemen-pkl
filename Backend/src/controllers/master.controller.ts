@@ -75,6 +75,10 @@ export class CompanyController {
     const dto = req.body as UpdateCompanyDTO;
     return sendSuccess(res, await companyService.update(req.params.id as string, dto), 'Perusahaan diperbarui');
   });
+
+  remove = asyncHandler(async (req: Request, res: Response) => {
+    return sendSuccess(res, await companyService.remove(req.params.id as string, req.user!.sub), 'Perusahaan dihapus');
+  });
 }
 
 export const masterDataController = new MasterDataController();

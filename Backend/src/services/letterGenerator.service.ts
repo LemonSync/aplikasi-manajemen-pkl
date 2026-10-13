@@ -2,6 +2,7 @@ import { DocumentType, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { letterService, GeneratedLetterResult } from './letter.service';
 import { settingService } from './setting.service';
+import { LETTER_TEXT } from '../config/letter.config';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
 
 /**
@@ -161,19 +162,16 @@ export class LetterGeneratorService {
 
     const result = await letterService.generatePenugasan({
       number: number ?? null,
-      dari: `Kepala Sekolah Menengah Kejuruan (SMK) Negeri 9 Medan`,
+      dari: LETTER_TEXT.assignment.from,
       kepada: {
         nama: teacherName,
         nip: supervisor.teacherProfile?.nip ?? null,
-        jabatan: majorCode ? `Guru Produktif Keahlian ${majorCode}` : 'Guru Pembimbing',
+        jabatan: majorCode ? `Guru Produktif Keahlian ${majorCode}` : LETTER_TEXT.assignment.defaultPosition,
         unitKerja: school.schoolName,
       },
-      dasar:
-        dasar?.trim() ||
-        `Keputusan Kepala Sekolah ${school.schoolName} Nomor 400.3.8.3/290/SMKN9/VI/2026 tentang pengangkatan pembimbing sekolah dalam pelaksanaan Praktek Kerja Lapangan (PKL).`,
-      isi: `Menugaskan bahwa nama yang tersebut diatas untuk melaksanakan **Pengantaran/Monitoring/Menjemput** siswa PKL yang dilaksanakan Mulai dari Tanggal **${rangeText}** ke :`,
-      ketentuan:
-        'Demikian Surat Penugasan ini agar dapat dilaksanakan sebaik-baiknya.',
+      dasar: dasar?.trim() || LETTER_TEXT.assignment.basis(school.schoolName),
+      isi: LETTER_TEXT.assignment.content(rangeText),
+      ketentuan: LETTER_TEXT.assignment.closing,
       tujuan,
       cohortId,
       createdById: actorId,

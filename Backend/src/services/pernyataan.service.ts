@@ -18,11 +18,13 @@ function formatLongDate(d: Date): string {
 }
 
 export interface PernyataanDataInput {
-  // Hanya data yang boleh diisi siswa. Nama, kelas/program keahlian, No. HP siswa,
+  // Hanya data yang boleh diisi siswa. Nama, kelas/program keahlian,
   // dan tempat PKL diambil dari server (master siswa + pendaftaran Fase 1).
+  // No. HP siswa boleh diisi siswa, default dari profil bila kosong.
   namaOrtu?: string;
   alamatSiswa?: string;
   hpOrtu?: string;
+  hpSiswa?: string;
 }
 
 export interface PernyataanResult {
@@ -86,15 +88,21 @@ export class PernyataanService {
     const namaOrtu = input.namaOrtu ?? parent?.fatherName ?? parent?.guardianName ?? '';
     const hpOrtu = input.hpOrtu ?? parent?.fatherPhone ?? parent?.guardianPhone ?? '';
     const alamatSiswa = input.alamatSiswa ?? profile?.address ?? '';
-    // [DIKUNCI] Dari profil siswa + pendaftaran
-    const hpSiswa = profile?.phone ?? '';
+    // Diisi siswa, default dari profil bila kosong
+    const hpSiswa = input.hpSiswa ?? profile?.phone ?? '';
     const tempatPkl = registration?.company?.name ?? '';
 
     let tanggalPkl = '';
     let tahunPelajaran = '';
     if (cohort) {
-      if (cohort.startDate && cohort.endDate) {
-        tanggalPkl = `${formatLongDate(cohort.startDate)} s.d. ${formatLongDate(cohort.endDate)}`;
+      // Tanggal PKL diambil dari jadwal Fase 3 (masa PKL aktif) gelombang ini
+      const pklPhase = await prisma.phaseSchedule.findUnique({
+        where: { cohortId_phase: { cohortId: cohort.id, phase: StudentPhase.PKL_AKTIF } },
+      });
+      const start = pklPhase?.startDate ?? cohort.startDate;
+      const end = pklPhase?.endDate ?? cohort.endDate;
+      if (start && end) {
+        tanggalPkl = `${formatLongDate(start)} s.d. ${formatLongDate(end)}`;
       }
       if (cohort.academicYear) {
         tahunPelajaran = cohort.academicYear;

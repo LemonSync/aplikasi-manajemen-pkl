@@ -198,7 +198,7 @@ const routes: RouteRecordRaw[] = [
         path: 'data-orang-tua',
         name: 'parent-data',
         component: () => import('@/views/siswa/ParentDataView.vue'),
-        meta: { roles: ['SISWA'] as Role[], workflowTask: true, title: 'Data Orang Tua' },
+        meta: { roles: ['SISWA'] as Role[], phase: ['NON_PKL', 'PKL_AKTIF', 'PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Data Orang Tua' },
       },
       // --- Semua role ---
       {
@@ -249,6 +249,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-audit-log',
         component: () => import('@/views/admin/AuditLogsView.vue'),
         meta: { roles: ['SUPER_ADMIN'] as Role[], title: 'Audit Log' },
+      },
+      {
+        path: 'admin/config',
+        name: 'admin-config',
+        component: () => import('@/views/admin/ConfigView.vue'),
+        meta: { roles: ['SUPER_ADMIN'] as Role[], title: 'Config Master Data' },
       },
     ],
   },

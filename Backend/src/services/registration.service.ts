@@ -5,6 +5,7 @@ import {
   Registration,
   RegistrationStatus,
   Role,
+  StudentPhase,
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { registrationRepository } from '../repositories/registration.repository';
@@ -23,6 +24,7 @@ import {
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { readStoredFile } from '../utils/storage';
 import { documentRepository } from '../repositories/document.repository';
+import { LETTER_TEXT } from '../config/letter.config';
 
 export interface SaveRegistrationInput {
   cohortId?: string;
@@ -101,8 +103,9 @@ export class RegistrationService {
       throw new NotFoundError('Jurusan tidak ditemukan');
     }
 
-    // Satu baris per (siswa, gelombang): baris lama di-reuse bila masih DRAFT
-    // atau sudah DITOLAK (dibuka kembali untuk pendaftaran ulang).
+    // Satu baris per (siswa, gelombang): baris lama di-reuse bila masih DRAFT,
+    // sudah DITOLAK (dibuka kembali), atau DIBATALKAN (berubah pikiran/ganti
+    // perusahaan — kembali ke Fase 1 memilih perusahaan baru).
     const existing = await prisma.registration.findFirst({
       where: { studentId, cohortId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -110,7 +113,8 @@ export class RegistrationService {
     if (
       existing &&
       existing.status !== RegistrationStatus.DRAFT &&
-      existing.status !== RegistrationStatus.DITOLAK
+      existing.status !== RegistrationStatus.DITOLAK &&
+      existing.status !== RegistrationStatus.DIBATALKAN
     ) {
       throw new ConflictError('Pendaftaran sudah diajukan dan tidak dapat diubah');
     }
@@ -154,6 +158,63 @@ export class RegistrationService {
 
   async getMyRegistration(studentId: string) {
     return registrationRepository.findActiveByStudent(studentId);
+  }
+
+  /**
+   * Siswa berubah pikiran / ingin ganti perusahaan (mis. surat permohonan
+   * ditolak perusahaan). Tersedia di Fase 2 sebelum Surat Penerimaan/Pernyataan
+   * disetujui. Efek:
+   *  - Pendaftaran ditandai DIBATALKAN → kuota perusahaan lama otomatis dilepas
+   *    (kuota hanya menghitung pendaftaran DISETUJUI).
+   *  - Fase siswa dikembalikan ke PRA_PKL untuk memilih perusahaan baru.
+   */
+  async cancelAndChangeCompany(studentId: string, ctx: { ipAddress?: string; userAgent?: string }) {
+    const registration = await registrationRepository.findActiveByStudent(studentId);
+    if (!registration) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    if (registration.status !== RegistrationStatus.DISETUJUI) {
+      throw new BadRequestError('Hanya pendaftaran yang sudah disetujui yang dapat dibatalkan untuk ganti perusahaan');
+    }
+
+    // Terlalu jauh untuk berubah pikiran: surat resmi sudah disetujui admin
+    const [penerimaan, pernyataan] = await Promise.all([
+      prisma.document.findFirst({
+        where: { ownerId: studentId, type: DocumentType.SURAT_PENERIMAAN, status: DocumentStatus.DISETUJUI },
+        select: { id: true },
+      }),
+      prisma.document.findFirst({
+        where: { ownerId: studentId, type: DocumentType.SURAT_PERNYATAAN, status: DocumentStatus.DISETUJUI },
+        select: { id: true },
+      }),
+    ]);
+    if (penerimaan || pernyataan) {
+      throw new BadRequestError(
+        'Surat Penerimaan/Surat Pernyataan sudah disetujui admin — tidak dapat berubah pikiran lagi'
+      );
+    }
+
+    const updated = await registrationRepository.update(registration.id, {
+      status: RegistrationStatus.DIBATALKAN,
+      note: 'Berubah pikiran — siswa kembali ke Fase 1 untuk memilih perusahaan baru',
+    });
+
+    // Kembalikan fase ke pra-pendaftaran agar bisa mendaftar di perusahaan lain
+    await prisma.user.update({ where: { id: studentId }, data: { phase: StudentPhase.PRA_PKL } });
+
+    await auditService.record({
+      actorId: studentId,
+      action: AUDIT_ACTIONS.CANCEL_REGISTRATION,
+      entityType: ENTITY_TYPES.REGISTRATION,
+      entityId: registration.id,
+      metadata: {
+        companyId: registration.companyId,
+        companyQuotaReleased: true,
+        phaseResetTo: StudentPhase.PRA_PKL,
+      },
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+    });
+
+    return updated;
   }
 
   async getById(id: string, actor: { id: string; role: Role }) {
@@ -214,19 +275,17 @@ export class RegistrationService {
     const academicYear = letterService.academicYearFromCohortName(registration.cohort?.name);
     const programKeahlian = registration.major?.name ?? '-';
 
-    const dateClause = rangeText
-      ? `mengikuti kegiatan PKL mulai tanggal **${rangeText}**.`
-      : 'mengikuti kegiatan PKL pada masa yang ditentukan.';
+    const dateClause = LETTER_TEXT.application.dateClause(rangeText);
 
     const letter = await letterService.generateLetter({
       type: DocumentType.SURAT_PERMOHONAN,
-      hal: 'Permohonan PKL',
+      hal: LETTER_TEXT.application.subject,
       recipientLines: ['Bapak / Ibu Pimpinan', company.name, company.address ?? ''],
       recipientCity: company.city ?? school.city,
       paragraphs: [
-        'Dengan Hormat,',
-        `Sesuai dengan Permendikbud Ristek RI Nomor 12 Tahun 2024 Tentang Kurikulum Merdeka dan Program Kerja ${school.schoolName}${academicYear ? ` Tahun Pelajaran ${academicYear}` : ''} tentang Praktek Kerja Lapangan (PKL), melalui surat ini kami mohon kepada Bapak/Ibu pimpinan ${company.name}, berkenan menerima siswa/siswi ${school.schoolName} untuk ${dateClause}`,
-        'Bersama ini kami kirimkan nama – nama siswa/i yang akan melaksanakan Praktek Kerja Lapangan (PKL) di Institusi / Lembaga yang Bapak / Ibu pimpin sebagai berikut:',
+        LETTER_TEXT.application.greeting,
+        LETTER_TEXT.application.body(school.schoolName, academicYear, company.name, dateClause),
+        LETTER_TEXT.application.studentIntro,
       ],
       table: {
         columns: ['NO', 'NAMA SISWA', 'PROGRAM KEAHLIAN'],
@@ -234,8 +293,7 @@ export class RegistrationService {
         widths: [36],
         aligns: ['center', 'left', 'left'],
       },
-      closing:
-        'Demikian surat permohonan ini kami sampaikan, atas perhatian, dukungan serta kesediaannya disampaikan terima kasih.',
+      closing: LETTER_TEXT.application.closing,
       cohortId: registration.cohortId,
       payload: {
         registrationId: registration.id,
@@ -295,7 +353,11 @@ export class RegistrationService {
   ) {
     const registration = await registrationRepository.findById(id);
     if (!registration) throw new NotFoundError(MESSAGES.NOT_FOUND);
-    if (registration.status !== RegistrationStatus.DIAJUKAN) {
+    const missingApprovedLetter =
+      action === 'APPROVE' &&
+      registration.status === RegistrationStatus.DISETUJUI &&
+      !registration.document?.files.some((file) => file.isActive);
+    if (registration.status !== RegistrationStatus.DIAJUKAN && !missingApprovedLetter) {
       throw new BadRequestError('Pendaftaran tidak dalam status menunggu persetujuan');
     }
 
@@ -303,12 +365,45 @@ export class RegistrationService {
       throw new BadRequestError('Alasan penolakan wajib diisi');
     }
 
-    const updated: Registration = await registrationRepository.update(id, {
-      status: action === 'APPROVE' ? RegistrationStatus.DISETUJUI : RegistrationStatus.DITOLAK,
-      note: note ?? null,
-      reviewedBy: { connect: { id: actorId } },
-      reviewedAt: new Date(),
-    });
+    let updated: Registration;
+    if (missingApprovedLetter) {
+      updated = registration;
+    } else if (action === 'APPROVE') {
+      // Lock perusahaan selama hitung-kuota + approval agar dua approval
+      // bersamaan tidak menjual slot kuota yang sama.
+      updated = await prisma.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe('SELECT id FROM companies WHERE id = ? FOR UPDATE', registration.companyId);
+        const company = await tx.company.findFirst({
+          where: { id: registration.companyId, deletedAt: null },
+          select: { quota: true },
+        });
+        if (!company) throw new NotFoundError('Perusahaan tidak ditemukan');
+        if (company.quota !== null) {
+          const used = await tx.registration.count({
+            where: { companyId: registration.companyId, status: RegistrationStatus.DISETUJUI, deletedAt: null },
+          });
+          if (used >= company.quota) {
+            throw new BadRequestError(`Kuota perusahaan sudah penuh (${used}/${company.quota} siswa). Silakan pilih perusahaan lain.`);
+          }
+        }
+        return tx.registration.update({
+          where: { id },
+          data: {
+            status: RegistrationStatus.DISETUJUI,
+            note: note ?? null,
+            reviewedBy: { connect: { id: actorId } },
+            reviewedAt: new Date(),
+          },
+        }) as Promise<Registration>;
+      });
+    } else {
+      updated = await registrationRepository.update(id, {
+        status: RegistrationStatus.DITOLAK,
+        note: note ?? null,
+        reviewedBy: { connect: { id: actorId } },
+        reviewedAt: new Date(),
+      });
+    }
 
     await auditService.record({
       actorId,
@@ -321,18 +416,28 @@ export class RegistrationService {
     });
 
     if (action === 'APPROVE') {
-      const approved = await registrationRepository.findById(id);
-      if (!approved) throw new NotFoundError(MESSAGES.NOT_FOUND);
-      const documentId = await this.generateApplicationLetter(approved);
-      await auditService.record({
-        actorId,
-        action: AUDIT_ACTIONS.GENERATE_LETTER,
-        entityType: ENTITY_TYPES.DOCUMENT,
-        entityId: documentId,
-        metadata: { registrationId: id, type: DocumentType.SURAT_PERMOHONAN },
-        ipAddress: ctx.ipAddress,
-        userAgent: ctx.userAgent,
-      });
+      try {
+        const approved = await registrationRepository.findById(id);
+        if (!approved) throw new NotFoundError(MESSAGES.NOT_FOUND);
+        const documentId = await this.generateApplicationLetter(approved);
+        await auditService.record({
+          actorId,
+          action: AUDIT_ACTIONS.GENERATE_LETTER,
+          entityType: ENTITY_TYPES.DOCUMENT,
+          entityId: documentId,
+          metadata: { registrationId: id, type: DocumentType.SURAT_PERMOHONAN },
+          ipAddress: ctx.ipAddress,
+          userAgent: ctx.userAgent,
+        });
+      } catch (error) {
+        // Jangan meninggalkan status DISETUJUI bila PDF/dokumen gagal dibuat.
+        await registrationRepository.update(id, {
+          status: RegistrationStatus.DIAJUKAN,
+          reviewedBy: { disconnect: true },
+          reviewedAt: null,
+        });
+        throw error;
+      }
     }
 
     return updated;

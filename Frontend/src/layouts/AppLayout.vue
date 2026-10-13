@@ -56,6 +56,7 @@ const navItems: NavItem[] = [
   { label: 'Gelombang', routeName: 'admin-cohorts', icon: 'layers', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Jadwal Fase', routeName: 'admin-phase-schedule', icon: 'calendar', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
   { label: 'Audit Log', routeName: 'admin-audit-log', icon: 'shield', section: 'Sistem', roles: ['SUPER_ADMIN'] },
+  { label: 'Config', routeName: 'admin-config', icon: 'settings', section: 'Sistem', roles: ['SUPER_ADMIN'] },
 ];
 
 const auth = useAuthStore();

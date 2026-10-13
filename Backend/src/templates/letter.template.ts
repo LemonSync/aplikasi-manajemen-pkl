@@ -1,6 +1,8 @@
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import { formatDate } from '../utils/date';
+import { readStoredFile } from '../utils/storage';
+import { LETTER_LAYOUT, LETTER_TEXT } from '../config/letter.config';
 
 type PDFDocType = InstanceType<typeof PDFDocument>;
 
@@ -26,6 +28,7 @@ export interface SignerBlock {
   name: string;
   nip?: string | null;
   position: string;
+  signaturePath?: string | null;
 }
 
 export interface LetterTable {
@@ -78,10 +81,10 @@ export interface PenugasanLetterInput {
   signer: SignerBlock;
 }
 
-const MARGIN = 56;
+const MARGIN = LETTER_LAYOUT.page.margin;
 const FONT = 'Times-Roman';
 const FONT_BOLD = 'Times-Bold';
-const PAGE_BOTTOM = 780; // batas konten sebelum footer
+const PAGE_BOTTOM = LETTER_LAYOUT.page.contentBottom; // batas konten sebelum footer
 const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo-sumut.png');
 
 const pageWidth = (doc: PDFDocType): number => doc.page.width - MARGIN;
@@ -97,7 +100,7 @@ const drawRich = (
   }
 ): number => {
   const parts = text.split('**');
-  const size = opts.size ?? 11;
+  const size = opts.size ?? LETTER_LAYOUT.fonts.body;
   const lineGap = opts.lineGap ?? 2.5;
   parts.forEach((part, i) => {
     const bold = i % 2 === 1;
@@ -129,22 +132,22 @@ const drawKop = (doc: PDFDocType, header: SchoolHeader): void => {
   }
 
   const y = 36;
-  doc.font(FONT_BOLD).fontSize(11).text(header.government.toUpperCase(), textX, y, {
+  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.government).text(header.government.toUpperCase(), textX, y, {
     width: textW,
     align: 'center',
     lineGap: 1,
   });
-  doc.font(FONT_BOLD).fontSize(11).text(header.dinas.toUpperCase(), textX, doc.y, {
+  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.department).text(header.dinas.toUpperCase(), textX, doc.y, {
     width: textW,
     align: 'center',
     lineGap: 1,
   });
-  doc.font(FONT_BOLD).fontSize(16).text(header.schoolName.toUpperCase(), textX, doc.y + 1, {
+  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.schoolName).text(header.schoolName.toUpperCase(), textX, doc.y + 1, {
     width: textW,
     align: 'center',
     lineGap: 2,
   });
-  doc.font(FONT_BOLD).fontSize(8).text(header.programKeahlian, textX, doc.y + 1, {
+  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.program).text(header.programKeahlian, textX, doc.y + 1, {
     width: textW,
     align: 'center',
     lineGap: 1.5,
@@ -236,7 +239,7 @@ const drawTable = (
 
 /** Blok "Dengan Pembimbing Sekolah" (surat pengantar). */
 const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, x: number, right: number): void => {
-  doc.font(FONT).fontSize(11);
+  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body);
   doc.text('Dengan Pembimbing Sekolah :', x, doc.y, { width: right - x });
   doc.moveDown(0.3);
   const fields: Array<[string, string]> = [
@@ -247,7 +250,7 @@ const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, x: number, righ
   ];
   for (const [label, value] of fields) {
     const y0 = doc.y;
-    doc.font(FONT).fontSize(11).text(label, x, y0, { width: 60 });
+      doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(label, x, y0, { width: 60 });
     doc.text(':', x + 60, y0, { width: 10 });
     doc.text(value, x + 74, y0, { width: right - x - 74 });
     doc.y = Math.max(doc.y, y0 + 14);
@@ -259,13 +262,23 @@ const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, x: number, righ
 const drawSignFormal = (doc: PDFDocType, signer: SignerBlock): void => {
   // Blok tanda tangan tidak boleh terpotong antar halaman (butuh ~95pt).
   if (doc.y > 700) doc.addPage();
-  const blockW = 250;
+  const blockW = LETTER_LAYOUT.signature.formal.blockWidth;
   const x = pageWidth(doc) - blockW;
-  doc.font(FONT).fontSize(11).text(signer.position, x, doc.y, { width: blockW, align: 'center' });
+  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(signer.position, x, doc.y, { width: blockW, align: 'center' });
   doc.moveDown(0.5);
-  const nameY = doc.y + 42;
-  doc.font(FONT_BOLD).fontSize(11).text(signer.name, x, nameY, { width: blockW, align: 'center' });
-  doc.font(FONT).fontSize(11);
+  // Jarak tanda tangan dibuat lebih rapat agar blok tidak terlalu turun.
+  const nameY = doc.y + LETTER_LAYOUT.signature.formal.nameOffsetY;
+  const signature = signer.signaturePath ? readStoredFile(signer.signaturePath) : null;
+  if (signature) {
+    // PNG canvas biasanya memiliki ruang kosong di sekeliling tinta; ukuran
+    // diperbesar dan dinaikkan agar tanda tangan tampak jelas di atas nama.
+  try {
+    const image = LETTER_LAYOUT.signature.formal.image;
+    doc.image(signature, x + image.offsetX, nameY + image.offsetY, { width: image.width, height: image.height });
+  } catch { /* tanda tangan opsional */ }
+  }
+  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.body).text(signer.name, x, nameY, { width: blockW, align: 'center' });
+  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body);
   if (signer.nip) doc.text(`NIP. ${signer.nip}`, x, doc.y, { width: blockW, align: 'center' });
   doc.x = MARGIN;
 };
@@ -277,7 +290,7 @@ const drawFooters = (doc: PDFDocType): void => {
     doc.switchToPage(range.start + i);
     doc
       .font(FONT)
-      .fontSize(9)
+    .fontSize(LETTER_LAYOUT.fonts.footer)
       .fillColor('black')
       .text(`-- ${i + 1} of ${range.count} --`, 0, doc.page.height - 52, {
         width: doc.page.width,
@@ -308,7 +321,7 @@ export const renderFormalLetterPdf = (
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      drawKop(doc, header);
+       drawKop(doc, header);
 
       const right = pageWidth(doc);
       const valueX = MARGIN + 84;
@@ -319,16 +332,16 @@ export const renderFormalLetterPdf = (
       // Blok Nomor / Lampiran / Hal + tanggal di kanan baris pertama
       doc.font(FONT).fontSize(11);
       const nomorY = doc.y;
-      doc.text('Nomor', MARGIN, nomorY, { width: 64 });
+    doc.text(LETTER_TEXT.labels.number, MARGIN, nomorY, { width: 64 });
       doc.text(':', MARGIN + 64, nomorY, { width: 12 });
       doc.text(input.number ?? '', valueX, nomorY, { width: valueW - 170 });
       doc.text(dateText, right - 170, nomorY, { width: 170, align: 'right' });
       let y = nomorY + 16;
-      doc.text('Lampiran', MARGIN, y, { width: 64 });
+    doc.text(LETTER_TEXT.labels.attachment, MARGIN, y, { width: 64 });
       doc.text(':', MARGIN + 64, y, { width: 12 });
       doc.text(input.lampiran ?? '-', valueX, y, { width: valueW });
       y += 16;
-      doc.text('Hal', MARGIN, y, { width: 64 });
+    doc.text(LETTER_TEXT.labels.subject, MARGIN, y, { width: 64 });
       doc.text(':', MARGIN + 64, y, { width: 12 });
       doc.text(input.hal ?? '', valueX, y, { width: valueW });
       doc.y = y + 24;
@@ -337,7 +350,7 @@ export const renderFormalLetterPdf = (
       if (input.recipientLines?.length) {
         doc.font(FONT).fontSize(11);
         const kY = doc.y;
-        doc.text('Kepada Yth', MARGIN, kY, { width: 64 });
+    doc.text(LETTER_TEXT.labels.recipient, MARGIN, kY, { width: 64 });
         doc.text(':', MARGIN + 64, kY, { width: 12 });
         let ry = kY;
         input.recipientLines.forEach((line) => {
@@ -346,14 +359,14 @@ export const renderFormalLetterPdf = (
           ry = doc.y;
         });
         doc.y = ry + 6;
-        doc.text('Di-', MARGIN, doc.y, { width: 64 });
+    doc.text(LETTER_TEXT.labels.place, MARGIN, doc.y, { width: 64 });
         doc.text(input.recipientCity ?? city, valueX + 12, doc.y, { width: valueW });
         doc.y += 20;
       }
 
       // Paragraf isi (justify, indent kolom nilai)
       for (const paragraph of input.paragraphs) {
-        drawRich(doc, paragraph, valueX, doc.y, { width: valueW, align: 'justify', size: 11, lineGap: 3 });
+         drawRich(doc, paragraph, valueX, doc.y, { width: valueW, align: 'justify', size: LETTER_LAYOUT.fonts.body, lineGap: 3 });
         doc.y += 8;
       }
 
@@ -371,13 +384,13 @@ export const renderFormalLetterPdf = (
       }
 
       if (input.closing) {
-        drawRich(doc, input.closing, valueX, doc.y, { width: valueW, align: 'justify', size: 11, lineGap: 3 });
+         drawRich(doc, input.closing, valueX, doc.y, { width: valueW, align: 'justify', size: LETTER_LAYOUT.fonts.body, lineGap: 3 });
         doc.y += 10;
       }
 
       // Tanda tangan
       doc.y += 16;
-      drawSignFormal(doc, input.signer);
+       drawSignFormal(doc, input.signer);
 
       drawFooters(doc);
       doc.end();
@@ -404,7 +417,7 @@ export const renderPenugasanLetterPdf = (
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      drawKop(doc, header);
+       drawKop(doc, header);
 
       const right = pageWidth(doc);
 
@@ -416,7 +429,7 @@ export const renderPenugasanLetterPdf = (
         underline: true,
       });
       doc.y += 6;
-      doc.font(FONT).fontSize(11).text(`Nomor : ${input.number ?? ''}`, MARGIN, doc.y, {
+  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(`Nomor : ${input.number ?? ''}`, MARGIN, doc.y, {
         width: right - MARGIN,
         align: 'center',
       });
@@ -430,13 +443,13 @@ export const renderPenugasanLetterPdf = (
 
       doc.font(FONT).fontSize(11);
       let y0 = doc.y;
-      doc.text('Dari', labelX, y0, { width: 100 });
+      doc.text(LETTER_TEXT.labels.from, labelX, y0, { width: 100 });
       doc.text(':', colonX, y0, { width: 12 });
       doc.text(input.dari, valX, y0, { width: valW });
       doc.y = Math.max(doc.y, y0 + 14);
 
       y0 = doc.y;
-      doc.text('Kepada', labelX, y0, { width: 100 });
+      doc.text(LETTER_TEXT.labels.to, labelX, y0, { width: 100 });
       doc.text(':', colonX, y0, { width: 12 });
       const nestedX = MARGIN + 168;
       let ny = y0;
@@ -456,14 +469,14 @@ export const renderPenugasanLetterPdf = (
 
       doc.font(FONT).fontSize(11);
       y0 = doc.y;
-      doc.text('Dasar', labelX, y0, { width: 100 });
+      doc.text(LETTER_TEXT.labels.basis, labelX, y0, { width: 100 });
       doc.text(':', colonX, y0, { width: 12 });
       doc.y = drawRich(doc, input.dasar, valX, y0, { width: valW, align: 'justify', size: 11, lineGap: 2.5 });
       doc.y += 14;
 
       doc.font(FONT).fontSize(11);
       y0 = doc.y;
-      doc.text('Isi', labelX, y0, { width: 100 });
+      doc.text(LETTER_TEXT.labels.content, labelX, y0, { width: 100 });
       doc.text(':', colonX, y0, { width: 12 });
       doc.y = drawRich(doc, input.isi, valX, y0, { width: valW, align: 'justify', size: 11, lineGap: 2.5 });
       doc.y += 14;
@@ -486,29 +499,37 @@ export const renderPenugasanLetterPdf = (
 
       doc.font(FONT).fontSize(11);
       y0 = doc.y;
-      doc.text('Ketentuan Lain', labelX, y0, { width: 100 });
+      doc.text(LETTER_TEXT.labels.otherTerms, labelX, y0, { width: 100 });
       doc.text(':', colonX, y0, { width: 12 });
       doc.y = drawRich(doc, input.ketentuan, valX, y0, { width: valW, size: 11, lineGap: 2.5 });
       doc.y += 20;
 
       // Blok keluar + tanda tangan (kanan) — jangan sampai terpotong halaman (butuh ~130pt)
       if (doc.y > 650) doc.addPage();
-      const signX = right - 215;
-      const signW = 215;
+       const signX = right - LETTER_LAYOUT.signature.penugasan.rightOffset;
+       const signW = LETTER_LAYOUT.signature.penugasan.blockWidth;
       doc.font(FONT).fontSize(11);
       const kota = input.kota ?? 'Medan';
       const tgl = formatDate(input.date ?? new Date());
       let sy = doc.y;
-      doc.text('Dikeluarkan di', signX, sy, { width: 100 });
+       doc.text(LETTER_TEXT.labels.issuedAt, signX, sy, { width: 100 });
       doc.text(':', signX + 100, sy, { width: 12 });
       doc.text(kota, signX + 116, sy, { width: signW - 116 });
       sy = Math.max(doc.y, sy + 14);
-      doc.text('Pada Tanggal', signX, sy, { width: 100 });
+       doc.text(LETTER_TEXT.labels.date, signX, sy, { width: 100 });
       doc.text(':', signX + 100, sy, { width: 12 });
       doc.text(tgl, signX + 116, sy, { width: signW - 116 });
       sy = Math.max(doc.y, sy + 14);
-      doc.text(input.signer.position, signX + 40, sy, { width: signW - 40, align: 'center' });
-      doc.y = sy + 56;
+       const positionOffsetX = LETTER_LAYOUT.signature.penugasan.positionOffsetX;
+       doc.text(input.signer.position, signX + positionOffsetX, sy, { width: signW - positionOffsetX, align: 'center' });
+       const signature = input.signer.signaturePath ? readStoredFile(input.signer.signaturePath) : null;
+       if (signature) {
+         try {
+           const image = LETTER_LAYOUT.signature.penugasan.image;
+           doc.image(signature, signX + image.offsetX, sy + image.offsetY, { width: image.width, height: image.height });
+       } catch { /* tanda tangan opsional */ }
+       }
+       doc.y = sy + (signature ? LETTER_LAYOUT.signature.penugasan.afterImageSpacing : LETTER_LAYOUT.signature.penugasan.withoutImageSpacing);
       doc.font(FONT_BOLD).text(input.signer.name, signX, doc.y, { width: signW, align: 'center' });
       doc.font(FONT);
       if (input.signer.nip) doc.text(`NIP. ${input.signer.nip}`, signX, doc.y, { width: signW, align: 'center' });
