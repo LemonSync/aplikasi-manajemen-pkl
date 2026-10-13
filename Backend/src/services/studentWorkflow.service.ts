@@ -60,7 +60,9 @@ export class StudentWorkflowService {
   /**
    * Sinkronkan fase database siswa dengan jadwal gelombangnya. Dipanggil oleh
    * phase guard agar aksi tidak bergantung pada nilai phase lama di JWT.
-   * Fase hanya maju jika syarat dokumen fase sebelumnya terpenuhi.
+   * Fase hanya maju jika syarat dokumen fase sebelumnya terpenuhi, dan TIDAK
+   * BOLEH melebihi fase jadwal hari ini — bila melebih (mis. jadwal admin
+   * diubah), fase diturunkan agar tugas mengikuti jadwal.
    */
   async syncScheduledPhase(userId: string): Promise<StudentPhase | null> {
     const user = await prisma.user.findUnique({
@@ -72,13 +74,22 @@ export class StudentWorkflowService {
     const currentSchedule = await this.getCurrentSchedule(user.cohortId);
     if (!currentSchedule) return user.phase;
 
-    const startPhase = user.phase ?? StudentPhase.PRA_PKL;
+    const startPhase = this.clampToSchedule(user.phase, currentSchedule.phase);
     const target = await this.advancePhase(userId, startPhase, currentSchedule.phase);
     if (target !== user.phase) {
       await prisma.user.update({ where: { id: userId }, data: { phase: target } });
       return target;
     }
     return user.phase;
+  }
+
+  /**
+   * Fase siswa tidak boleh melebihi fase jadwal hari ini. Bila melebihi,
+   * mulai dari fase jadwal sehingga tugas yang ditampilkan = fase kalender.
+   */
+  private clampToSchedule(userPhase: StudentPhase | null, schedulePhase: StudentPhase): StudentPhase {
+    const phase = userPhase ?? StudentPhase.PRA_PKL;
+    return (PHASE_ORDER[phase] ?? 0) > (PHASE_ORDER[schedulePhase] ?? 0) ? schedulePhase : phase;
   }
 
   /**
@@ -227,9 +238,10 @@ export class StudentWorkflowService {
     // Fase efektif = jadwal hari ini, maju BERTAHAP mengikuti kelengkapan
     // dokumen. Siswa yang syaratnya belum lengkap tetap berada pada fase
     // sebelumnya (bahkan kalender sudah bergeser) sehingga tugas fase
-    // sebelumnya masih bisa diselesaikan.
+    // sebelumnya masih bisa diselesaikan. Fase siswa TIDAK BOLEH melebihi
+    // fase jadwal: kalau melebihi (jadwal admin diubah), ikut fase jadwal.
     if (effectivePhase && user.role === Role.SISWA) {
-      const startPhase = user.phase ?? StudentPhase.PRA_PKL;
+      const startPhase = this.clampToSchedule(user.phase, effectivePhase);
       const target = await this.advancePhase(userId, startPhase, effectivePhase);
       if (target !== user.phase) {
         await prisma.user.update({ where: { id: userId }, data: { phase: target } });

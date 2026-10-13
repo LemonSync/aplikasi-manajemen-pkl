@@ -24,6 +24,7 @@ const companies = ref<CompanyItem[]>([]);
 const lookups = ref<MasterLookups | null>(null);
 const loading = ref(true);
 const saving = ref(false);
+const deletingId = ref('');
 const error = ref('');
 const success = ref('');
 const search = ref('');
@@ -32,7 +33,7 @@ const showForm = ref(false);
 // '' = mode tambah; terisi = mode ubah (companyService.update)
 const editingId = ref('');
 
-const emptyForm = () => ({ name: '', address: '', industryId: '', phone: '', email: '', city: '', website: '', quota: '' });
+const emptyForm = () => ({ name: '', address: '', industryId: '', phone: '', email: '', city: '', website: '', quota: '' as string | number });
 const form = ref(emptyForm());
 
 const safeWebsite = (value: string | null): string | null => {
@@ -109,7 +110,8 @@ const closeForm = (): void => {
 
 /** Kuota dikirim sebagai angka; kosong = tanpa batas (null). */
 const buildPayload = (): Record<string, unknown> | null => {
-  const raw = form.value.quota.trim();
+  // Input type=number dapat mengubah v-model menjadi number saat diisi.
+  const raw = String(form.value.quota ?? '').trim();
   if (raw !== '') {
     const n = Number(raw);
     if (!Number.isInteger(n) || n < 0) {
@@ -130,6 +132,10 @@ const buildPayload = (): Record<string, unknown> | null => {
 };
 
 const submit = async (): Promise<void> => {
+  if (!form.value.name.trim()) {
+    error.value = 'Nama perusahaan wajib diisi.';
+    return;
+  }
   const payload = buildPayload();
   if (!payload) return;
   saving.value = true;
@@ -149,6 +155,22 @@ const submit = async (): Promise<void> => {
     error.value = extractErrorMessage(e);
   } finally {
     saving.value = false;
+  }
+};
+
+const removeCompany = async (company: CompanyItem): Promise<void> => {
+  if (!confirm(`Hapus perusahaan "${company.name}"? Data perusahaan disembunyikan dari pilihan baru, tetapi riwayat tetap dipertahankan.`)) return;
+  deletingId.value = company.id;
+  error.value = '';
+  success.value = '';
+  try {
+    await companyService.remove(company.id);
+    success.value = `Perusahaan ${company.name} berhasil dihapus.`;
+    await load();
+  } catch (e) {
+    error.value = extractErrorMessage(e);
+  } finally {
+    deletingId.value = '';
   }
 };
 
@@ -224,6 +246,9 @@ onMounted(load);
             <td class="text-gray-500">{{ c.address ?? '-' }}</td>
             <td class="text-right">
               <button class="text-sm text-primary-600 hover:underline" @click="openForm(c)">Ubah</button>
+              <button class="ml-3 text-sm text-red-600 hover:underline" :disabled="deletingId === c.id" @click="removeCompany(c)">
+                {{ deletingId === c.id ? 'Menghapus...' : 'Hapus' }}
+              </button>
             </td>
           </tr>
           <tr v-if="companies.length === 0">
@@ -242,7 +267,7 @@ onMounted(load);
       :busy="saving"
       @close="closeForm"
     >
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <form id="company-form" class="grid grid-cols-1 gap-4 sm:grid-cols-2" @submit.prevent="submit">
         <div class="sm:col-span-2">
           <label class="label">Nama Perusahaan</label>
           <input v-model="form.name" class="input" required />
@@ -288,11 +313,11 @@ onMounted(load);
           <label class="label">Website (opsional)</label>
           <input v-model="form.website" class="input" inputmode="url" placeholder="https://www.contoh-perusahaan.com" />
         </div>
-      </div>
+      </form>
 
       <template #footer>
         <button class="btn-secondary" :disabled="saving" @click="closeForm">Batal</button>
-        <button class="btn-primary" :disabled="saving || !form.name" @click="submit">
+        <button class="btn-primary" type="button" :disabled="saving" @click="submit">
           <LoadingSpinner v-if="saving" inline />
           {{ saving ? 'Menyimpan…' : 'Simpan' }}
         </button>

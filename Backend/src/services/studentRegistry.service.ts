@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { prisma } from '../config/prisma';
 import { studentRegistryRepository } from '../repositories/studentRegistry.repository';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { ensureSchoolMajors } from './schoolMajor.service';
 
 export interface StudentRegistryRemoveResult {
   fullName: string;
@@ -35,6 +36,7 @@ export class StudentRegistryService {
     className?: unknown;
     majorCode?: unknown;
   }): Promise<{ record: Awaited<ReturnType<typeof studentRegistryRepository.upsert>>; restored: boolean }> {
+    await ensureSchoolMajors();
     const cohortId = String(input.cohortId ?? '').trim();
     if (!cohortId) throw new BadRequestError('Gelombang wajib dipilih');
     const cohort = await prisma.cohort.findUnique({ where: { id: cohortId } });
@@ -132,6 +134,7 @@ export class StudentRegistryService {
     return counts;
   }
   async importExcel(file: Express.Multer.File, cohortId: string) {
+    await ensureSchoolMajors();
     const cohort = await prisma.cohort.findUnique({ where: { id: cohortId } });
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
     const sheet = XLSX.read(file.buffer, { type: 'buffer' }).Sheets[XLSX.read(file.buffer, { type: 'buffer' }).SheetNames[0]];

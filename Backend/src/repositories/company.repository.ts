@@ -50,6 +50,14 @@ export class CompanyRepository {
   async update(id: string, data: Prisma.CompanyUpdateInput): Promise<Company> {
     return prisma.company.update({ where: { id }, data });
   }
+
+  /** Soft delete agar riwayat registrasi/kunjungan tetap utuh. */
+  async softDelete(id: string): Promise<Company> {
+    return prisma.company.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+  }
 }
 
 export const companyRepository = new CompanyRepository();

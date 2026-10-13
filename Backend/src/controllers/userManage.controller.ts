@@ -3,13 +3,11 @@ import { userManageService } from '../services/userManage.service';
 import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
-import { getRequestContext } from '../utils/request';
 import {
   CreateUserDTO,
   UpdateUserDTO,
   ResetPasswordDTO,
   ListUserQueryDTO,
-  ProvisionStudentsDTO,
 } from '../validators/user.validator';
 
 export class UserManageController {
@@ -17,22 +15,6 @@ export class UserManageController {
     const dto = req.body as CreateUserDTO;
     const result = await userManageService.create(dto);
     return sendSuccess(res, result, 'User berhasil dibuat', 201);
-  });
-
-  /** POST /api/users/provision-students — buat akun siswa massal dari Master Siswa (per NISN). */
-  provisionStudents = asyncHandler(async (req: Request, res: Response) => {
-    const dto = req.body as ProvisionStudentsDTO;
-    const ctx = getRequestContext(req);
-    const result = await userManageService.createStudentsFromRegistry(
-      dto.cohortId,
-      req.user!.sub,
-      ctx
-    );
-    return sendSuccess(
-      res,
-      result,
-      `${result.created.length} akun siswa dibuat, ${result.skipped.length} dilewati`
-    );
   });
 
   update = asyncHandler(async (req: Request, res: Response) => {

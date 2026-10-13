@@ -28,6 +28,13 @@ router.post(
   registrationController.saveDraft
 );
 router.get('/me', authorizeRoles(Role.SISWA, Role.KETUA), registrationController.myRegistration);
+// Berubah pikiran/ganti perusahaan (Fase 2, sebelum surat disetujui) → kembali Fase 1
+router.post(
+  '/change-company',
+  authorizeRoles(Role.SISWA, Role.KETUA),
+  requirePhase(StudentPhase.NON_PKL),
+  registrationController.changeCompany
+);
 router.post(
   '/:id/submit',
   authorizeRoles(Role.SISWA, Role.KETUA),

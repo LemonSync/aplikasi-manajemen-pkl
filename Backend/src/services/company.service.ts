@@ -1,4 +1,4 @@
-import { DocumentStatus, DocumentType, Prisma } from '@prisma/client';
+import { Prisma, RegistrationStatus } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { companyRepository } from '../repositories/company.repository';
 import { auditService } from './audit.service';
@@ -32,16 +32,13 @@ export interface CompanyQuotaInfo {
  * saat penerimaan di-reject/re-upload).
  */
 export class CompanyService {
-  /** Jumlah Surat Penerimaan DISETUJUI yang teratribusi ke sebuah perusahaan. */
+  /** Jumlah pendaftaran DISETUJUI yang teratribusi ke sebuah perusahaan. */
   private async countApprovedAcceptance(companyId: string): Promise<number> {
-    return prisma.document.count({
+    return prisma.registration.count({
       where: {
-        type: DocumentType.SURAT_PENERIMAAN,
-        status: DocumentStatus.DISETUJUI,
-        owner: {
-          deletedAt: null,
-          studentRegistrations: { some: { companyId, deletedAt: null } },
-        },
+        companyId,
+        status: RegistrationStatus.DISETUJUI,
+        deletedAt: null,
       },
     });
   }
@@ -158,6 +155,19 @@ export class CompanyService {
       ...(input.quota !== undefined ? { quota: input.quota } : {}),
       ...(input.industryId ? { industry: { connect: { id: input.industryId } } } : {}),
     });
+  }
+
+  async remove(id: string, actorId: string) {
+    const company = await this.getById(id);
+    const deleted = await companyRepository.softDelete(id);
+    await auditService.record({
+      actorId,
+      action: AUDIT_ACTIONS.UPDATE_COMPANY,
+      entityType: ENTITY_TYPES.COMPANY,
+      entityId: id,
+      metadata: { action: 'SOFT_DELETE', name: company.name },
+    });
+    return deleted;
   }
 }
 

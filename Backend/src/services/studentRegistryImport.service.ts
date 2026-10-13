@@ -3,6 +3,7 @@ import { studentRegistryRepository } from '../repositories/studentRegistry.repos
 import { majorRepository } from '../repositories/major.repository';
 import { cohortRepository } from '../repositories/cohort.repository';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { ensureSchoolMajors } from './schoolMajor.service';
 
 export interface ImportRow {
   nisn: string;
@@ -172,6 +173,7 @@ export class StudentRegistryImportService {
     cohortId: string,
     parseErrors: string[] = []
   ): Promise<ImportResult> {
+    await ensureSchoolMajors();
     // Validasi cohort exists
     const cohort = await cohortRepository.findById(cohortId);
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');

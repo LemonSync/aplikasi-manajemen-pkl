@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   studentWorkflowService,
   documentService,
+  registrationService,
   downloadFile,
   type StudentWorkflowStatus,
 } from '@/services/api.service';
@@ -116,7 +117,7 @@ const steps = computed<WorkflowStep[]>(() => {
 });
 
 /** Langkah pertama yang belum selesai (penanda "Langkah Aktif"). */
-const currentStepKey = computed(() => steps.value.find((st) => !st.done)?.key ?? '');
+const currentStep = computed(() => steps.value.find((st) => !st.done) ?? null);
 
 const load = async () => {
   loading.value = true;
@@ -165,6 +166,32 @@ const uploadSuratPenerimaan = async () => {
   }
 };
 
+// --- Berubah pikiran: ganti perusahaan (kembali Fase 1) ---
+const cancellingCompany = ref(false);
+
+const changeCompany = async () => {
+  const ok = window.confirm(
+    'Yakin berubah pikiran dan ganti perusahaan?\n\n' +
+      '• Pendaftaran saat ini akan dibatalkan.\n' +
+      '• Kuota perusahaan lama otomatis dilepas (+1).\n' +
+      '• Anda kembali ke Fase 1 untuk memilih perusahaan baru dan mendapat Surat Permohonan baru.'
+  );
+  if (!ok) return;
+  cancellingCompany.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await registrationService.changeCompany();
+    success.value = 'Pendaftaran dibatalkan. Kuota perusahaan lama dilepas — silakan pilih perusahaan baru di Fase 1.';
+    status.value = await studentWorkflowService.getStatus();
+    await auth.fetchMe();
+  } catch (e) {
+    error.value = extractErrorMessage(e);
+  } finally {
+    cancellingCompany.value = false;
+  }
+};
+
 // --- Download Surat Permohonan ---
 const downloadSurat = async () => {
   if (!status.value?.registrationDocumentId) return;
@@ -189,14 +216,6 @@ const waitingMessage = computed(() => {
     nextPhase: PHASE_LABELS[status.value.nextSchedule.phase] ?? status.value.nextSchedule.phase,
     startDate: formatDate(status.value.nextSchedule.startDate),
   };
-});
-
-// Cek apakah siswa "tertinggal" (jadwal sudah pindah ke fase berikutnya tapi belum selesai)
-const isBehind = computed(() => {
-  if (!status.value || !status.value.currentSchedule || !status.value.hasCompleted) return false;
-  const now = new Date();
-  const endDate = status.value.currentSchedule.endDate ? new Date(status.value.currentSchedule.endDate) : null;
-  return endDate && now > endDate;
 });
 
 onMounted(load);
@@ -268,22 +287,6 @@ onMounted(load);
       </div>
     </div>
 
-    <!-- Peringatan: Siswa tertinggal -->
-    <div v-if="isBehind" class="card border-l-4 border-l-red-500 bg-red-50">
-      <div class="flex items-start gap-3">
-        <svg class="mt-0.5 h-5 w-5 shrink-0 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-        <div>
-          <h3 class="text-sm font-semibold text-red-800">Anda Tertinggal!</h3>
-          <p class="mt-1 text-sm text-red-700">
-            Masa ini sudah berakhir, tapi Anda belum menyelesaikan tahap ini.
-            Silakan selesaikan tahap ini terlebih dahulu.
-          </p>
-        </div>
-      </div>
-    </div>
-
     <!-- Menunggu -->
     <div v-if="status.hasCompleted && waitingMessage" class="card border-l-4 border-l-blue-500 bg-blue-50">
       <div class="flex items-start gap-3">
@@ -298,64 +301,104 @@ onMounted(load);
       </div>
     </div>
 
-    <!-- ==================== STEPPER ==================== -->
+    <!-- ==================== STEPPER (menyamping) ==================== -->
     <div v-if="status.effectivePhase === 'PRA_PKL' || status.effectivePhase === 'NON_PKL' || status.effectivePhase === 'PKL_SELESAI'" class="card">
-      <h2 class="mb-1 text-lg font-semibold text-gray-800">Langkah Alur PKL</h2>
-      <p class="mb-4 text-sm text-gray-500">Selesaikan setiap langkah secara berurutan.</p>
-      <ol class="space-y-3">
-        <li
-          v-for="(step, i) in steps"
-          :key="step.key"
-          class="flex items-start gap-3 rounded-lg border p-3"
-          :class="step.done ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200'"
-        >
-          <span
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
-            :class="step.done ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'"
-          >
-            {{ i + 1 }}
+      <h2 class="mb-4 text-lg font-semibold text-gray-800">Langkah Alur PKL</h2>
+
+      <!-- Rail langkah horizontal -->
+      <ol class="flex items-start">
+        <template v-for="(step, i) in steps" :key="step.key">
+          <!-- Garis penghubung ke langkah sebelumnya -->
+          <li v-if="i > 0" class="mt-3.5 h-0.5 min-w-[8px] flex-1" :class="steps[i - 1].done ? 'bg-emerald-400' : 'bg-gray-200'" />
+          <li class="flex w-16 shrink-0 flex-col items-center gap-1 sm:w-24">
+            <component
+              :is="step.routeName && step.routeVisible ? RouterLink : 'div'"
+              v-bind="step.routeName && step.routeVisible ? { to: { name: step.routeName }, title: `Buka ${step.label}` } : {}"
+              class="flex w-full flex-col items-center gap-1 rounded-lg py-1"
+              :class="step.routeName && step.routeVisible ? 'cursor-pointer transition hover:bg-primary-50' : ''"
+            >
+              <span
+                class="flex h-7 w-7 items-center justify-center rounded-full border-2 text-xs font-semibold"
+                :class="[
+                  step.done
+                    ? 'border-emerald-400 bg-emerald-100 text-emerald-600'
+                    : step.key === currentStep?.key
+                      ? 'border-primary-500 bg-primary-600 text-white'
+                      : step.pending
+                        ? 'border-amber-400 bg-amber-100 text-amber-600'
+                        : 'border-gray-200 bg-gray-50 text-gray-400',
+                ]"
+              >
+                <svg v-if="step.done" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                </svg>
+                <template v-else>{{ i + 1 }}</template>
+              </span>
+              <span
+                class="w-full text-center text-[11px] leading-tight sm:text-xs"
+                :class="step.done ? 'text-emerald-700' : step.key === currentStep?.key ? 'font-semibold text-primary-700' : 'text-gray-400'"
+              >
+                {{ step.label }}
+              </span>
+            </component>
+          </li>
+        </template>
+      </ol>
+
+      <!-- Detail langkah aktif -->
+      <div v-if="currentStep" class="mt-4 rounded-lg border border-primary-100 bg-primary-50 p-4">
+        <div class="flex items-start gap-3">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-600 text-sm font-semibold text-white">
+            {{ steps.findIndex((st) => st.key === currentStep!.key) + 1 }}
           </span>
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <p class="text-sm font-semibold" :class="step.done ? 'text-emerald-800' : 'text-gray-800'">
-                {{ step.label }}
-              </p>
-              <span v-if="step.done" class="badge bg-emerald-100 text-emerald-700">Selesai</span>
-              <span v-else-if="step.pending" class="badge bg-amber-100 text-amber-700">Menunggu Verifikasi</span>
-              <span v-else-if="step.key === currentStepKey" class="badge bg-primary-100 text-primary-700">Langkah Aktif</span>
+              <p class="text-sm font-semibold text-gray-800">{{ currentStep.label }}</p>
+              <span v-if="currentStep.pending" class="badge bg-amber-100 text-amber-700">Menunggu Verifikasi</span>
+              <span v-else class="badge bg-primary-100 text-primary-700">Langkah Aktif</span>
             </div>
-            <p class="mt-0.5 text-sm" :class="step.done ? 'text-emerald-700' : 'text-gray-500'">
-              {{ step.description }}
-            </p>
-            <div class="mt-2 flex flex-wrap items-center gap-2">
+            <p class="mt-0.5 text-sm text-gray-600">{{ currentStep.description }}</p>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
               <!-- Unduh Surat Permohonan (gerbang Fase 1 → 2) -->
-              <template v-if="step.key === 'surat-permohonan'">
-                <button
-                  v-if="status.registrationDocumentId"
-                  class="btn-primary"
-                  @click="downloadSurat"
-                >
-                  {{ step.done ? 'Download Ulang Surat Permohonan' : 'Download Surat Permohonan' }}
+              <template v-if="currentStep.key === 'surat-permohonan'">
+                <button v-if="status.registrationDocumentId" class="btn-primary" @click="downloadSurat">
+                  Download Surat Permohonan
                 </button>
                 <span v-else-if="status.registrationStatus === 'DISETUJUI'" class="text-xs text-gray-500">
                   Surat sedang disiapkan sekolah.
                 </span>
               </template>
-              <!-- Link ke halaman tugas (workflowTask) -->
+              <!-- Link ke halaman tugas -->
               <RouterLink
-                v-if="step.routeName && !step.done && step.routeVisible"
-                :to="{ name: step.routeName }"
-                class="btn-secondary"
+                v-if="currentStep.routeName && currentStep.routeVisible"
+                :to="{ name: currentStep.routeName }"
+                class="btn-primary"
               >
-                Buka {{ step.label }}
+                Buka {{ currentStep.label }}
               </RouterLink>
-              <span v-if="step.key === 'laporan-akhir' && !step.routeVisible && !step.done" class="text-xs text-gray-400">
+              <span v-if="currentStep.key === 'laporan-akhir' && !currentStep.routeVisible" class="text-xs text-gray-400">
                 Tersedia saat masa PKL.
               </span>
+              <!-- Unduh ulang Surat Permohonan dari langkah mana pun -->
+              <button
+                v-if="currentStep.key !== 'surat-permohonan' && status.registrationDocumentId"
+                class="btn-secondary"
+                @click="downloadSurat"
+              >
+                Unduh Ulang Surat Permohonan
+              </button>
             </div>
           </div>
-        </li>
-      </ol>
+        </div>
+      </div>
+
+      <!-- Semua langkah selesai -->
+      <div v-else class="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 p-3">
+        <svg class="h-5 w-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+        <p class="text-sm font-medium text-emerald-800">Semua langkah alur PKL sudah selesai.</p>
+      </div>
     </div>
 
     <!-- ==================== PRA_PKL ==================== -->
@@ -406,6 +449,20 @@ onMounted(load);
           {{ uploadingPenerimaan ? 'Mengunggah...' : 'Upload Surat Penerimaan' }}
         </button>
       </template>
+
+      <!-- Berubah pikiran: batalkan & ganti perusahaan (kembali Fase 1) -->
+      <div class="mt-5 border-t border-gray-100 pt-4">
+        <p class="text-xs text-gray-500">
+          Perusahaan menolak surat permohonan Anda, atau ingin memilih perusahaan lain?
+        </p>
+        <button
+          class="btn-secondary mt-2 text-red-600"
+          :disabled="cancellingCompany"
+          @click="changeCompany"
+        >
+          {{ cancellingCompany ? 'Membatalkan...' : 'Berubah Pikiran — Ganti Perusahaan' }}
+        </button>
+      </div>
     </div>
 
     <!-- Surat Penerimaan sudah disetujui -->

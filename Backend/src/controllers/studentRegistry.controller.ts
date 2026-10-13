@@ -6,6 +6,8 @@ import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
 import { BadRequestError } from '../errors/AppError';
+import { getRequestContext } from '../utils/request';
+import { userManageService } from '../services/userManage.service';
 
 /**
  * Controller Master Siswa (StudentRegistry).
@@ -37,10 +39,12 @@ export class StudentRegistryController {
 
     const parsed = studentRegistryImportService.parseExcel(file.buffer, mapping);
     const result = await studentRegistryImportService.importData(parsed.rows, cohortId, parsed.errors);
+    const ctx = getRequestContext(req);
+    const accounts = await userManageService.createStudentsFromRegistry(cohortId, req.user!.sub, ctx);
 
     return sendSuccess(
       res,
-      result,
+      { ...result, accounts },
       `Import selesai: ${result.created} baru, ${result.updated} diperbarui, ${result.duplicates.length} duplikat dilewati, ${result.errors.length} error`
     );
   });
@@ -51,9 +55,11 @@ export class StudentRegistryController {
     if (!cohortId) throw new BadRequestError('cohortId wajib diisi');
 
     const result = await studentRegistryService.create({ cohortId, nisn, fullName, className, majorCode });
+    const ctx = getRequestContext(req);
+    const accounts = await userManageService.createStudentsFromRegistry(cohortId, req.user!.sub, ctx);
     return sendSuccess(
       res,
-      result.record,
+      { ...result, accounts },
       result.restored
         ? `Data siswa ${result.record.fullName} (${result.record.nisn}) dipulihkan di Master Siswa`
         : `Data siswa ${result.record.fullName} (${result.record.nisn}) ditambahkan ke Master Siswa`

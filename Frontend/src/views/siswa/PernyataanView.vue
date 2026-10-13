@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { pernyataanService, documentService, downloadFile, type PernyataanPrefill } from '@/services/api.service';
+import { computed, onMounted, ref } from 'vue';
+import {
+  pernyataanService,
+  documentService,
+  studentWorkflowService,
+  downloadFile,
+  type PernyataanPrefill,
+  type StudentWorkflowStatus,
+} from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
 
@@ -23,15 +30,29 @@ const success = ref('');
 const generatedDocId = ref<string | null>(null);
 const docs = ref<Array<{ id: string; type: string; status: string; title: string | null; note: string | null }>>([]);
 const signedFile = ref<File | null>(null);
+const workflow = ref<StudentWorkflowStatus | null>(null);
+
+// Form hanya boleh diisi saat siswa berada di Fase 2 (NON_PKL).
+// Setelah fase berpindah (Fase 3+), tugas Fase 2 dianggap selesai dan terkunci.
+const phaseLocked = computed(() => workflow.value?.effectivePhase !== 'NON_PKL');
+const isBeforePhase2 = computed(() => {
+  const p = workflow.value?.effectivePhase;
+  return p === null || p === undefined || p === 'PRA_PKL';
+});
 
 const load = async (): Promise<void> => {
   loading.value = true;
   error.value = '';
   try {
-    const [p, d] = await Promise.all([pernyataanService.prefill(), documentService.listMine()]);
+    const [p, d, w] = await Promise.all([
+      pernyataanService.prefill(),
+      documentService.listMine(),
+      studentWorkflowService.getStatus(),
+    ]);
     prefill.value = { ...prefill.value, ...p };
     docs.value = d.filter((x) => x.type === 'SURAT_PERNYATAAN');
     if (docs.value.length > 0) generatedDocId.value = docs.value[0].id;
+    workflow.value = w;
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -40,6 +61,7 @@ const load = async (): Promise<void> => {
 };
 
 const generate = async (): Promise<void> => {
+  if (phaseLocked.value) return;
   generating.value = true;
   error.value = '';
   success.value = '';
@@ -48,6 +70,7 @@ const generate = async (): Promise<void> => {
       namaOrtu: prefill.value?.namaOrtu,
       alamatSiswa: prefill.value?.alamatSiswa,
       hpOrtu: prefill.value?.hpOrtu,
+      hpSiswa: prefill.value?.hpSiswa,
     });
     generatedDocId.value = result.documentId;
     success.value = 'Surat Pernyataan PDF berhasil dibuat. Silakan unduh, print, tanda tangan di atas materai, lalu unggah kembali.';
@@ -74,7 +97,7 @@ const onFileChange = (event: Event): void => {
 };
 
 const uploadSigned = async (): Promise<void> => {
-  if (!signedFile.value) return;
+  if (!signedFile.value || phaseLocked.value) return;
   uploading.value = true;
   error.value = '';
   success.value = '';
@@ -98,6 +121,22 @@ onMounted(load);
     <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
     <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
+    <!-- Penguncian form di luar Fase 2 -->
+    <div v-if="!loading && phaseLocked" class="rounded-lg border-l-4 border-l-blue-500 bg-blue-50 p-4">
+      <p class="text-sm font-medium text-blue-800">
+        <template v-if="isBeforePhase2">Form Surat Pernyataan terkunci.</template>
+        <template v-else>Tugas Fase 2 (Surat Pernyataan) sudah selesai — form terkunci.</template>
+      </p>
+      <p class="mt-1 text-sm text-blue-700">
+        <template v-if="isBeforePhase2">
+          Surat Pernyataan hanya dapat diisi saat siswa berada di Fase 2 (masa pendaftaran ulang PKL).
+        </template>
+        <template v-else>
+          Dokumen Surat Pernyataan Anda tetap dapat dilihat dan diunduh pada tabel status di bawah.
+        </template>
+      </p>
+    </div>
+
     <div class="card">
       <h2 class="mb-2 text-lg font-semibold text-gray-800">Surat Pernyataan Peserta PKL</h2>
       <p class="mb-4 text-sm text-gray-500">
@@ -108,8 +147,8 @@ onMounted(load);
       </p>
       <p class="mb-4 rounded-lg bg-gray-50 p-3 text-xs text-gray-500">
         <strong>Nama siswa</strong> &amp; <strong>kelas/program keahlian</strong> diambil dari data master siswa (NISN),
-        sedangkan <strong>No. HP siswa</strong> &amp; <strong>tempat PKL</strong> diambil dari pendaftaran Fase 1 —
-        keempatnya tidak dapat diubah.
+        sedangkan <strong>tempat PKL</strong> diambil dari pendaftaran Fase 1 —
+        keduanya tidak dapat diubah.
       </p>
 
       <div v-if="loading" class="loading" />
@@ -127,20 +166,20 @@ onMounted(load);
           </div>
           <div>
             <label class="label">Nama Orang Tua/Wali</label>
-            <input v-model="prefill.namaOrtu" class="input" />
+            <input v-model="prefill.namaOrtu" class="input" :disabled="phaseLocked" />
           </div>
           <div>
             <label class="label">Alamat Siswa/I</label>
-            <input v-model="prefill.alamatSiswa" class="input" />
+            <input v-model="prefill.alamatSiswa" class="input" :disabled="phaseLocked" />
           </div>
           <div>
             <label class="label">No. HP Orang Tua/Wali</label>
-            <input v-model="prefill.hpOrtu" class="input" />
+            <input v-model="prefill.hpOrtu" class="input" :disabled="phaseLocked" />
           </div>
           <div>
             <label class="label">No. HP Siswa</label>
-            <input v-model="prefill.hpSiswa" class="input bg-gray-50" readonly />
-            <p class="mt-1 text-xs text-gray-400">Otomatis dari pendaftaran Fase 1.</p>
+            <input v-model="prefill.hpSiswa" class="input" placeholder="Masukkan No. HP siswa" :disabled="phaseLocked" />
+            <p class="mt-1 text-xs text-gray-400">Diisi siswa. Bila dikosongkan, diambil dari profil siswa.</p>
           </div>
           <div>
             <label class="label">Tempat PKL</label>
@@ -150,6 +189,7 @@ onMounted(load);
           <div>
             <label class="label">Tanggal PKL</label>
             <input :value="prefill.tanggalPkl" class="input bg-gray-50" readonly />
+            <p class="mt-1 text-xs text-gray-400">Otomatis dari jadwal Fase 3 (masa PKL) gelombang ini.</p>
           </div>
           <div>
             <label class="label">Tahun Pelajaran</label>
@@ -158,7 +198,7 @@ onMounted(load);
         </div>
 
         <div class="mt-5 flex flex-wrap gap-2">
-          <button class="btn-primary" :disabled="generating" @click="generate">
+          <button v-if="!phaseLocked" class="btn-primary" :disabled="generating" @click="generate">
             {{ generating ? 'Membuat surat...' : 'Buat Surat Pernyataan (PDF)' }}
           </button>
           <button v-if="generatedDocId" class="btn-secondary" @click="downloadPdf">
@@ -168,7 +208,7 @@ onMounted(load);
       </template>
     </div>
 
-    <div class="card">
+    <div v-if="!loading && !phaseLocked" class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Unggah Surat yang Sudah Ditandatangani</h2>
       <p class="mb-3 text-sm text-gray-500">
         Setelah print, tanda tangan, dan tempel materai, foto/scan surat lalu unggah di sini.

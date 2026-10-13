@@ -47,6 +47,11 @@ companyRouter.patch(
   validate({ body: updateCompanySchema }),
   companyController.update
 );
+companyRouter.delete(
+  '/:id',
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
+  companyController.remove
+);
 // Opsi dropdown pendaftaran siswa — semua role terotentikasi (harus sebelum '/:id')
 companyRouter.get('/options', companyController.options);
 companyRouter.get('/:id', companyController.detail);

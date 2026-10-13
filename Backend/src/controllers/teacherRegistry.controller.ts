@@ -97,24 +97,6 @@ export class TeacherRegistryController {
     return sendSuccess(res, result, message);
   });
 
-  /** POST /api/teacher-registry/ensure-accounts — tambal akun yang belum ada (idempoten). */
-  ensureAccounts = asyncHandler(async (req: Request, res: Response) => {
-    const cohortId = req.body?.cohortId as string;
-    if (!cohortId) throw new BadRequestError('cohortId wajib diisi');
-
-    const ctx = getRequestContext(req);
-    const result = await teacherRegistryService.ensureAccounts(cohortId, {
-      actorId: req.user!.sub,
-      ipAddress: ctx.ipAddress,
-      userAgent: ctx.userAgent,
-    });
-    return sendSuccess(
-      res,
-      result,
-      `${result.created.length} akun dibuat, ${result.skipped} sudah punya akun, ${result.errors.length} gagal`
-    );
-  });
-
   /** GET /api/teacher-registry/lookup/:nip — cari NIP */
   lookup = asyncHandler(async (req: Request, res: Response) => {
     const nip = req.params.nip as string;

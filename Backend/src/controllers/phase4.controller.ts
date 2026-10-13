@@ -15,6 +15,7 @@ import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { registryClassByNisn } from '../services/classResolver.service';
 import { CompletePhaseDTO, GenerateBulkLetterDTO } from '../validators/phase4.validator';
 import { DocumentType, Prisma, Role, StudentPhase } from '@prisma/client';
+import { LETTER_TEXT } from '../config/letter.config';
 
 type LetterScopePayload = {
   supervisorId?: string;
@@ -35,30 +36,30 @@ const BULK_LETTER_META: Record<
   }
 > = {
   SURAT_PENGANTAR: {
-    label: 'Surat Pengantar PKL',
-    hal: 'Pengiriman Siswa PKL',
+    label: LETTER_TEXT.bulk.pengantar.label,
+    hal: LETTER_TEXT.bulk.pengantar.subject,
     buildIntro: (range, replyNumber) =>
-      `Dengan Hormat, menindaklanjuti surat Bapak / Ibu dengan nomor : ${replyNumber || '........'} tertanggal dengan Perihal Penerimaan Siswa Praktek Kerja Lapangan (PKL), bersama ini kami kirimkan nama – nama siswa/i yang akan melaksanakan Praktek Kerja Lapangan (PKL) di Institusi / Lembaga yang Bapak / Ibu pimpin mulai **Tanggal ${range}** sebagai berikut:`,
+      LETTER_TEXT.bulk.pengantar.intro(range, replyNumber ?? ''),
     outro:
-      'Demikian kami kirimkan, atas bantuan dan kerjasama yang Bapak / Ibu berikan kami ucapkan terima kasih.',
+      LETTER_TEXT.bulk.pengantar.closing,
     withPembimbing: true,
   },
   SURAT_MONITORING: {
-    label: 'Surat Monitoring PKL',
-    hal: 'Monitoring Pembimbinan PKL',
+    label: LETTER_TEXT.bulk.monitoring.label,
+    hal: LETTER_TEXT.bulk.monitoring.subject,
     buildIntro: (range) =>
-      `Dengan Hormat, bersama ini kami sampaikan daftar siswa yang berada dalam bimbingan kami beserta tempat PKL masing-masing, untuk keperluan monitoring pembimbinan pada masa PKL **${range}**:`,
+      LETTER_TEXT.bulk.monitoring.intro(range),
     outro:
-      'Kami mohon bantuan Bapak / Ibu dalam memonitor dan membimbing siswa kami selama pelaksanaan PKL. Demikian surat ini kami sampaikan, atas perhatian serta kerjasamanya kami ucapkan terima kasih.',
+      LETTER_TEXT.bulk.monitoring.closing,
     withPembimbing: false,
   },
   SURAT_PENJEMPUTAN: {
-    label: 'Surat Penjemputan Siswa',
-    hal: 'Penjemputan Siswa PKL',
+    label: LETTER_TEXT.bulk.penjemputan.label,
+    hal: LETTER_TEXT.bulk.penjemputan.subject,
     buildIntro: (range) =>
-      `Dengan Hormat, sehubungan dengan telah berakhirnya masa Praktek Kerja Lapangan (PKL) pada **${range}**, bersama ini kami daftarkan siswa-siswi kami yang kami tarik dari tempat PKL:`,
+      LETTER_TEXT.bulk.penjemputan.intro(range),
     outro:
-      'Mohon siswa-siswi tersebut diizinkan untuk tidak melaksanakan aktivitas PKL lagi di perusahaan Bapak / Ibu. Demikian surat ini kami sampaikan, atas perhatian serta kerjasamanya kami ucapkan terima kasih.',
+      LETTER_TEXT.bulk.penjemputan.closing,
     withPembimbing: false,
   },
 };
@@ -176,7 +177,7 @@ export class Phase4Controller {
     // Surat bulk (Pengantar/Monitoring/Penjemputan) memuat daftar siswa yang bisa
     // berada di perusahaan berbeda — baris "Kepada Yth" ditujukan generik ke
     // pimpinan perusahaan (bukan menamai satu perusahaan tertentu).
-    const recipientLines = ['Bapak / Ibu Pimpinan Perusahaan', 'Di Tempat'];
+    const recipientLines = [LETTER_TEXT.recipient.salutation, LETTER_TEXT.recipient.place];
     const recipientCity = '';
 
     // Tabel seragam 6 kolom: NISN + kelas + perusahaan/alamat per siswa

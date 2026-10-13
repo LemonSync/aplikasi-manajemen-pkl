@@ -116,6 +116,12 @@ export const registrationService = {
     return data.data;
   },
 
+  /** Siswa berubah pikiran → batalkan pendaftaran, kuota dilepas, kembali Fase 1. */
+  async changeCompany(): Promise<Registration> {
+    const { data } = await http.post<ApiResponse<Registration>>('/registrations/change-company');
+    return data.data;
+  },
+
   async submit(id: string): Promise<{ registration: Registration | null; documentId: string | null }> {
     const { data } = await http.post<ApiResponse<{ registration: Registration | null; documentId: string | null }>>(
       `/registrations/${id}/submit`
@@ -209,6 +215,52 @@ export const masterService = {
   },
 };
 
+export interface ConfigMajor { id: string; code: string; name: string }
+export interface ConfigIndustry { id: string; name: string }
+
+export const configService = {
+  async signatory(): Promise<{ id: string; name: string; nip: string | null; position: string; hasSignature: boolean } | null> {
+    const { data } = await http.get<ApiResponse<{ id: string; name: string; nip: string | null; position: string; hasSignature: boolean } | null>>('/config/signatory');
+    return data.data;
+  },
+  async saveSignature(signature: string): Promise<void> {
+    await http.put('/config/signatory/signature', { signature });
+  },
+  async saveSignatory(payload: { name: string; nip?: string | null; position: string }): Promise<void> {
+    await http.put('/config/signatory', payload);
+  },
+  async majors(): Promise<ConfigMajor[]> {
+    const { data } = await http.get<ApiResponse<ConfigMajor[]>>('/config/majors');
+    return data.data;
+  },
+  async createMajor(payload: { code: string; name: string }): Promise<ConfigMajor> {
+    const { data } = await http.post<ApiResponse<ConfigMajor>>('/config/majors', payload);
+    return data.data;
+  },
+  async updateMajor(id: string, payload: Partial<{ code: string; name: string }>): Promise<ConfigMajor> {
+    const { data } = await http.patch<ApiResponse<ConfigMajor>>(`/config/majors/${id}`, payload);
+    return data.data;
+  },
+  async removeMajor(id: string): Promise<void> {
+    await http.delete(`/config/majors/${id}`);
+  },
+  async industries(): Promise<ConfigIndustry[]> {
+    const { data } = await http.get<ApiResponse<ConfigIndustry[]>>('/config/industries');
+    return data.data;
+  },
+  async createIndustry(payload: { name: string }): Promise<ConfigIndustry> {
+    const { data } = await http.post<ApiResponse<ConfigIndustry>>('/config/industries', payload);
+    return data.data;
+  },
+  async updateIndustry(id: string, payload: { name: string }): Promise<ConfigIndustry> {
+    const { data } = await http.patch<ApiResponse<ConfigIndustry>>(`/config/industries/${id}`, payload);
+    return data.data;
+  },
+  async removeIndustry(id: string): Promise<void> {
+    await http.delete(`/config/industries/${id}`);
+  },
+};
+
 /**
  * Service pembimbingan per siswa (1 siswa = 1 guru).
  */
@@ -294,6 +346,9 @@ export const companyService = {
   async update(id: string, payload: unknown): Promise<unknown> {
     const { data } = await http.patch<ApiResponse<unknown>>(`/companies/${id}`, payload);
     return data.data;
+  },
+  async remove(id: string): Promise<void> {
+    await http.delete(`/companies/${id}`);
   },
 };
 
@@ -739,6 +794,23 @@ export interface StudentRegistryImportResult {
   updated: number;
   duplicates: { nisn: string; fullName: string; reason: string }[];
   errors: string[];
+  accounts?: {
+    total: number;
+    created: Array<{ userId: string; username: string; nisn: string; fullName: string; password: string }>;
+    skipped: Array<{ nisn: string; fullName: string; reason: string }>;
+    classBackfilled: number;
+  } | null;
+}
+
+export interface StudentRegistryCreateResult {
+  record: StudentRegistryRecord;
+  restored: boolean;
+  accounts: {
+    total: number;
+    created: Array<{ userId: string; username: string; nisn: string; fullName: string; password: string }>;
+    skipped: Array<{ nisn: string; fullName: string; reason: string }>;
+    classBackfilled: number;
+  };
 }
 
 export interface StudentRegistryInspectResult {
@@ -767,8 +839,8 @@ export const studentRegistryService = {
     });
     return { items: data.data, meta: data.meta };
   },
-  async create(input: { cohortId: string; nisn: string; fullName: string; className: string; majorCode?: string }): Promise<StudentRegistryRecord> {
-    const { data } = await http.post<ApiResponse<StudentRegistryRecord>>('/student-registry', input);
+  async create(input: { cohortId: string; nisn: string; fullName: string; className: string; majorCode?: string }): Promise<StudentRegistryCreateResult> {
+    const { data } = await http.post<ApiResponse<StudentRegistryCreateResult>>('/student-registry', input);
     return data.data;
   },
   async inspect(file: File): Promise<StudentRegistryInspectResult> {
@@ -908,14 +980,6 @@ export const teacherRegistryService = {
       '/teacher-registry/import',
       form,
       { headers: { 'Content-Type': 'multipart/form-data' } }
-    );
-    return data.data;
-  },
-  /** Tambal akun untuk baris master yang belum punya (idempoten). */
-  async ensureAccounts(cohortId: string): Promise<{ created: TeacherProvisionedAccount[]; skipped: number; errors: { nip: string; reason: string }[] }> {
-    const { data } = await http.post<ApiResponse<{ created: TeacherProvisionedAccount[]; skipped: number; errors: { nip: string; reason: string }[] }>>(
-      '/teacher-registry/ensure-accounts',
-      { cohortId }
     );
     return data.data;
   },
@@ -1087,24 +1151,10 @@ export const cohortService = {
 export const pickActiveCohortId = (cohorts: Array<{ id: string; status?: string }>): string =>
   cohorts.find((c) => c.status === 'OPEN')?.id ?? cohorts[0]?.id ?? '';
 
-/** Hasil bulk pembuatan akun siswa dari Master Siswa. */
-export interface ProvisionStudentsResult {
-  total: number;
-  created: Array<{ userId: string; username: string; nisn: string; fullName: string; password: string }>;
-  skipped: Array<{ nisn: string; fullName: string; reason: string }>;
-  /** Jumlah profil siswa lama yang kelasnya di-backfill dari Master Siswa. */
-  classBackfilled: number;
-}
-
 /** Service manajemen user. */
 export const userManageService = {
   async create(payload: { username: string; password: string; role: string; identifier?: string; fullName?: string; nisn?: string; nip?: string; cohortId?: string | null; majorId?: string | null }): Promise<UserRecord & { password?: string }> {
     const { data } = await http.post<ApiResponse<UserRecord & { password?: string }>>('/users', payload);
-    return data.data;
-  },
-  /** Bulk: buat akun siswa (username = NISN) dari baris Master Siswa gelombang tsb. */
-  async provisionStudents(cohortId: string): Promise<ProvisionStudentsResult> {
-    const { data } = await http.post<ApiResponse<ProvisionStudentsResult>>('/users/provision-students', { cohortId });
     return data.data;
   },
   async update(id: string, payload: Partial<UserRecord>): Promise<UserRecord> {

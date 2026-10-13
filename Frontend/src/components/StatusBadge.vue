@@ -17,7 +17,7 @@ const colorClass = computed<string>(() => {
   if (['MENUNGGU_VERIFIKASI', 'DIAJUKAN', 'MENUNGGU'].includes(s)) {
     return 'bg-amber-100 text-amber-700';
   }
-  if (['DRAFT'].includes(s)) {
+  if (['DRAFT', 'DIBATALKAN'].includes(s)) {
     return 'bg-gray-100 text-gray-600';
   }
   return 'bg-primary-100 text-primary-700';

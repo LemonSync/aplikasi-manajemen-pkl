@@ -9,7 +9,6 @@ import {
   type UserRecord,
   type CohortRecord,
   type StudentPklData,
-  type ProvisionStudentsResult,
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
@@ -290,59 +289,6 @@ const doResetPassword = async (generateRandom: boolean): Promise<void> => {
   }
 };
 
-// --- Bulk: buat akun siswa dari Master Siswa (per NISN) ---
-const showProvision = ref(false);
-const provisionResult = ref<ProvisionStudentsResult | null>(null);
-
-const activeCohortName = computed(
-  () => cohorts.value.find((c) => c.id === cohortStore.activeCohortId)?.name ?? 'gelombang aktif'
-);
-
-const openProvision = (): void => {
-  provisionResult.value = null;
-  showProvision.value = true;
-};
-
-const doProvision = async (): Promise<void> => {
-  const cohortId = cohortStore.activeCohortId;
-  if (!cohortId) {
-    showProvision.value = false;
-    error.value = 'Tidak ada gelombang aktif. Pilih gelombang dulu di header.';
-    return;
-  }
-  saving.value = true;
-  error.value = '';
-  success.value = '';
-  try {
-    const result = await userManageService.provisionStudents(cohortId);
-    provisionResult.value = result;
-    success.value = `${result.created.length} akun siswa dibuat.`;
-    await load();
-  } catch (e) {
-    // Tutup modal supaya banner error di halaman terbaca admin.
-    error.value = extractErrorMessage(e);
-    showProvision.value = false;
-  } finally {
-    saving.value = false;
-  }
-};
-
-const copyAccounts = async (): Promise<void> => {
-  if (!provisionResult.value?.created.length) return;
-  const lines = [
-    'NISN\tNama\tUsername\tPassword',
-    ...provisionResult.value.created.map(
-      (c) => `${c.nisn}\t${c.fullName}\t${c.username}\t${c.password}`
-    ),
-  ];
-  try {
-    await navigator.clipboard.writeText(lines.join('\n'));
-    success.value = 'Daftar akun disalin ke clipboard.';
-  } catch {
-    error.value = 'Gagal menyalin ke clipboard.';
-  }
-};
-
 onMounted(load);
 </script>
 
@@ -352,7 +298,6 @@ onMounted(load);
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-800">Manajemen User</h2>
         <div class="flex items-center gap-2">
-          <button class="btn-secondary" @click="openProvision">Buat Akun dari Master Siswa</button>
           <button class="btn-primary" @click="showForm = true">Tambah User</button>
         </div>
       </div>
@@ -394,80 +339,6 @@ onMounted(load);
           <LoadingSpinner v-if="saving" inline />
           {{ saving ? 'Menyimpan…' : 'Simpan' }}
         </button>
-      </template>
-    </Modal>
-
-    <!-- Modal Buat Akun dari Master Siswa (bulk per NISN) -->
-    <Modal :open="showProvision" title="Buat Akun dari Master Siswa" size="xl" :busy="saving" @close="showProvision = false">
-      <template v-if="!provisionResult">
-        <div class="space-y-2 text-sm text-gray-700">
-          <p>
-            Buat akun <b>Siswa</b> untuk semua baris <b>Master Siswa</b> gelombang aktif
-            (<b>{{ activeCohortName }}</b>) yang belum punya akun.
-          </p>
-          <ul class="list-disc space-y-1 pl-5">
-            <li>Username = NISN, password acak ditampilkan sekali setelah pembuatan.</li>
-            <li>Siswa diwajibkan mengganti password saat login pertama.</li>
-            <li>Baris master yang sudah punya akun akan dilewati.</li>
-          </ul>
-        </div>
-      </template>
-      <template v-else>
-        <div class="space-y-4 text-sm">
-          <p class="text-gray-800">
-            Berhasil membuat <b>{{ provisionResult.created.length }}</b> akun dari
-            {{ provisionResult.total }} baris master
-            <span v-if="provisionResult.skipped.length">
-              · {{ provisionResult.skipped.length }} dilewati</span
-            ><span v-if="provisionResult.classBackfilled">
-              · {{ provisionResult.classBackfilled }} kelas terisi</span
-            >.
-            <b>Catat/salin password sekarang — hanya ditampilkan sekali.</b>
-          </p>
-          <div v-if="provisionResult.created.length" class="overflow-x-auto rounded border border-gray-200">
-            <table class="min-w-full text-left text-xs">
-              <thead class="bg-gray-50 text-gray-500">
-                <tr>
-                  <th class="px-3 py-2">NISN</th>
-                  <th class="px-3 py-2">Nama</th>
-                  <th class="px-3 py-2">Username</th>
-                  <th class="px-3 py-2">Password</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-100">
-                <tr v-for="c in provisionResult.created" :key="c.userId">
-                  <td class="px-3 py-1.5 font-mono">{{ c.nisn }}</td>
-                  <td class="px-3 py-1.5">{{ c.fullName }}</td>
-                  <td class="px-3 py-1.5 font-mono">{{ c.username }}</td>
-                  <td class="px-3 py-1.5 font-mono">{{ c.password }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="provisionResult.skipped.length" class="rounded border border-amber-200 bg-amber-50 p-3">
-            <p class="mb-1 font-medium text-amber-800">Dilewati:</p>
-            <ul class="space-y-0.5 text-xs text-amber-800">
-              <li v-for="s in provisionResult.skipped" :key="s.nisn">
-                <span class="font-mono">{{ s.nisn }}</span> — {{ s.fullName }} ({{ s.reason }})
-              </li>
-            </ul>
-          </div>
-        </div>
-      </template>
-      <template #footer>
-        <template v-if="!provisionResult">
-          <button class="btn-secondary" :disabled="saving" @click="showProvision = false">Batal</button>
-          <button class="btn-primary" :disabled="saving" @click="doProvision">
-            <LoadingSpinner v-if="saving" inline />
-            {{ saving ? 'Membuat akun…' : 'Buat Akun' }}
-          </button>
-        </template>
-        <template v-else>
-          <button class="btn-secondary" @click="showProvision = false">Tutup</button>
-          <button class="btn-primary" :disabled="!provisionResult.created.length" @click="copyAccounts">
-            Salin Semua
-          </button>
-        </template>
       </template>
     </Modal>
 

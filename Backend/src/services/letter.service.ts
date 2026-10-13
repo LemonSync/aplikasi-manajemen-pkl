@@ -10,7 +10,6 @@ import {
 import { saveBuffer } from '../utils/storage';
 import { settingService } from './setting.service';
 import { letterSignatoryRepository, generatedLetterRepository } from '../repositories/letter.repository';
-import { NotFoundError } from '../errors/AppError';
 import { prisma } from '../config/prisma';
 import { formatDate } from '../utils/date';
 
@@ -64,11 +63,17 @@ export class LetterService {
     signer: SignerBlock;
     signatoryId: string;
   }> {
-    const signatory = await letterSignatoryRepository.findActive();
-    if (!signatory) {
-      throw new NotFoundError('Penandatangan surat belum dikonfigurasi');
-    }
     const school = await settingService.getSchoolIdentity();
+    // Surat otomatis harus tetap bisa terbit setelah database reset/deploy baru.
+    // Admin tetap dapat mengganti pejabat ini lewat konfigurasi penandatangan.
+    const signatory = await letterSignatoryRepository.findActive() ?? await prisma.letterSignatory.create({
+      data: {
+        name: 'Kepala Sekolah',
+        nip: null,
+        position: 'Kepala Sekolah',
+        isActive: true,
+      },
+    });
     return {
       header: {
         government: school.government,
@@ -84,6 +89,7 @@ export class LetterService {
         name: signatory.name,
         nip: signatory.nip,
         position: signatory.position,
+        signaturePath: signatory.signaturePath,
       },
       signatoryId: signatory.id,
     };
@@ -190,6 +196,7 @@ export class LetterService {
       payload: input.payload,
     });
   }
+
 
   /**
    * Rentang tanggal masa PKL suatu gelombang dari PhaseSchedule

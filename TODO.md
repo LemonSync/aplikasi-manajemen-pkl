@@ -980,3 +980,110 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] Docker production wajib menerima secret eksplisit (tanpa default JWT/database); placeholder JWT ditolak pada `NODE_ENV=production`
 - [x] CSRF praktis: refresh/logout memvalidasi `Origin`; Nginx menambah `nosniff`, `X-Frame-Options`, dan `Referrer-Policy`
 - [x] Verifikasi: backend `tsc`, frontend `vue-tsc` + `vite build`, health endpoint, login normal, refresh token body ditolak 401, dan registrasi lintas siswa ditolak 403
+
+## Fitur K - Akun Otomatis dari Master Siswa/Guru
+
+- [x] Create/import Master Siswa otomatis menjalankan provisioning akun siswa (username=NISN, password acak, kredensial ditampilkan sekali)
+- [x] Create/import Master Guru otomatis menjalankan provisioning akun guru (username=NIP)
+- [x] Hapus data Master Siswa/Guru tetap menghapus akun terkait dan data operasionalnya sesuai relasi
+- [x] Hapus tombol/endpoint manual "Buat Akun dari Master Siswa" dan "Buat Akun Tertinggal" dari Manajemen User/Master Guru
+- [x] Smoke: create Master Siswa -> akun SISWA ada; hapus -> akun hilang; create Master Guru -> akun GURU_PEMBIMBING ada; hapus -> akun hilang; database smoke dibersihkan
+
+## Fitur L - Katalog Jurusan SMKN 9 Medan
+
+- [x] Katalog resmi terpusat: `RPL`, `DKV`, `TKJ`, `PEKSOS`, `PSPT`, `ANIMASI`
+- [x] Katalog otomatis di-upsert sebelum create/import Master Siswa dan Master Guru, sehingga tidak hilang setelah reset database
+- [x] Seed Prisma disamakan dengan katalog; verifikasi database menghasilkan 6 jurusan
+
+## Fitur M - Config Master Data SUPER_ADMIN
+
+- [x] Menu `Config` khusus SUPER_ADMIN
+- [x] CRUD kode/nama jurusan
+- [x] CRUD bidang industri
+- [x] Jurusan/industri tidak otomatis dipulihkan setelah admin menghapusnya; katalog default hanya di-seed otomatis bila tabel benar-benar kosong
+- [x] Validasi delete mencegah menghapus jurusan/industri yang masih dipakai data lain
+- [x] Endpoint `/api/config/majors` dan `/api/config/industries` + UI `admin/config`
+- [x] Verifikasi backend tsc, frontend vue-tsc/vite build, dan API config mengembalikan 6 jurusan + 6 industri
+
+## Fitur N - Hapus Perusahaan
+
+- [x] Admin/Super Admin dapat menghapus perusahaan dari Data Perusahaan
+- [x] Penghapusan memakai soft delete agar riwayat registrasi/kunjungan tetap aman
+- [x] Perusahaan yang dihapus tidak muncul lagi di daftar/dropdown perusahaan aktif
+- [x] Audit action `UPDATE_COMPANY` dengan metadata `SOFT_DELETE`
+- [x] Tombol Hapus + konfirmasi di `CompaniesView`
+- [x] Smoke create/delete perusahaan berhasil; data smoke dibersihkan
+
+## Fix - Tombol Download Surat Permohonan Setelah Approval
+
+- [x] Backend memang membuat Document + PDF Surat Permohonan saat admin approve pendaftaran
+- [x] UI siswa kini memprioritaskan kartu download jika `registrationStatus=DISETUJUI` dan `registrationDocumentId` tersedia, walau `effectivePhase`/jadwal sedang null atau sudah lewat
+- [x] `vue-tsc`, `vite build`, dan backend `tsc` berhasil
+
+## Fix - Approval Pendaftaran Otomatis Membuat Surat Permohonan
+
+- [x] Jika `LetterSignatory` kosong, generator otomatis membuat default `Kepala Sekolah` agar PDF tetap terbit
+- [x] Approval pendaftaran menjalankan generate PDF + Document siswa sebelum selesai
+- [x] Jika generate gagal, status dikembalikan dari `DISETUJUI` ke `DIAJUKAN` agar tidak ada approval tanpa surat
+- [x] UI workflow menampilkan tombol download saat status DISETUJUI + document tersedia, walau jadwal fase sedang null
+- [x] Smoke default signer + PDF berhasil; frontend/backend build berhasil
+
+## Fitur O - Canvas Tanda Tangan Kepala Sekolah
+
+- [x] Field `LetterSignatory.signaturePath` + migration
+- [x] Endpoint SUPER_ADMIN `GET /api/config/signatory` dan `PUT /api/config/signatory/signature`
+- [x] ConfigView canvas signature PNG transparan, clear, dan simpan
+- [x] Template surat formal dan penugasan menempelkan PNG tanda tangan sebelum nama/NIP
+- [x] Jika belum ada signatory aktif, sistem membuat default Kepala Sekolah agar surat otomatis tetap bisa terbit
+- [x] Smoke signature + render pipeline berhasil; backend/frontend build berhasil
+
+## Fitur P - Identitas Kepala Sekolah di Config
+
+- [x] Config SUPER_ADMIN memiliki field nama Kepala Sekolah, NIP, dan jabatan
+- [x] Identitas penandatangan disimpan di `LetterSignatory` dan menjadi sumber semua surat baru
+- [x] Canvas tanda tangan PNG transparan tetap terhubung ke penandatangan aktif
+- [x] Semua template surat membaca nama/NIP/jabatan/tanda tangan dari penandatangan aktif
+- [x] Backend/frontend typecheck dan build berhasil
+
+## Fitur Q - Sentralisasi Teks Surat
+
+- [x] `LETTER_TEXT` ditambahkan ke `Backend/src/config/letter.config.ts`
+- [x] Teks Surat Permohonan dipusatkan: subjek, salam pembuka, isi, kalimat siswa, penutup, dan template tanggal/perusahaan
+- [x] Teks Surat Pengantar, Monitoring, dan Penjemputan dipusatkan
+- [x] Teks Surat Penugasan dipusatkan: judul, asal, jabatan default, dasar, isi, dan ketentuan
+- [x] Label blok surat dipusatkan: Nomor, Lampiran, Hal, Kepada, Dari, Dasar, Isi, dan lainnya
+- [x] Placeholder dinamis tetap memakai fungsi agar nama, sekolah, perusahaan, tanggal, nomor, dan periode runtime tidak hilang
+- [x] Backend tsc dan frontend vue-tsc/vite build berhasil
+
+## Fitur R - Letter Tuning Sementara
+
+- [x] Halaman SUPER_ADMIN `admin/letter-tuning`
+- [x] Panel pengaturan sementara: font isi, font nama sekolah, ukuran/offset tanda tangan, perihal, isi, penutup
+- [x] Dua preview berdampingan: PDF hasil edit dan sample asli `Backend/surat_pkl/file1.pdf`/`file2.pdf`/`file3.pdf`
+- [x] Endpoint preview tidak menyimpan GeneratedLetter/database: `POST /api/config/tuning/preview`
+- [x] Endpoint sample terproteksi: `GET /api/config/tuning/sample/:name`
+- Catatan: setelah layout final disepakati, halaman/endpoint tuning sementara dapat dihapus dan nilai final dipindahkan ke `letter.config.ts`
+
+## Cleanup - Letter Tuning Sementara
+
+- [x] Halaman `Letter Tuning` sementara dihapus sesuai keputusan final
+- [x] Route/menu dan endpoint preview/sample tuning dihapus
+- [x] Konfigurasi produksi tetap memakai `letter.config.ts` dengan ukuran font/tanda tangan final
+
+## Fix - Approval Pendaftaran + Kuota Perusahaan
+
+- [x] Kuota perusahaan sekarang dihitung dari jumlah `Registration` berstatus `DISETUJUI`, bukan menunggu Surat Penerimaan
+- [x] Approval mengecek kuota ulang sebelum status menjadi `DISETUJUI`
+- [x] Approval mengunci row perusahaan dengan `FOR UPDATE` untuk mencegah overselling saat approval bersamaan
+- [x] Approval otomatis membuat PDF Surat Permohonan + Document milik siswa
+- [x] Fallback LetterSignatory default mencegah generate surat gagal saat konfigurasi pejabat belum ada
+- [x] Jika generate PDF gagal, status tidak dibiarkan `DISETUJUI` tanpa dokumen; status dikembalikan ke `DIAJUKAN`
+- [x] Siswa mendapat `registrationDocumentId` dan tombol download saat surat tersedia
+
+## Fix - Urutan Fase dan Verifikasi Admin
+
+- [x] Surat Penerimaan wajib berstatus `DISETUJUI` sebelum Data Orang Tua/Surat Pernyataan tersedia
+- [x] Backend menolak generate Surat Pernyataan bila Surat Penerimaan belum diverifikasi admin
+- [x] UI siswa menampilkan status menunggu verifikasi dan mengunci langkah berikutnya
+- [x] Transisi fase tetap memakai `checkPhaseCompletion`: pendaftaran+download surat, Surat Penerimaan approved, Surat Pernyataan approved, lalu fase berikutnya
+- [x] Typecheck/build frontend dan backend berhasil
