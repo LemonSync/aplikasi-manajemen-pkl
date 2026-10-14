@@ -22,6 +22,7 @@ export default [
         Buffer: 'readonly',
         setInterval: 'readonly',
         Express: 'readonly',
+        PDFKit: 'readonly',
       },
     },
     plugins: {
