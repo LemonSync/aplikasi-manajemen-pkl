@@ -63,7 +63,7 @@
     "@types/pdfkit": "^0.13.9",
     "@typescript-eslint/eslint-plugin": "^8.18.1",
     "@typescript-eslint/parser": "^8.18.1",
-    "eslint": "^9.17.0",
+    "eslint": "^10.12.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.2",
     "prisma": "^5.22.0",
