@@ -17,7 +17,7 @@ const CLEANUP_ROLES: Role[] = [Role.SISWA, Role.KETUA, Role.DUDI];
  *
  * Penutupan gelombang bersifat SOFT: akun siswa/ketua/DUDI dinonaktifkan
  * (`deletedAt`) sehingga tidak bisa login, tetapi seluruh data operasional
- * (absensi, jurnal, nilai, dokumen, surat, riwayat pendaftaran) TETAP utuh
+ * (absensi, nilai, dokumen, surat, riwayat pendaftaran) TETAP utuh
  * di database dan tetap bisa ditampilkan admin lewat filter gelombang arsip.
  * Membuka kembali gelombang memulihkan akun-akun tersebut.
  */

@@ -52,13 +52,11 @@ export class DashboardService {
     }
 
     if (role === Role.SISWA) {
-      const [attendanceCount, journalCount, complaintCount] = await Promise.all([
+      const [attendanceCount, complaintCount] = await Promise.all([
         prisma.attendance.count({ where: { userId: userId } }),
-        prisma.journal.count({ where: { userId: userId } }),
         prisma.complaint.count({ where: { authorId: userId } }),
       ]);
       stats.attendanceDays = attendanceCount;
-      stats.journalCount = journalCount;
       stats.complaintCount = complaintCount;
     }
 

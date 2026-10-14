@@ -17,7 +17,7 @@ import { logger } from '../config/logger';
  * Ruang pemindaian dipisah agar tidak salah-menuduh konten pengguna biasa:
  * - Frasa umpan (bait)  : dipindai dari URL + query + User-Agent + body.
  * - Pola serangan       : HANYA dari URL + query + User-Agent (probe struktural),
- *                         bukan isi body, supaya tulisan jurnal/pengaduan siswa
+ *                         bukan isi body, supaya tulisan pengaduan siswa
  *                         yang kebetulan memuat kata teknis tidak ikut diblok.
  */
 

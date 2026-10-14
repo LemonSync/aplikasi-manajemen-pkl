@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { AttendanceStatus, ComplaintStatus } from '@prisma/client';
 
 /**
- * Skema validasi modul Fase 3: absensi, jurnal, pengaduan, kunjungan.
+ * Skema validasi modul Fase 3: absensi, pengaduan, kunjungan.
  */
 
 // --- Absensi ---
@@ -45,10 +45,12 @@ export type ListAttendanceQueryDTO = z.infer<typeof listAttendanceQuerySchema>;
 export type SummaryQueryDTO = z.infer<typeof summaryQuerySchema>;
 
 // --- Absensi: model baru (status + kegiatan + lokasi) ---
+// Aturan per-status (kegiatan wajib, GPS wajib, dll) ditegakkan di service.
+// geo bisa berupa objek (JSON body) atau string JSON (multipart/form-data).
 export const submitAttendanceSchema = z.object({
   status: z.nativeEnum(AttendanceStatus),
-  activity: z.string().min(3, 'Pelaksanaan kegiatan minimal 3 karakter').max(2000),
-  geo: geoBodySchema,
+  activity: z.string().max(2000).optional().nullable(),
+  geo: z.union([geoBodySchema, z.string()]).optional().nullable(),
 });
 
 export const verifyAttendanceSchema = z.object({
@@ -58,38 +60,6 @@ export const verifyAttendanceSchema = z.object({
 
 export type SubmitAttendanceDTO = z.infer<typeof submitAttendanceSchema>;
 export type VerifyAttendanceDTO = z.infer<typeof verifyAttendanceSchema>;
-
-// --- Jurnal ---
-export const saveJournalSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal harus YYYY-MM-DD').optional(),
-  activity: z.string().min(3, 'Kegiatan minimal 3 karakter').max(2000),
-  result: z.string().max(2000).optional().nullable(),
-  obstacles: z.string().max(2000).optional().nullable(),
-});
-
-export const updateJournalSchema = z.object({
-  activity: z.string().min(3).max(2000).optional(),
-  result: z.string().max(2000).optional().nullable(),
-  obstacles: z.string().max(2000).optional().nullable(),
-});
-
-export const supervisorNoteSchema = z.object({
-  note: z.string().min(1, 'Catatan wajib diisi').max(2000),
-});
-
-export const listJournalQuerySchema = z.object({
-  page: z.coerce.number().int().positive().optional(),
-  perPage: z.coerce.number().int().positive().optional(),
-  userId: z.string().cuid().optional(),
-});
-
-export const verifyJournalSchema = z.object({
-  note: z.string().max(2000).optional(),
-});
-
-export type SaveJournalDTO = z.infer<typeof saveJournalSchema>;
-export type UpdateJournalDTO = z.infer<typeof updateJournalSchema>;
-export type ListJournalQueryDTO = z.infer<typeof listJournalQuerySchema>;
 
 // --- Pengaduan ---
 export const createComplaintSchema = z.object({

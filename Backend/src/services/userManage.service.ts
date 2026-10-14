@@ -371,7 +371,7 @@ export class UserManageService {
     }
 
     // SOFT delete: akun disembunyikan dari daftar & tidak bisa login
-    // (auth mengecek deletedAt), tetapi data terkait — absensi, jurnal,
+    // (auth mengecek deletedAt), tetapi data terkait — absensi,
     // nilai, dokumen, surat — TETAP tersimpan di database.
     //
     // Pendaftaran milik user ini IKUT dinonaktifkan bila belum selesai

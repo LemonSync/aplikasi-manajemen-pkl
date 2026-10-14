@@ -59,10 +59,6 @@ export const MESSAGES = {
     BACKFILL_FORBIDDEN: 'Absensi terlewat tidak dapat dirapel. Hubungi pembimbing',
     IMMUTABLE: 'Absensi yang sudah selesai tidak dapat diubah',
   },
-  JOURNAL: {
-    DUPLICATE: 'Jurnal untuk tanggal ini sudah ada',
-    BACKFILL_FORBIDDEN: 'Jurnal terlewat tidak dapat dirapel melebihi hari ini',
-  },
   COMPLAINT: {
     CLOSED: 'Pengaduan sudah ditutup',
     NOT_OWNER: 'Anda bukan pemilik pengaduan ini',
@@ -133,7 +129,6 @@ export const AUDIT_ACTIONS = {
   UPDATE_COMPANY: 'UPDATE_COMPANY',
   CHECK_IN: 'CHECK_IN',
   CHECK_OUT: 'CHECK_OUT',
-  CREATE_JOURNAL: 'CREATE_JOURNAL',
   CREATE_COMPLAINT: 'CREATE_COMPLAINT',
   REPLY_COMPLAINT: 'REPLY_COMPLAINT',
   CREATE_VISIT: 'CREATE_VISIT',
@@ -154,7 +149,6 @@ export const ENTITY_TYPES = {
   COMPANY: 'COMPANY',
   REGISTRATION: 'REGISTRATION',
   ATTENDANCE: 'ATTENDANCE',
-  JOURNAL: 'JOURNAL',
   COMPLAINT: 'COMPLAINT',
   VISIT: 'VISIT',
   SUPERVISION: 'SUPERVISION',

@@ -62,7 +62,6 @@ async function main() {
     await prisma.complaintReply.deleteMany({ where: { complaint: { authorId: { in: oldIds } } } });
     await prisma.complaint.deleteMany({ where: { authorId: { in: oldIds } } });
     await prisma.attendance.deleteMany({ where: { userId: { in: oldIds } } });
-    await prisma.journal.deleteMany({ where: { userId: { in: oldIds } } });
     await prisma.group.deleteMany({ where: { id: { in: oldGroupIds } } });
     await prisma.user.deleteMany({ where: { id: { in: oldIds } } });
   }
@@ -151,23 +150,6 @@ async function main() {
 
   const summary = await request('GET', `/api/attendances/summary?groupId=${group.id}`, undefined, tAdmin);
   log('GET /attendances/summary (admin)', summary.status === 200 && Array.isArray(summary.json?.data), { data: summary.json?.data });
-
-  // === JURNAL ===
-  const jurnal = await request('POST', '/api/journals', { activity: 'Membuat modul absensi', result: 'Selesai', obstacles: 'Tidak ada' }, tSiswa);
-  log('POST /journals', jurnal.status === 201 && Boolean(jurnal.json?.data?.id), { status: jurnal.status });
-  const journalId = jurnal.json?.data?.id;
-
-  const dupJurnal = await request('POST', '/api/journals', { activity: 'Duplikat' }, tSiswa);
-  log('Tolak jurnal duplikat (1/hari)', dupJurnal.status === 409, { status: dupJurnal.status, msg: dupJurnal.json?.message });
-
-  const backfill = await request('POST', '/api/journals', { activity: 'Rapel', date: '2020-01-01' }, tSiswa);
-  log('Tolak jurnal tanggal lampau', backfill.status === 400, { status: backfill.status, msg: backfill.json?.message });
-
-  const note = await request('POST', `/api/journals/${journalId}/supervisor-note`, { note: 'Bagus, tingkatkan.' }, tGuru);
-  log('POST /journals/:id/supervisor-note (guru)', note.status === 200 && Boolean(note.json?.data?.supervisorNote), { status: note.status });
-
-  const jurnalList = await request('GET', `/api/journals?groupId=${group.id}`, undefined, tGuru);
-  log('GET /journals (guru filter grup)', jurnalList.status === 200 && (jurnalList.json?.data?.length ?? 0) >= 1);
 
   // === PENGADUAN ===
   const comp = await request('POST', '/api/complaints', { subject: 'Kendala transportasi', body: 'Saya kesulitan transportasi ke lokasi PKL.' }, tSiswa);

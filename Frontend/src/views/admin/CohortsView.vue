@@ -46,7 +46,7 @@ const submit = async (): Promise<void> => {
     const ok = confirm(
       `Tutup gelombang "${formName.value}"?\n\n` +
         'Akun siswa, ketua, dan DUDI gelombang ini dinonaktifkan.\n' +
-        'Data absensi, jurnal, nilai, dokumen, dan surat tetap tersimpan.\n\n' +
+        'Data absensi, nilai, dokumen, dan surat tetap tersimpan.\n\n' +
         'Bisa dibuka kembali — akun ikut dipulihkan.'
     );
     if (!ok) return;

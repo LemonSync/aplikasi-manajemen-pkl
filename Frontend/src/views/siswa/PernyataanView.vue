@@ -62,6 +62,23 @@ const load = async (): Promise<void> => {
 
 const generate = async (): Promise<void> => {
   if (phaseLocked.value) return;
+  // Semua data yang dicetak ke surat wajib terisi (sinkron dengan backend).
+  if (!prefill.value?.namaOrtu?.trim()) {
+    error.value = 'Nama orang tua/wali wajib diisi.';
+    return;
+  }
+  if (!prefill.value?.alamatSiswa?.trim()) {
+    error.value = 'Alamat siswa wajib diisi.';
+    return;
+  }
+  if (!prefill.value?.hpOrtu?.trim()) {
+    error.value = 'No. HP orang tua/wali wajib diisi.';
+    return;
+  }
+  if (!prefill.value?.hpSiswa?.trim()) {
+    error.value = 'No. HP siswa wajib diisi.';
+    return;
+  }
   generating.value = true;
   error.value = '';
   success.value = '';
@@ -135,6 +152,14 @@ onMounted(load);
           Dokumen Surat Pernyataan Anda tetap dapat dilihat dan diunduh pada tabel status di bawah.
         </template>
       </p>
+      <div v-if="!isBeforePhase2" class="mt-3">
+        <RouterLink
+          to="/"
+          class="inline-flex items-center rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Kembali ke Dashboard
+        </RouterLink>
+      </div>
     </div>
 
     <div class="card">
@@ -165,19 +190,19 @@ onMounted(load);
             <p class="mt-1 text-xs text-gray-400">Otomatis dari data master siswa (NISN).</p>
           </div>
           <div>
-            <label class="label">Nama Orang Tua/Wali</label>
+            <label class="label">Nama Orang Tua/Wali <span class="text-red-500">*</span></label>
             <input v-model="prefill.namaOrtu" class="input" :disabled="phaseLocked" />
           </div>
           <div>
-            <label class="label">Alamat Siswa/I</label>
+            <label class="label">Alamat Siswa/I <span class="text-red-500">*</span></label>
             <input v-model="prefill.alamatSiswa" class="input" :disabled="phaseLocked" />
           </div>
           <div>
-            <label class="label">No. HP Orang Tua/Wali</label>
+            <label class="label">No. HP Orang Tua/Wali <span class="text-red-500">*</span></label>
             <input v-model="prefill.hpOrtu" class="input" :disabled="phaseLocked" />
           </div>
           <div>
-            <label class="label">No. HP Siswa</label>
+            <label class="label">No. HP Siswa <span class="text-red-500">*</span></label>
             <input v-model="prefill.hpSiswa" class="input" placeholder="Masukkan No. HP siswa" :disabled="phaseLocked" />
             <p class="mt-1 text-xs text-gray-400">Diisi siswa. Bila dikosongkan, diambil dari profil siswa.</p>
           </div>
