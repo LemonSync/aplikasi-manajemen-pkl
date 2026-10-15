@@ -4,6 +4,7 @@ import { auditService } from './audit.service';
 import { BadRequestError, ConflictError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { startOfToday } from '../utils/date';
+import { saveBuffer } from '../utils/storage';
 import { prisma } from '../config/prisma';
 
 export interface GeoInput {
@@ -12,20 +13,33 @@ export interface GeoInput {
   note?: string | null;
 }
 
+/** File bukti sakit dari multer (memoryStorage). */
+export interface SickProofFile {
+  buffer: Buffer;
+  originalname?: string;
+  mimetype: string;
+}
+
 export interface SubmitAttendanceInput {
   status: AttendanceStatus;
-  activity: string;
-  geo: GeoInput;
+  activity?: string;
+  geo?: GeoInput;
+  sickProof?: SickProofFile;
 }
+
+/** MIME bukti sakit yang diizinkan. */
+const SICK_PROOF_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'application/pdf']);
 
 /**
  * Service absensi harian (Fase 3).
  *
- * Model alur resmi sekolah:
- *  - Siswa mengirim 1 absensi per hari berisi: status kehadiran
- *    (Hadir/Alpha/Sakit/Izin) + pelaksanaan kegiatan + lokasi GPS saat kirim.
+ * Model alur resmi sekolah (input menyesuaikan status):
+ *  - HADIR : pelaksanaan kegiatan wajib + lokasi GPS wajib.
+ *  - IZIN  : keterangan izin wajib; GPS opsional.
+ *  - SAKIT : keterangan & bukti (foto/PDF) opsional.
+ *  - ALPHA : langsung tercatat otomatis — tanpa kegiatan/GPS & tanpa verifikasi guru.
  *  - Tidak bisa dirapel: tanggal harus hari ini (server-side), immutable.
- *  - Absensi dikonfirmasi (diverifikasi) oleh guru pembimbing siswa.
+ *  - Absensi non-ALPHA dikonfirmasi (diverifikasi) oleh guru pembimbing siswa.
  *
  * Catatan: endpoint check-in/check-out lama tetap dipertahankan sebagai
  * fitur tambahan (timer harian).
@@ -57,8 +71,33 @@ export class AttendanceService {
     return { isAnomaly: false, note: null };
   }
 
+  /** Validasi + simpan bukti sakit (opsional). Magic-bytes: JPG/PNG/PDF. */
+  private saveSickProof(attendanceId: string, file: SickProofFile): { path: string; name: string; mime: string } {
+    if (!SICK_PROOF_MIME.has(file.mimetype)) {
+      throw new BadRequestError('Bukti sakit harus berupa foto JPG/PNG atau PDF');
+    }
+    const isPng = file.mimetype === 'image/png';
+    const isPdf = file.mimetype === 'application/pdf';
+    const validSignature = isPng
+      ? file.buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      : isPdf
+        ? file.buffer.subarray(0, 5).toString('latin1') === '%PDF-'
+        : file.buffer[0] === 0xff && file.buffer[1] === 0xd8 && file.buffer[2] === 0xff;
+    if (!validSignature) {
+      throw new BadRequestError('Isi file bukti sakit tidak sesuai dengan tipe file');
+    }
+    const ext = isPng ? '.png' : isPdf ? '.pdf' : '.jpg';
+    const filename = `${attendanceId}-${Date.now()}${ext}`;
+    const { relativePath } = saveBuffer('attendance', filename, file.buffer);
+    return { path: relativePath, name: file.originalname || filename, mime: file.mimetype };
+  }
+
   /**
-   * Kirim absensi harian (model baru: status + pelaksanaan kegiatan + lokasi).
+   * Kirim absensi harian. Aturan wajib mengikuti status:
+   *  - HADIR : activity wajib + geo wajib
+   *  - IZIN  : activity (keterangan) wajib; geo opsional
+   *  - SAKIT : semua opsional (activity + bukti foto/PDF opsional); geo opsional
+   *  - ALPHA : tanpa activity/geo; langsung tercatat (verifiedAt terisi otomatis)
    * Satu siswa satu record per hari; tidak bisa diperbarui hari ini.
    */
   async submit(
@@ -66,7 +105,25 @@ export class AttendanceService {
     input: SubmitAttendanceInput,
     ctx: { ipAddress?: string; userAgent?: string }
   ): Promise<Attendance> {
-    this.validateGeo(input.geo);
+    const activity = input.activity?.trim() || undefined;
+    const geo = input.geo;
+
+    if (input.status === AttendanceStatus.HADIR) {
+      if (!activity || activity.length < 3) {
+        throw new BadRequestError('Pelaksanaan kegiatan wajib diisi saat status Hadir');
+      }
+      if (!geo) throw new BadRequestError(MESSAGES.ATTENDANCE.INVALID_LOCATION);
+      this.validateGeo(geo);
+    } else if (input.status === AttendanceStatus.IZIN) {
+      if (!activity || activity.length < 3) {
+        throw new BadRequestError('Keterangan izin wajib diisi saat status Izin');
+      }
+      if (geo) this.validateGeo(geo);
+    } else if (input.status === AttendanceStatus.SAKIT) {
+      if (geo) this.validateGeo(geo);
+    }
+    // ALPHA: tanpa kegiatan/GPS — langsung tercatat otomatis.
+
     const date = startOfToday();
 
     const existing = await attendanceRepository.findByUserAndDate(userId, date);
@@ -74,21 +131,38 @@ export class AttendanceService {
       throw new ConflictError('Anda sudah mengirim absensi hari ini. Absensi tidak dapat diubah.');
     }
 
-    const anomaly = this.detectAnomaly(input.geo);
     const now = new Date();
+    const anomaly = geo ? this.detectAnomaly(geo) : { isAnomaly: false, note: null };
 
-    const record = await attendanceRepository.create({
+    // ID record dibuat dulu agar nama file bukti sakit bisa menempel padanya.
+    const created = await attendanceRepository.create({
       user: { connect: { id: userId } },
       date,
       status: input.status,
-      activity: input.activity,
+      activity: activity ?? null,
       checkInAt: now,
-      checkInLat: new Prisma.Decimal(input.geo.lat),
-      checkInLong: new Prisma.Decimal(input.geo.long),
-      checkInNote: input.geo.note ?? null,
+      ...(geo
+        ? {
+            checkInLat: new Prisma.Decimal(geo.lat),
+            checkInLong: new Prisma.Decimal(geo.long),
+            checkInNote: geo.note ?? null,
+          }
+        : {}),
       isAnomaly: anomaly.isAnomaly,
       anomalyNote: anomaly.note,
+      // ALPHA dicatat otomatis: verifiedAt terisi tanpa pemberi verifikasi.
+      ...(input.status === AttendanceStatus.ALPHA ? { verifiedAt: now } : {}),
     });
+
+    let record = created;
+    if (input.status === AttendanceStatus.SAKIT && input.sickProof && input.sickProof.buffer.length > 0) {
+      const proof = this.saveSickProof(created.id, input.sickProof);
+      record = await attendanceRepository.update(created.id, {
+        sickProofPath: proof.path,
+        sickProofName: proof.name,
+        sickProofMime: proof.mime,
+      });
+    }
 
     // NOTE: Transisi fase ke PKL_AKTIF TIDAK dilakukan di sini lagi.
     // Fase siswa sekarang ditentukan oleh jadwal fase (PhaseSchedule).
@@ -102,10 +176,9 @@ export class AttendanceService {
       entityId: record.id,
       metadata: {
         status: input.status,
-        activity: input.activity.slice(0, 200),
-        lat: input.geo.lat,
-        long: input.geo.long,
-        isAnomaly: anomaly.isAnomaly,
+        activity: activity ? activity.slice(0, 200) : null,
+        ...(geo ? { lat: geo.lat, long: geo.long, isAnomaly: anomaly.isAnomaly } : {}),
+        ...(record.sickProofPath ? { sickProof: true } : {}),
       },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
@@ -117,7 +190,7 @@ export class AttendanceService {
   /**
    * Konfirmasi absensi oleh guru pembimbing.
    * Hanya guru yang membimbing siswa terkait yang boleh konfirmasi
-   * (admin/kapala sekolah bebas).
+   * (admin/kapala sekolah bebas). ALPHA tidak diverifikasi (tercatat otomatis).
    */
   async verify(
     attendanceId: string,
@@ -128,6 +201,9 @@ export class AttendanceService {
   ): Promise<Attendance> {
     const record = await attendanceRepository.findById(attendanceId);
     if (!record) throw new NotFoundError(MESSAGES.NOT_FOUND);
+    if (record.status === AttendanceStatus.ALPHA) {
+      throw new ConflictError('Absensi Alpha tercatat otomatis dan tidak perlu diverifikasi');
+    }
     if (record.verifiedById) throw new ConflictError('Absensi sudah dikonfirmasi sebelumnya');
 
     if (actor.role === Role.GURU_PEMBIMBING) {
@@ -262,10 +338,23 @@ export class AttendanceService {
     return attendanceRepository.findByUserAndDate(userId, startOfToday());
   }
 
-  /** Riwayat absensi milik siswa. */
-  async myHistory(userId: string, params: { page: number; perPage: number }) {
+  /** Riwayat absensi milik siswa (opsional filter rentang tanggal untuk kalender). */
+  async myHistory(
+    userId: string,
+    params: { page: number; perPage: number; from?: string; to?: string }
+  ) {
     return attendanceRepository.paginate(
-      { userId },
+      {
+        userId,
+        ...(params.from || params.to
+          ? {
+              date: {
+                ...(params.from ? { gte: new Date(params.from) } : {}),
+                ...(params.to ? { lte: new Date(params.to) } : {}),
+              },
+            }
+          : {}),
+      },
       (params.page - 1) * params.perPage,
       params.perPage
     );

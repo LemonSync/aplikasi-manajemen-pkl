@@ -38,7 +38,7 @@ const fmtDateTime = (d: Date | string): string =>
  * - Diterbitkan satu kali (generate-once) setelah masa PKL selesai.
  * - Siswa mengunduh laporannya sendiri; guru pembimbing hanya untuk siswa
  *   bimbingannya; admin/kepsek bebas memilih siswa (query ?studentId=).
- * - Rekap absensi/jurnal/kunjungan/nilai di-query per studentId.
+ * - Rekap absensi/kunjungan/nilai di-query per studentId.
  * - Isi nilai di-snapshot saat terbit: bila belum ada nilai,
  *   bagian nilai terbit dalam keadaan KOSONG (sel tanpa angka).
  */
@@ -169,7 +169,7 @@ export class FinalReportService {
 
     const cohortId = student.cohortId;
 
-    const [registration, school, pklSchedule, attendances, visits, journals, grade] =
+    const [registration, school, pklSchedule, attendances, visits, grade] =
       await Promise.all([
         prisma.registration.findFirst({
           where: {
@@ -196,7 +196,6 @@ export class FinalReportService {
             supervisor: { select: { username: true, teacherProfile: { select: { fullName: true } } } },
           },
         }),
-        prisma.journal.findMany({ where: { userId: studentId }, orderBy: [{ date: 'asc' }] }),
         prisma.grade.findFirst({ where: { studentId }, orderBy: { createdAt: 'desc' } }),
       ]);
 
@@ -262,11 +261,6 @@ export class FinalReportService {
         status: VISIT_LABEL[v.status] ?? v.status,
         supervisor: v.supervisor.teacherProfile?.fullName ?? v.supervisor.username,
         note: v.note,
-      })),
-      journals: journals.map((j) => ({
-        date: fmtDate(j.date),
-        activity: j.activity,
-        result: j.result,
       })),
       grades: grade
         ? [

@@ -9,7 +9,6 @@ export interface StudentRegistryRemoveResult {
   nisn: string;
   accounts: number;
   attendance: number;
-  journals: number;
   grades: number;
   documents: number;
   registrations: number;
@@ -84,7 +83,7 @@ export class StudentRegistryService {
 
   /**
    * Hapus data siswa dari master + hapus PERMANEN seluruh data siswa tersebut.
-   * Relasi FK di schema sudah Cascade (absensi, jurnal, nilai, surat, kelompok,
+   * Relasi FK di schema sudah Cascade (absensi, nilai, surat, kelompok,
    * profil, kredensial -> ikut terhapus saat akun dihapus); method ini menghapus
    * eksplisit agar jumlahnya bisa dilaporkan, termasuk baris pendaftaran yang
    * hanya terhubung via NISN (belum punya akun).
@@ -106,7 +105,6 @@ export class StudentRegistryService {
       nisn,
       accounts: userIds.length,
       attendance: 0,
-      journals: 0,
       grades: 0,
       documents: 0,
       registrations: 0,
@@ -114,7 +112,6 @@ export class StudentRegistryService {
 
     for (const uid of userIds) {
       counts.attendance += (await prisma.attendance.deleteMany({ where: { userId: uid } })).count;
-      counts.journals += (await prisma.journal.deleteMany({ where: { userId: uid } })).count;
       counts.grades += (await prisma.grade.deleteMany({ where: { studentId: uid } })).count;
       counts.documents += (await prisma.document.deleteMany({ where: { ownerId: uid } })).count;
       // Pendaftaran yang diajukan siswa ini ikut terhapus.

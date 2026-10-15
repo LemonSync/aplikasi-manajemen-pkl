@@ -5,9 +5,11 @@ import { extractErrorMessage } from '@/services/http';
 import type { PaginationMeta } from '@/types';
 import Modal from '@/components/Modal.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
+import LocationMapModal, { type MapPoint } from '@/components/LocationMapModal.vue';
 
 /**
- * Verifikasi absensi siswa bimbingan.
+ * Verifikasi absensi siswa bimbingan OLEH GURU PEMBIMBING (bukan DUDI).
+ * Guru memeriksa lokasi GPS check-in/out siswa di peta, lalu menyetujui/menolak.
  * Backend otomatis membatasi daftar absensi ke siswa bimbingan guru yang login.
  */
 const rows = ref<AttendanceRecord[]>([]);
@@ -116,6 +118,35 @@ const submitVerify = async (): Promise<void> => {
 
 const totalPages = (): number => meta.value?.totalPages ?? 1;
 
+const statusBadgeClass = (status: string): string => {
+  if (status === 'HADIR') return 'bg-emerald-100 text-emerald-700';
+  if (status === 'ALPHA') return 'bg-red-100 text-red-700';
+  if (status === 'SAKIT') return 'bg-gray-100 text-gray-700';
+  return 'bg-amber-100 text-amber-700';
+};
+
+// ALPHA tercatat otomatis di backend — tidak perlu (dan tidak boleh) diverifikasi.
+const isAutoRecorded = (r: AttendanceRecord): boolean => r.status === 'ALPHA';
+
+// --- Lokasi GPS (untuk diperiksa pembimbing sebelum verifikasi) ---
+const mapOpen = ref(false);
+const mapTitle = ref('');
+const mapPoints = ref<MapPoint[]>([]);
+
+const hasLocation = (r: AttendanceRecord): boolean => r.checkInLat != null || r.checkOutLat != null;
+
+const openMap = (r: AttendanceRecord): void => {
+  const points: MapPoint[] = [
+    { label: `Masuk - ${fmtDate(r.date)}`, lat: r.checkInLat, long: r.checkInLong, note: r.checkInNote },
+  ];
+  if (r.checkOutAt) {
+    points.push({ label: `Keluar - ${fmtDate(r.date)}`, lat: r.checkOutLat, long: r.checkOutLong, note: r.checkOutNote });
+  }
+  mapTitle.value = `Lokasi Presensi - ${studentName(r)}`;
+  mapPoints.value = points;
+  mapOpen.value = true;
+};
+
 onMounted(load);
 </script>
 
@@ -157,10 +188,10 @@ onMounted(load);
             <th>Tanggal</th>
             <th>Siswa</th>
             <th>Status</th>
-            <th>Kegiatan</th>
+            <th>Keterangan</th>
             <th>Check-in</th>
             <th>Check-out</th>
-            <th>Anomali</th>
+            <th>Lokasi</th>
             <th>Verifikasi</th>
             <th class="text-right">Aksi</th>
           </tr>
@@ -169,19 +200,47 @@ onMounted(load);
           <tr v-for="r in rows" :key="r.id">
             <td>{{ fmtDate(r.date) }}</td>
             <td class="font-medium text-gray-800">{{ studentName(r) }}</td>
-            <td><span class="badge" :class="r.status === 'HADIR' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'">{{ r.status }}</span></td>
-            <td class="max-w-xs truncate">{{ r.activity ?? '-' }}</td>
+            <td><span class="badge" :class="statusBadgeClass(r.status)">{{ r.status }}</span></td>
+            <td class="max-w-xs">
+              <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? '-' }}</span>
+              <span v-if="r.sickProofPath" class="block text-xs text-gray-400" :title="r.sickProofMime ?? ''">
+                Bukti: {{ r.sickProofName ?? 'terlampir' }}
+              </span>
+            </td>
             <td>{{ fmtTime(r.checkInAt) }}</td>
             <td>{{ fmtTime(r.checkOutAt) }}</td>
             <td>
-              <span v-if="r.isAnomaly" class="text-xs text-amber-600" :title="r.anomalyNote ?? ''">
-                {{ r.anomalyNote ?? 'Ya' }}
-              </span>
-              <span v-else class="text-gray-400">-</span>
+              <div class="flex flex-col items-start gap-1">
+                <button
+                  v-if="hasLocation(r)"
+                  class="bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
+                  title="Periksa lokasi GPS siswa di peta"
+                  @click="openMap(r)"
+                >
+                  Peta
+                </button>
+                <span v-else class="text-gray-400">-</span>
+                <span v-if="r.isAnomaly" class="text-xs text-amber-600" :title="r.anomalyNote ?? ''">
+                  {{ r.anomalyNote ?? 'Anomali' }}
+                </span>
+              </div>
             </td>
             <td>
               <span
-                v-if="r.verifiedById"
+                v-if="isAutoRecorded(r)"
+                class="badge bg-blue-100 text-blue-700"
+                title="Absensi Alpha tercatat otomatis tanpa verifikasi"
+              >
+                Terekam Otomatis
+              </span>
+              <span
+                v-else-if="r.verifiedById && r.anomalyNote?.startsWith('Ditolak')"
+                class="badge bg-red-100 text-red-700"
+              >
+                Ditolak
+              </span>
+              <span
+                v-else-if="r.verifiedById"
                 class="badge bg-emerald-100 text-emerald-700"
                 :title="r.verifiedAt ? new Date(r.verifiedAt).toLocaleString('id-ID') : ''"
               >
@@ -190,7 +249,7 @@ onMounted(load);
               <span v-else class="badge bg-amber-100 text-amber-700">Menunggu</span>
             </td>
             <td class="text-right whitespace-nowrap">
-              <template v-if="!r.verifiedById">
+              <template v-if="!r.verifiedById && !isAutoRecorded(r)">
                 <button
                   class="mr-3 text-sm text-emerald-600 hover:underline"
                   :disabled="saving"
@@ -240,6 +299,34 @@ onMounted(load);
           {{ verifyTarget ? fmtDate(verifyTarget.date) : '' }} ·
           {{ verifyTarget?.status ?? '' }}
         </p>
+        <!-- Lokasi GPS untuk diperiksa sebelum verifikasi -->
+        <div
+          v-if="verifyTarget && hasLocation(verifyTarget)"
+          class="rounded-lg bg-gray-50 p-3 text-xs text-gray-600"
+        >
+          <p class="mb-1 font-medium text-gray-700">Lokasi GPS siswa:</p>
+          <p v-if="verifyTarget.checkInLat != null">
+            Check-in: {{ Number(verifyTarget.checkInLat).toFixed(6) }}, {{ Number(verifyTarget.checkInLong).toFixed(6) }}
+            <span v-if="verifyTarget.checkInNote"> — {{ verifyTarget.checkInNote }}</span>
+          </p>
+          <p v-if="verifyTarget.checkOutAt && verifyTarget.checkOutLat != null">
+            Check-out: {{ Number(verifyTarget.checkOutLat).toFixed(6) }}, {{ Number(verifyTarget.checkOutLong).toFixed(6) }}
+            <span v-if="verifyTarget.checkOutNote"> — {{ verifyTarget.checkOutNote }}</span>
+          </p>
+          <button
+            class="mt-2 bg-primary-50 px-2 py-1 font-medium text-primary-700 hover:bg-primary-100"
+            @click="verifyTarget && openMap(verifyTarget)"
+          >
+            Lihat di Peta
+          </button>
+        </div>
+        <div v-if="verifyTarget?.status === 'SAKIT' && verifyTarget.sickProofPath" class="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+          <p class="mb-1 font-medium text-gray-700">Bukti sakit:</p>
+          <p>{{ verifyTarget.sickProofName ?? 'terlampir' }} <span v-if="verifyTarget.sickProofMime" class="text-gray-400">({{ verifyTarget.sickProofMime }})</span></p>
+        </div>
+        <div v-if="verifyTarget?.isAnomaly" class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Perhatian: {{ verifyTarget.anomalyNote ?? 'Lokasi terdeteksi anomali.' }}
+        </div>
         <div v-if="verifyAction === 'REJECT'" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
           Alasan penolakan wajib diisi.
         </div>
@@ -266,5 +353,8 @@ onMounted(load);
         </button>
       </template>
     </Modal>
+
+    <!-- Peta lokasi GPS siswa -->
+    <LocationMapModal :open="mapOpen" :title="mapTitle" :points="mapPoints" @close="mapOpen = false" />
   </div>
 </template>

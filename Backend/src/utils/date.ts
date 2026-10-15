@@ -7,7 +7,7 @@ import { DATE_LOCALE } from '../config/constants';
 
 /**
  * Mengembalikan awal hari (00:00:00) pada zona waktu aplikasi sebagai Date.
- * Dipakai untuk kolom `date` (tipe DATE) pada absensi/jurnal agar konsisten.
+ * Dipakai untuk kolom `date` (tipe DATE) pada absensi agar konsisten.
  */
 export const startOfToday = (base: Date = new Date()): Date => {
   const fmt = new Intl.DateTimeFormat('en-CA', {

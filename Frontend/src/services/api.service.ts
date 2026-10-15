@@ -353,7 +353,7 @@ export const companyService = {
 };
 
 // ============================================================================
-// FASE 3 — Masa PKL Aktif (absensi, jurnal, pengaduan, kunjungan)
+// FASE 3 — Masa PKL Aktif (absensi, pengaduan, kunjungan)
 // ============================================================================
 
 export interface AttendanceRecord {
@@ -371,6 +371,9 @@ export interface AttendanceRecord {
   checkOutNote: string | null;
   isAnomaly: boolean;
   anomalyNote: string | null;
+  sickProofPath: string | null;
+  sickProofName: string | null;
+  sickProofMime: string | null;
   verifiedById: string | null;
   verifiedAt: string | null;
   user?: { id: string; username: string; studentProfile?: { fullName: string; nisn?: string | null } | null };
@@ -390,19 +393,6 @@ export interface AttendanceClassSection {
   className: string;
   studentCount: number;
   students: AttendanceStudentGroup[];
-}
-
-export interface JournalRecord {
-  id: string;
-  date: string;
-  activity: string;
-  result: string | null;
-  obstacles: string | null;
-  supervisorNote: string | null;
-  verifiedAt?: string | null;
-  verifiedById?: string | null;
-  verificationNote?: string | null;
-  user?: { id: string; username: string; studentProfile?: { fullName: string; nisn?: string | null } | null };
 }
 
 export interface ComplaintRecord {
@@ -445,10 +435,17 @@ export const attendanceService = {
   },
   async submit(payload: {
     status: 'HADIR' | 'IZIN' | 'SAKIT' | 'ALPHA';
-    activity: string;
-    geo: GeoPayload;
+    activity?: string;
+    geo?: GeoPayload;
+    sickProof?: File;
   }): Promise<AttendanceRecord> {
-    const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/submit', payload);
+    // multipart/form-data: backend menerima file bukti sakit (opsional, hanya status SAKIT).
+    const form = new FormData();
+    form.append('status', payload.status);
+    if (payload.activity) form.append('activity', payload.activity);
+    if (payload.geo) form.append('geo', JSON.stringify(payload.geo));
+    if (payload.sickProof) form.append('sickProof', payload.sickProof);
+    const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/submit', form);
     return data.data;
   },
   async verify(id: string, action: 'APPROVE' | 'REJECT', note?: string): Promise<AttendanceRecord> {
@@ -463,8 +460,8 @@ export const attendanceService = {
     const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/check-out', geo);
     return data.data;
   },
-  async listMine(): Promise<AttendanceRecord[]> {
-    const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances/me');
+  async listMine(params?: { from?: string; to?: string; page?: number; perPage?: number }): Promise<AttendanceRecord[]> {
+    const { data } = await http.get<ApiResponse<AttendanceRecord[]>>('/attendances/me', { params: params ?? {} });
     return data.data;
   },
   async list(params?: { userId?: string; status?: string; from?: string; to?: string; page?: number; perPage?: number }): Promise<{ items: AttendanceRecord[]; meta?: PaginationMeta }> {
@@ -478,30 +475,6 @@ export const attendanceService = {
   /** Monitoring admin/guru: absensi per kelas → siswa (termasuk koordinat GPS). */
   async byClass(params?: { from?: string; to?: string; status?: string; cohortId?: string }): Promise<{ classes: AttendanceClassSection[]; total: number }> {
     const { data } = await http.get<ApiResponse<{ classes: AttendanceClassSection[]; total: number }>>('/attendances/by-class', { params: params ?? {} });
-    return data.data;
-  },
-};
-
-/** Service jurnal kegiatan. */
-export const journalService = {
-  async create(payload: { activity: string; result?: string | null; obstacles?: string | null }): Promise<JournalRecord> {
-    const { data } = await http.post<ApiResponse<JournalRecord>>('/journals', payload);
-    return data.data;
-  },
-  async listMine(): Promise<JournalRecord[]> {
-    const { data } = await http.get<ApiResponse<JournalRecord[]>>('/journals/me');
-    return data.data;
-  },
-  async list(params?: { userId?: string; page?: number; perPage?: number }): Promise<{ items: JournalRecord[]; meta?: PaginationMeta }> {
-    const { data } = await http.get<ApiResponse<JournalRecord[]>>('/journals', { params: params ?? {} });
-    return { items: data.data, meta: data.meta };
-  },
-  async addSupervisorNote(id: string, note: string): Promise<JournalRecord> {
-    const { data } = await http.post<ApiResponse<JournalRecord>>(`/journals/${id}/supervisor-note`, { note });
-    return data.data;
-  },
-  async verify(id: string, note?: string): Promise<JournalRecord> {
-    const { data } = await http.post<ApiResponse<JournalRecord>>(`/journals/${id}/verify`, { note });
     return data.data;
   },
 };
@@ -875,7 +848,6 @@ export const studentRegistryService = {
     nisn: string;
     accounts: number;
     attendance: number;
-    journals: number;
     grades: number;
     documents: number;
     registrations: number;
@@ -886,7 +858,6 @@ export const studentRegistryService = {
         nisn: string;
         accounts: number;
         attendance: number;
-        journals: number;
         grades: number;
         documents: number;
         registrations: number;

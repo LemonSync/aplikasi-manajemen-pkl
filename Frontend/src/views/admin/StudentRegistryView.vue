@@ -193,7 +193,7 @@ const removeStudent = async (s: StudentRegistryRecord): Promise<void> => {
   const ok = window.confirm(
     `Hapus siswa "${s.fullName}" (NISN ${s.nisn})?\n\n` +
       '1. Baris master disembunyikan — dipulihkan dengan import ulang Excel.\n' +
-      '2. AKUN siswa beserta SEMUA datanya DIHAPUS PERMANEN: absensi, jurnal, ' +
+      '2. AKUN siswa beserta SEMUA datanya DIHAPUS PERMANEN: absensi, ' +
       'nilai, surat/dokumen, keanggotaan kelompok, dan pendaftaran yang diajukannya.\n\n' +
       'Tindakan ini TIDAK BISA dibatalkan. Lanjutkan?'
   );
@@ -207,7 +207,7 @@ const removeStudent = async (s: StudentRegistryRecord): Promise<void> => {
     if (result.accounts > 0) {
       extra =
         ` ${result.accounts} akun beserta ${result.attendance} absensi, ` +
-        `${result.journals} jurnal, ${result.grades} nilai, ${result.documents} dokumen ` +
+        `${result.grades} nilai, ${result.documents} dokumen ` +
         `dihapus permanen.`;
     }
     success.value = `Data ${s.fullName} (${s.nisn}) dihapus dari Master Siswa.${extra}`;

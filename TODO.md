@@ -1087,3 +1087,13 @@ Siswa tidak boleh mengubah identitasnya di form pernyataan. Aturan sumber data:
 - [x] UI siswa menampilkan status menunggu verifikasi dan mengunci langkah berikutnya
 - [x] Transisi fase tetap memakai `checkPhaseCompletion`: pendaftaran+download surat, Surat Penerimaan approved, Surat Pernyataan approved, lalu fase berikutnya
 - [x] Typecheck/build frontend dan backend berhasil
+
+## Fitur - Auto-Alpha: Catat Absensi Terlewat Otomatis (2026-10-14)
+
+- [x] Job cron `autoRecordMissedAttendance` di `Backend/src/jobs/index.ts` (ikut `runAllJobs`, interval 1 jam + saat startup)
+- [x] Aturan: siswa fase `PKL_AKTIF`, tanggal dalam rentang `PhaseSchedule` fase PKL gelombangnya, Sen–Sab (Minggu libur), lookback 7 hari (menangani server sempat mati)
+- [x] Baris `Attendance` dibuat `status=ALPHA`, `activity='Otomatis: tidak ada presensi'`, `verifiedAt` terisi (tercatat otomatis, tanpa verifikasi pembimbing — konsisten dengan Alpha manual), `skipDuplicates` aman dari double-run
+- [x] Notifikasi in-app: ke siswa ("Presensi Tercatat Otomatis (Alpha)", link `/absensi`) + agregat ke guru pembimbing ("Siswa Tidak Presensi" — daftar nama siswa + tanggal, link `/guru/absensi`)
+- [x] Kalender/riwayat siswa dan tabel verifikasi guru otomatis menampilkan baris Alpha ("Terekam Otomatis") — tanpa perubahan frontend
+- [x] Smoke test: 4 siswa PKL_AKTIF tanpa presensi 13 Okt 2026 → 4 baris ALPHA + 4 notif siswa + 1 notif guru; job dijalankan ulang → tidak ada data/notifikasi ganda
+- [x] `npx tsc --noEmit` bersih

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { profileService } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 
+const router = useRouter();
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
@@ -33,12 +35,21 @@ const load = async (): Promise<void> => {
 };
 
 const submit = async (): Promise<void> => {
-  saving.value = true;
   error.value = '';
   success.value = '';
+  // Validasi frontend: minimal salah satu nama harus terisi (sinkron dengan backend).
+  if (!form.value.fatherName.trim() && !form.value.motherName.trim() && !form.value.guardianName.trim()) {
+    error.value = 'Minimal salah satu harus diisi: nama Ayah, Ibu, atau Wali.';
+    return;
+  }
+  saving.value = true;
   try {
     await profileService.upsertParentData(form.value);
-    success.value = 'Data orang tua berhasil disimpan.';
+    success.value = 'Data orang tua berhasil disimpan. Mengalihkan ke Alur PKL…';
+    // Kembali ke halaman alur PKL setelah berhasil menyimpan.
+    setTimeout(() => {
+      void router.push({ name: 'student-workflow' });
+    }, 1200);
   } catch (e) {
     error.value = extractErrorMessage(e);
   } finally {
@@ -52,7 +63,10 @@ onMounted(load);
 <template>
   <div class="space-y-6">
     <div class="card">
-      <h2 class="mb-4 text-lg font-semibold text-gray-800">Data Orang Tua / Wali</h2>
+      <h2 class="mb-1 text-lg font-semibold text-gray-800">Data Orang Tua / Wali</h2>
+      <p class="mb-4 text-sm text-gray-500">
+        Minimal salah satu harus diisi: nama <strong>Ayah</strong>, <strong>Ibu</strong>, atau <strong>Wali</strong>.
+      </p>
       <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
       <div v-if="loading" class="loading" />

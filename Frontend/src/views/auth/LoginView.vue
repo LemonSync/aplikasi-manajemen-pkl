@@ -57,11 +57,11 @@ const submit = async (): Promise<void> => {
           Satu sistem untuk seluruh alur PKL
         </h1>
         <p class="mt-4 text-ink-300">
-          Pendaftaran, verifikasi surat, absensi, jurnal, hingga penilaian — semuanya terkelola
+          Pendaftaran, verifikasi surat, absensi, hingga penilaian — semuanya terkelola
           dalam satu tempat.
         </p>
         <div class="mt-8 space-y-3">
-          <div v-for="f in ['Pendaftaran & verifikasi berkas', 'Monitoring absensi GPS & jurnal', 'Rekap nilai & surat otomatis']" :key="f" class="flex items-center gap-3 text-sm text-ink-200">
+          <div v-for="f in ['Pendaftaran & verifikasi berkas', 'Monitoring absensi GPS', 'Rekap nilai & surat otomatis']" :key="f" class="flex items-center gap-3 text-sm text-ink-200">
             <AppIcon name="checkCircle" :size="17" class="text-primary-400" />
             <span>{{ f }}</span>
           </div>

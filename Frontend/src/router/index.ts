@@ -62,12 +62,6 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['SISWA'] as Role[], phase: ['PKL_AKTIF'] as StudentPhase[], workflowTask: true, title: 'Absensi Harian' },
       },
       {
-        path: 'jurnal',
-        name: 'my-journal',
-        component: () => import('@/views/siswa/JournalView.vue'),
-        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_AKTIF'] as StudentPhase[], workflowTask: true, title: 'Jurnal Kegiatan' },
-      },
-      {
         path: 'pengaduan',
         name: 'my-complaints',
         component: () => import('@/views/siswa/ComplaintView.vue'),
@@ -103,12 +97,6 @@ const routes: RouteRecordRaw[] = [
         name: 'guru-attendance-verify',
         component: () => import('@/views/guru/AttendanceVerifyView.vue'),
         meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Verifikasi Absensi' },
-      },
-      {
-        path: 'guru/jurnal',
-        name: 'guru-journal-monitor',
-        component: () => import('@/views/guru/JournalMonitorView.vue'),
-        meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Monitoring Jurnal' },
       },
       {
         path: 'guru/kunjungan',

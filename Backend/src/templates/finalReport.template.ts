@@ -23,7 +23,6 @@ export interface FinalReportData {
   attendanceSummary: Array<{ fullName: string; hadir: number; izin: number; sakit: number; alpha: number }>;
   attendanceRows: Array<{ date: string; status: string; activity: string }>;
   visits: Array<{ scheduledAt: string; visitedAt: string | null; status: string; supervisor: string; note: string | null }>;
-  journals: Array<{ date: string; activity: string; result: string | null }>;
   grades: Array<{ fullName: string; nisn: string; scoreDudi: string | null; predicate: string | null; note: string | null }>;
 }
 
@@ -210,20 +209,8 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
         data.visits.map((v) => [v.scheduledAt, v.visitedAt ?? '-', v.status, v.supervisor, v.note ?? '-'])
       );
 
-      // --- D. Jurnal kegiatan ---
-      sectionTitle(doc, 'D. JURNAL KEGIATAN');
-      drawTable(
-        doc,
-        [
-          { header: 'Tanggal', width: 100 },
-          { header: 'Kegiatan', width: w * 0.55 },
-          { header: 'Hasil', width: w - 100 - w * 0.55 },
-        ],
-        data.journals.map((j) => [j.date, j.activity, j.result ?? '-'])
-      );
-
-      // --- E. Nilai akhir (sel kosong bila belum diinput) ---
-      sectionTitle(doc, 'E. NILAI AKHIR');
+      // --- D. Nilai akhir (sel kosong bila belum diinput) ---
+      sectionTitle(doc, 'D. NILAI AKHIR');
       drawTable(
         doc,
         [

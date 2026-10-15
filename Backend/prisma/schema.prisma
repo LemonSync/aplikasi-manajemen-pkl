@@ -142,8 +142,6 @@ model User {
 
   attendances          Attendance[]
   verifiedAttendances  Attendance[] @relation("AttendanceVerifier")
-  journals             Journal[]
-  verifiedJournals     Journal[]    @relation("JournalVerifier")
   complaints           Complaint[]  @relation("ComplaintAuthor")
   complaintReplies     ComplaintReply[] @relation("ComplaintReplyAuthor")
   visits               Visit[]      @relation("VisitSupervisor")
@@ -523,7 +521,7 @@ model PhaseSchedule {
 }
 
 // ============================================================================
-// ABSENSI, JURNAL, PENGADUAN, KUNJUNGAN
+// ABSENSI, PENGADUAN, KUNJUNGAN
 // ============================================================================
 
 /// Absensi harian. 1 siswa = 1 absen per hari (unique user+tanggal).
@@ -555,6 +553,11 @@ model Attendance {
   isAnomaly    Boolean          @default(false)  // flag jika lokasi mencurigakan
   anomalyNote  String?          @db.Text
 
+  // Bukti sakit (opsional, hanya saat status SAKIT) — foto/PDF di storage/attendance/
+  sickProofPath String?
+  sickProofName String?          // nama file asli saat upload
+  sickProofMime String?          // image/jpeg|image/png|application/pdf
+
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
@@ -562,30 +565,6 @@ model Attendance {
   @@index([date])
   @@index([status])
   @@map("attendances")
-}
-
-/// Jurnal kegiatan harian siswa (diverifikasi guru pembimbing)
-model Journal {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  date         DateTime @db.Date
-  activity     String   @db.Text
-  result       String?  @db.Text
-  obstacles    String?  @db.Text
-  supervisorNote String? @db.Text
-  verifiedAt DateTime?
-  verifiedById String?
-  verifiedBy User? @relation("JournalVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  verificationNote String? @db.Text
-
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-  @@index([date])
-  @@index([verifiedById])
-  @@map("journals")
 }
 
 /// Pengaduan / laporan masalah dari siswa (difilter via cohort penulis)

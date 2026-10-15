@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
-import { attendanceService } from '../services/attendance.service';
+import { AttendanceStatus } from '@prisma/client';
+import { attendanceService, GeoInput } from '../services/attendance.service';
 import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
+import { BadRequestError } from '../errors/AppError';
 import {
   GeoBodyDTO,
   ListAttendanceQueryDTO,
@@ -12,6 +14,21 @@ import {
   SubmitAttendanceDTO,
   VerifyAttendanceDTO,
 } from '../validators/phase3.validator';
+
+/** Normalisasi geo dari body JSON (objek) atau multipart (string JSON). */
+const parseGeo = (raw: SubmitAttendanceDTO['geo']): GeoInput | undefined => {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  let value: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new BadRequestError('Data lokasi tidak valid');
+    }
+  }
+  if (typeof value !== 'object' || value === null) return undefined;
+  return value as GeoInput;
+};
 
 /**
  * Controller absensi harian (Fase 3).
@@ -33,11 +50,21 @@ export class AttendanceController {
     return sendSuccess(res, result, 'Absen keluar berhasil');
   });
 
-  /** POST /api/attendances/submit - kirim absensi harian (status + kegiatan + lokasi) */
+  /** POST /api/attendances/submit - kirim absensi harian (menyesuaikan status; opsional bukti sakit) */
   submit = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as SubmitAttendanceDTO;
     const ctx = getRequestContext(req);
-    const result = await attendanceService.submit(req.user!.sub, dto, ctx);
+    const file = req.file as Express.Multer.File | undefined;
+    const result = await attendanceService.submit(
+      req.user!.sub,
+      {
+        status: dto.status as AttendanceStatus,
+        activity: dto.activity ?? undefined,
+        geo: parseGeo(dto.geo),
+        sickProof: file ? { buffer: file.buffer, originalname: file.originalname, mimetype: file.mimetype } : undefined,
+      },
+      ctx
+    );
     return sendSuccess(res, result, 'Absensi berhasil dikirim', 201);
   });
 
@@ -64,7 +91,9 @@ export class AttendanceController {
   /** GET /api/attendances/me */
   myHistory = asyncHandler(async (req: Request, res: Response) => {
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    const { items, total } = await attendanceService.myHistory(req.user!.sub, { page, perPage });
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const { items, total } = await attendanceService.myHistory(req.user!.sub, { page, perPage, from, to });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 

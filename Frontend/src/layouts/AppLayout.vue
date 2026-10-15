@@ -26,7 +26,6 @@ const navItems: NavItem[] = [
   { label: 'Notifikasi', routeName: 'notifications', icon: 'bell', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
   // Siswa
   { label: 'Absensi Harian', routeName: 'my-attendance', icon: 'calendar', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
-  { label: 'Jurnal Kegiatan', routeName: 'my-journal', icon: 'book', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
   { label: 'Pengaduan', routeName: 'my-complaints', icon: 'alert', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
   { label: 'Dokumen Saya', routeName: 'my-documents', icon: 'file', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
   { label: 'Laporan Akhir', routeName: 'my-report', icon: 'clipboard', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
@@ -35,7 +34,6 @@ const navItems: NavItem[] = [
   { label: 'Siswa Bimbingan', routeName: 'guru-bimbingan', icon: 'users', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Surat Pengantar dkk.', routeName: 'guru-bulk-letter', icon: 'fileCheck', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Verifikasi Absensi', routeName: 'guru-attendance-verify', icon: 'checkSquare', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Monitoring Jurnal', routeName: 'guru-journal-monitor', icon: 'book', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Kunjungan', routeName: 'guru-visits', icon: 'pin', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Penilaian & Approval', routeName: 'guru-grade-approval', icon: 'checkCircle', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
   { label: 'Monitor Pengaduan', routeName: 'complaint-monitor', icon: 'message', section: 'Guru', roles: ['GURU_PEMBIMBING', 'ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },

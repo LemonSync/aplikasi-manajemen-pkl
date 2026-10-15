@@ -4,6 +4,7 @@ import { attendanceController } from '../controllers/attendance.controller';
 import { authenticate, authorizeRoles, requirePhase } from '../middlewares/auth';
 import { requireCohortActive } from '../middlewares/cohort';
 import { validate } from '../middlewares/validate';
+import { upload } from '../middlewares/upload';
 import {
   checkInSchema,
   checkOutSchema,
@@ -38,11 +39,14 @@ router.post(
   validate({ body: checkOutSchema }),
   attendanceController.checkOut
 );
+// multipart/form-data: field teks (status, activity, geo) + file opsional `sickProof`.
+// Whitelist file ditangani upload middleware (MIME dokumen); magic-bytes dicek di service.
 router.post(
   '/submit',
   authorizeRoles(Role.SISWA),
   requirePhase(StudentPhase.PKL_AKTIF),
   requireCohortActive,
+  upload.single('sickProof'),
   validate({ body: submitAttendanceSchema }),
   attendanceController.submit
 );

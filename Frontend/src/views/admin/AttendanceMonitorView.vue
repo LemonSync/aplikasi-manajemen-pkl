@@ -127,9 +127,13 @@ const openMap = (r: AttendanceRecord, studentName: string): void => {
 };
 
 const verificationLabel = (r: AttendanceRecord): { text: string; cls: string } => {
+  // ALPHA tercatat otomatis di backend tanpa verifikasi pembimbing.
+  if (r.status === 'ALPHA') {
+    return { text: 'Terekam otomatis', cls: 'text-blue-600' };
+  }
   if (r.verifiedById) {
-    return r.anomalyNote?.startsWith('Ditolak DUDI')
-      ? { text: 'Ditolak DUDI', cls: 'text-red-600' }
+    return r.anomalyNote?.startsWith('Ditolak')
+      ? { text: 'Ditolak Pembimbing', cls: 'text-red-600' }
       : { text: 'Terkonfirmasi', cls: 'text-emerald-600' };
   }
   return { text: 'Menunggu konfirmasi', cls: 'text-gray-400' };
@@ -296,7 +300,7 @@ watch(
               <th>Masuk</th>
               <th>Keluar</th>
               <th>Status</th>
-              <th>Kegiatan</th>
+              <th>Keterangan</th>
               <th>Verifikasi</th>
               <th>Lokasi</th>
             </tr>
@@ -312,7 +316,10 @@ watch(
                   Anomali
                 </span>
               </td>
-              <td class="max-w-[220px] truncate text-gray-600" :title="r.activity ?? ''">{{ r.activity ?? '—' }}</td>
+              <td class="max-w-[220px] text-gray-600">
+                <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? '—' }}</span>
+                <span v-if="r.sickProofPath" class="block text-xs text-gray-400">Bukti: {{ r.sickProofName ?? 'terlampir' }}</span>
+              </td>
               <td class="whitespace-nowrap text-sm" :class="verificationLabel(r).cls">{{ verificationLabel(r).text }}</td>
               <td>
                 <button
