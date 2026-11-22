@@ -186,7 +186,8 @@ export class StudentRegistryImportService {
     }
 
     // Validasi format kelas: harus cocok dengan pola XII-{JURUSAN}-{NOMOR}
-    const classPattern = /^[A-Z]{2,5}-[A-Z]{2,5}-\d{1,2}$/i;
+    // Segmen jurusan {2,12}: kode jurusan ada yang panjang (ANIMASI=7, PEKSOS=6).
+    const classPattern = /^[A-Z]{2,5}-[A-Z]{2,12}-\d{1,2}$/i;
     const itemsToImport: Array<{
       nisn: string;
       fullName: string;

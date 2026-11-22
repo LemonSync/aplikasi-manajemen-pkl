@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 const props = withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 });
 
 /** Ikon stroke feather-style, path map by name. */
@@ -30,10 +32,42 @@ const paths: Record<string, string[]> = {
   logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'],
   lock: ['M5 11h14v11H5z', 'M8 11V7a4 4 0 0 1 8 0v4'],
   search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'M21 21l-4.35-4.35'],
+  menu: ['M3 6h18', 'M3 12h18', 'M3 18h18'],
+  close: ['M18 6 6 18', 'M6 6l12 12'],
+  chevronDown: ['M6 9l6 6 6-6'],
+  chevronRight: ['M9 6l6 6-6 6'],
+  chevronLeft: ['M15 6l-6 6 6 6'],
+  home: ['M3 10.5 12 3l9 7.5', 'M5 9.5V21h14V9.5'],
+  check: ['M20 6 9 17l-5-5'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  trash: ['M3 6h18', 'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
+  upload: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M17 8l-5-5-5 5', 'M12 3v12'],
+  download: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3'],
+  refresh: ['M23 4v6h-6', 'M1 20v-6h6', 'M3.51 9a9 9 0 0 1 14.85-3.36L23 10', 'M1 14l4.64 4.36A9 9 0 0 0 20.49 15'],
+  external: ['M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6', 'M15 3h6v6', 'M10 14 21 3'],
+  info: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 16v-4', 'M12 8h.01'],
+  inbox: [
+    'M22 12h-6l-2 3h-4l-2-3H2',
+    'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
+  ],
+  filter: ['M22 3H2l8 9.46V19l4 2v-8.54L22 3z'],
   settings: ['M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z', 'M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.4 1.4-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2v-.5a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-1.4-1.4.06-.06A1.7 1.7 0 0 0 9.6 15a1.7 1.7 0 0 0-1.56-1.03H7v-2h.5A1.7 1.7 0 0 0 9.06 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.4-1.4.06.06A1.7 1.7 0 0 0 12 7.06 1.7 1.7 0 0 0 13.03 5.5V5h2v.5A1.7 1.7 0 0 0 16.06 7a1.7 1.7 0 0 0 1.88-.34L18 6.6l1.4 1.4-.06.06A1.7 1.7 0 0 0 19 10.94c.6.28 1.03.88 1.03 1.56H20v2h-.5A1.7 1.7 0 0 0 19.4 15z'],
 };
 
-const list = paths[props.name] ?? paths.grid;
+/**
+ * Nama ikon salah selama ini jatuh senyap ke `grid`, jadi icon yang hilang
+ * terlihat seperti "menu" dan tidak pernah tertangkap. Di dev kini diperingatkan.
+ */
+const list = computed<string[]>(() => {
+  const found = paths[props.name];
+  if (found) return found;
+  if (import.meta.env.DEV) {
+    console.warn(
+      `[AppIcon] ikon "${props.name}" tidak dikenal, jatuh ke "grid". Tersedia: ${Object.keys(paths).join(', ')}`
+    );
+  }
+  return paths.grid;
+});
 </script>
 
 <template>

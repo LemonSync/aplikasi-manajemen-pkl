@@ -12,6 +12,7 @@ import {
   listByClassQuerySchema,
   summaryQuerySchema,
   submitAttendanceSchema,
+  updateActivitySchema,
   verifyAttendanceSchema,
 } from '../validators/phase3.validator';
 
@@ -22,11 +23,11 @@ const router = Router();
 
 router.use(authenticate);
 
-// --- Siswa (Fase 3) ---
+// --- Siswa (Fase 3 & 4) — presensi harian tetap berjalan sampai pasca-PKL.
 router.post(
   '/check-in',
   authorizeRoles(Role.SISWA),
-  requirePhase(StudentPhase.PKL_AKTIF),
+  requirePhase(StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI),
   requireCohortActive,
   validate({ body: checkInSchema }),
   attendanceController.checkIn
@@ -34,17 +35,26 @@ router.post(
 router.post(
   '/check-out',
   authorizeRoles(Role.SISWA),
-  requirePhase(StudentPhase.PKL_AKTIF),
+  requirePhase(StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI),
   requireCohortActive,
   validate({ body: checkOutSchema }),
   attendanceController.checkOut
+);
+// Susulan kegiatan untuk hari yang ditutup otomatis setelah jam 17:00.
+router.post(
+  '/activity',
+  authorizeRoles(Role.SISWA),
+  requirePhase(StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI),
+  requireCohortActive,
+  validate({ body: updateActivitySchema }),
+  attendanceController.saveActivity
 );
 // multipart/form-data: field teks (status, activity, geo) + file opsional `sickProof`.
 // Whitelist file ditangani upload middleware (MIME dokumen); magic-bytes dicek di service.
 router.post(
   '/submit',
   authorizeRoles(Role.SISWA),
-  requirePhase(StudentPhase.PKL_AKTIF),
+  requirePhase(StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI),
   requireCohortActive,
   upload.single('sickProof'),
   validate({ body: submitAttendanceSchema }),

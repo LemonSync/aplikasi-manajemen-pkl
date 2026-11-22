@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { authService } from '@/services/auth.service';
 import { setAccessToken } from '@/services/http';
+import { useCohortStore } from '@/stores/cohort.store';
 import type { AuthUser, Role, StudentPhase } from '@/types';
 
 /**
@@ -25,6 +26,9 @@ export const useAuthStore = defineStore('auth', () => {
     setAccessToken(result.tokens.accessToken);
     user.value = result.user;
     initialized.value = true;
+    // Login baru = sesi baru: kembalikan pilihan gelombang ke gelombang aktif,
+    // jangan bawa pilihan admin dari sesi sebelumnya.
+    useCohortStore().reset();
   };
 
   /** Memuat ulang user dari server (dipakai saat bootstrap aplikasi). */

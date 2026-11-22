@@ -6,6 +6,8 @@ import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import AppIcon from '@/components/AppIcon.vue';
+import { confirmDialog } from '@/composables/useDialog';
+import { notify } from '@/composables/useNotify';
 
 const cohortStore = useCohortStore();
 // Mengikuti konteks gelombang global di header.
@@ -20,8 +22,6 @@ const students = ref<StudentRegistryRecord[]>([]);
 const loading = ref(false);
 const importing = ref(false);
 const deletingId = ref('');
-const error = ref('');
-const success = ref('');
 const importResult = ref<StudentRegistryImportResult | null>(null);
 const selectedFile = ref<File | null>(null);
 const search = ref('');
@@ -30,39 +30,45 @@ const showAdd = ref(false);
 const adding = ref(false);
 const addForm = ref({ nisn: '', fullName: '', className: '', majorCode: '' });
 
+// Kredensial akun yang baru dibuat otomatis (hasil Tambah Siswa manual) —
+// ditampilkan sekali di modal agar admin bisa langsung menyalin/mencatat.
+type CreatedAccount = NonNullable<StudentRegistryImportResult['accounts']>['created'][number];
+const showCredentials = ref(false);
+const createdAccounts = ref<CreatedAccount[]>([]);
+
 // Modal pemetaan nama header kolom (nama kolom beda antar file Excel)
 const showMapping = ref(false);
 const inspecting = ref(false);
 const mapHeaders = ref<string[]>([]);
 const mapForm = ref({ nisn: '', fullName: '', className: '', majorCode: '' });
 
-const copyStudentAccount = async (account: NonNullable<StudentRegistryImportResult['accounts']>['created'][number]): Promise<void> => {
+const copyStudentAccount = async (account: CreatedAccount): Promise<void> => {
   try {
     await navigator.clipboard.writeText(`${account.username}\t${account.password}`);
-    success.value = `Kredensial ${account.username} disalin.`;
+    notify.success(`Kredensial ${account.username} disalin.`);
   } catch {
-    error.value = 'Gagal menyalin kredensial.';
+    notify.error('Gagal menyalin kredensial.');
   }
 };
 
-const copyStudentAccounts = async (): Promise<void> => {
-  const accounts = importResult.value?.accounts?.created ?? [];
-  if (!accounts.length) return;
+const copyStudentAccounts = async (accounts?: CreatedAccount[]): Promise<void> => {
+  const list = accounts ?? importResult.value?.accounts?.created ?? [];
+  if (!list.length) return;
   try {
     await navigator.clipboard.writeText([
       'NISN\tNama\tUsername\tPassword',
-      ...accounts.map((account) => `${account.nisn}\t${account.fullName}\t${account.username}\t${account.password}`),
+      ...list.map((account) => `${account.nisn}\t${account.fullName}\t${account.username}\t${account.password}`),
     ].join('\n'));
-    success.value = 'Semua kredensial siswa disalin.';
+    notify.success('Semua kredensial siswa disalin.');
   } catch {
-    error.value = 'Gagal menyalin kredensial.';
+    notify.error('Gagal menyalin kredensial.');
   }
 };
 
 const loadStudents = async (): Promise<void> => {
   if (!selectedCohort.value) return;
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const { items } = await studentRegistryService.list(selectedCohort.value, {
       page: 1,
@@ -71,7 +77,7 @@ const loadStudents = async (): Promise<void> => {
     });
     students.value = items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -91,8 +97,7 @@ const onFileChange = (event: Event): void => {
 const openMapping = async (): Promise<void> => {
   if (!selectedFile.value || !selectedCohort.value) return;
   inspecting.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   importResult.value = null;
   try {
     const result = await studentRegistryService.inspect(selectedFile.value);
@@ -105,7 +110,7 @@ const openMapping = async (): Promise<void> => {
     };
     showMapping.value = true;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     inspecting.value = false;
   }
@@ -119,11 +124,11 @@ const confirmImport = async (): Promise<void> => {
   if (!selectedFile.value || !selectedCohort.value) return;
   const m = mapForm.value;
   if (!m.nisn.trim() || !m.fullName.trim() || !m.className.trim()) {
-    error.value = 'Nama header kolom NISN, Nama, dan Kelas wajib diisi';
+    notify.error('Nama header kolom NISN, Nama, dan Kelas wajib diisi');
     return;
   }
   importing.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const result = await studentRegistryService.importExcel(selectedCohort.value, selectedFile.value, {
       nisn: m.nisn.trim(),
@@ -134,11 +139,11 @@ const confirmImport = async (): Promise<void> => {
     showMapping.value = false;
     importResult.value = result;
     const dupText = result.duplicates.length > 0 ? `, ${result.duplicates.length} duplikat dilewati` : '';
-    success.value = `Import selesai: ${result.created} baru, ${result.updated} diperbarui${dupText}.`;
+    notify.success(`Import selesai: ${result.created} baru, ${result.updated} diperbarui${dupText}.`);
     selectedFile.value = null;
     await loadStudents();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     importing.value = false;
   }
@@ -146,7 +151,7 @@ const confirmImport = async (): Promise<void> => {
 
 const openAdd = (): void => {
   addForm.value = { nisn: '', fullName: '', className: '', majorCode: '' };
-  error.value = '';
+  notify.clear();
   showAdd.value = true;
 };
 
@@ -158,19 +163,19 @@ const submitAdd = async (): Promise<void> => {
   if (!selectedCohort.value) return;
   const form = addForm.value;
   if (!/^\d{10}$/.test(form.nisn.trim())) {
-    error.value = 'NISN harus terdiri dari 10 digit angka';
+    notify.error('NISN harus terdiri dari 10 digit angka');
     return;
   }
   if (!form.fullName.trim()) {
-    error.value = 'Nama lengkap wajib diisi';
+    notify.error('Nama lengkap wajib diisi');
     return;
   }
   if (!form.className.trim()) {
-    error.value = 'Kelas wajib diisi (format XII-RPL-2)';
+    notify.error('Kelas wajib diisi (format XII-RPL-2)');
     return;
   }
   adding.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const record = await studentRegistryService.create({
       cohortId: selectedCohort.value,
@@ -180,27 +185,39 @@ const submitAdd = async (): Promise<void> => {
       majorCode: form.majorCode.trim() || undefined,
     });
     showAdd.value = false;
-    success.value = `Data siswa ${record.record.fullName} (${record.record.nisn}) ditambahkan. ${record.accounts.created.length} akun dibuat otomatis.`;
+    const newAccounts = record.accounts.created;
+    if (newAccounts.length > 0) {
+      createdAccounts.value = newAccounts;
+      showCredentials.value = true;
+      notify.success(`Data siswa ${record.record.fullName} (${record.record.nisn}) ditambahkan. ${newAccounts.length} akun dibuat otomatis.`);
+    } else if (record.restored) {
+      notify.success(`Data siswa ${record.record.fullName} (${record.record.nisn}) dipulihkan. Akun sudah ada sebelumnya.`);
+    } else {
+      notify.success(`Data siswa ${record.record.fullName} (${record.record.nisn}) ditambahkan.`);
+    }
     await loadStudents();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     adding.value = false;
   }
 };
 
 const removeStudent = async (s: StudentRegistryRecord): Promise<void> => {
-  const ok = window.confirm(
-    `Hapus siswa "${s.fullName}" (NISN ${s.nisn})?\n\n` +
+  const ok = await confirmDialog({
+    title: 'Hapus Siswa',
+    message:
+      `Hapus siswa "${s.fullName}" (NISN ${s.nisn})?\n\n` +
       '1. Baris master disembunyikan — dipulihkan dengan import ulang Excel.\n' +
       '2. AKUN siswa beserta SEMUA datanya DIHAPUS PERMANEN: absensi, ' +
       'nilai, surat/dokumen, keanggotaan kelompok, dan pendaftaran yang diajukannya.\n\n' +
-      'Tindakan ini TIDAK BISA dibatalkan. Lanjutkan?'
-  );
+      'Tindakan ini TIDAK BISA dibatalkan. Lanjutkan?',
+    confirmLabel: 'Hapus permanen',
+    danger: true,
+  });
   if (!ok) return;
   deletingId.value = s.id;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const result = await studentRegistryService.remove(s.id);
     let extra = '';
@@ -210,10 +227,10 @@ const removeStudent = async (s: StudentRegistryRecord): Promise<void> => {
         `${result.grades} nilai, ${result.documents} dokumen ` +
         `dihapus permanen.`;
     }
-    success.value = `Data ${s.fullName} (${s.nisn}) dihapus dari Master Siswa.${extra}`;
+    notify.success(`Data ${s.fullName} (${s.nisn}) dihapus dari Master Siswa.${extra}`);
     await loadStudents();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     deletingId.value = '';
   }
@@ -232,8 +249,6 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <!-- Import Excel -->
     <div class="card">
@@ -274,7 +289,7 @@ watch(
           <div v-if="importResult.accounts?.created.length" class="mt-2 rounded border border-emerald-200 bg-emerald-50 p-2">
             <div class="flex items-center justify-between gap-2">
               <p class="font-medium text-emerald-800">Kredensial akun baru (simpan sekarang):</p>
-              <button class="btn-secondary !px-2 !py-1 text-xs" title="Salin semua kredensial" aria-label="Salin semua kredensial" @click="copyStudentAccounts">
+              <button class="btn-secondary !px-2 !py-1 text-xs" title="Salin semua kredensial" aria-label="Salin semua kredensial" @click="copyStudentAccounts()">
                 <AppIcon name="clipboard" :size="14" /> Salin Semua
               </button>
             </div>
@@ -283,6 +298,7 @@ watch(
                 <span class="w-24 font-mono text-xs">{{ account.nisn }}</span>
                 <span class="min-w-32 flex-1">{{ account.fullName }}</span>
                 <span class="font-mono">{{ account.username }}</span>
+                <span class="font-mono font-semibold">{{ account.password }}</span>
                 <button class="text-emerald-700 hover:text-emerald-900" title="Salin username dan password" :aria-label="`Salin kredensial ${account.username}`" @click="copyStudentAccount(account)">
                   <AppIcon name="clipboard" :size="15" />
                 </button>
@@ -435,6 +451,42 @@ watch(
           <LoadingSpinner v-if="adding" inline />
           {{ adding ? 'Menyimpan…' : 'Tambah Siswa' }}
         </button>
+      </template>
+    </Modal>
+
+    <!-- Modal Kredensial Akun Baru (hasil Tambah Siswa manual) -->
+    <Modal :open="showCredentials" title="Kredensial Akun Siswa Dibuat Otomatis" size="md" @close="showCredentials = false">
+      <p class="mb-3 text-sm text-gray-600">
+        Akun login berhasil dibuat.
+        <strong class="text-amber-600">Salin &amp; catat sekarang — password hanya ditampilkan sekali.</strong>
+        Siswa diminta ganti password saat login pertama.
+      </p>
+
+      <div class="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm">
+        <div class="flex items-center justify-between gap-2">
+          <p class="font-medium text-emerald-800">{{ createdAccounts.length }} akun dibuat:</p>
+          <button class="btn-secondary !px-2 !py-1 text-xs" title="Salin semua kredensial (TSV)" aria-label="Salin semua kredensial" @click="copyStudentAccounts(createdAccounts)">
+            <AppIcon name="clipboard" :size="14" /> Salin Semua
+          </button>
+        </div>
+        <div class="mt-2 space-y-1.5">
+          <div v-for="account in createdAccounts" :key="account.userId" class="flex flex-wrap items-center gap-2 text-emerald-800">
+            <span class="w-24 font-mono text-xs">{{ account.nisn }}</span>
+            <span class="min-w-32 flex-1">{{ account.fullName }}</span>
+            <span class="font-mono">{{ account.username }}</span>
+            <span class="font-mono font-semibold">{{ account.password }}</span>
+            <button class="text-emerald-700 hover:text-emerald-900" title="Salin username dan password" :aria-label="`Salin kredensial ${account.username}`" @click="copyStudentAccount(account)">
+              <AppIcon name="clipboard" :size="15" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="btn-secondary" @click="copyStudentAccounts(createdAccounts)">
+          <AppIcon name="clipboard" :size="14" /> Salin Semua
+        </button>
+        <button class="btn-primary" @click="showCredentials = false">Selesai</button>
       </template>
     </Modal>
   </div>

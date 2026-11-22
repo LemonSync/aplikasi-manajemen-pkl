@@ -158,23 +158,39 @@ async function main() {
     siswaA.id,
     {
       status: AttendanceStatus.HADIR,
-      activity: 'Membantu konfigurasi jaringan kantor',
       geo: { lat: 3.5952, long: 98.6722 },
     },
     {}
   );
-  log('absensi terkirim', att.status === AttendanceStatus.HADIR && att.activity.includes('jaringan'));
+  log('absensi terkirim', att.status === AttendanceStatus.HADIR);
+  log('kegiatan belum terisi saat check-in', att.activity === null);
   log('lokasi tercatat', att.checkInLat?.toString().startsWith('3.59') === true);
   log('verifikasi DUDI masih kosong', att.verifiedById === null);
 
   // Tolak dobel
   let tolakDobel = false;
   try {
-    await attendanceService.submit(siswaA.id, { status: AttendanceStatus.HADIR, activity: 'x', geo: { lat: 3.6, long: 98.7 } }, {});
+    await attendanceService.submit(siswaA.id, { status: AttendanceStatus.HADIR, geo: { lat: 3.6, long: 98.7 } }, {});
   } catch (e) {
     tolakDobel = (e as Error).message.includes('sudah mengirim');
   }
   log('tolak absen dobel', tolakDobel);
+
+  // Tolak check-out tanpa kegiatan
+  let tolakTanpaKegiatan = false;
+  try {
+    await attendanceService.checkOut(siswaA.id, { geo: { lat: 3.6, long: 98.7 } }, {});
+  } catch (e) {
+    tolakTanpaKegiatan = (e as Error).message.includes('kegiatan wajib diisi');
+  }
+  log('tolak check-out tanpa kegiatan', tolakTanpaKegiatan);
+
+  const checkedOut = await attendanceService.checkOut(
+    siswaA.id,
+    { geo: { lat: 3.6, long: 98.7 }, activity: 'Membantu konfigurasi jaringan kantor' },
+    {}
+  );
+  log('kegiatan tersimpan saat check-out', checkedOut.activity?.includes('jaringan') === true);
 
   // ================= TEST 3: Verifikasi oleh DUDI =================
   console.log('\n--- 3. Verifikasi absensi oleh DUDI ---');

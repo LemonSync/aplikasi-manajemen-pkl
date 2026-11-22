@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { gradeService } from '../services/grade.service';
+import { exportService } from '../services/export.service';
 import { sendSuccess, buildPaginationMeta } from '../utils/response';
 import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -7,7 +8,6 @@ import { parsePagination } from '../utils/pagination';
 import {
   ApproveGradeDTO,
   CreateGradeDTO,
-  UpdateGuidanceScoreDTO,
   ListGradeQueryDTO,
   RecapByClassQueryDTO,
 } from '../validators/phase4.validator';
@@ -16,6 +16,11 @@ import {
  * Controller penilaian PKL (Fase 4).
  */
 export class GradeController {
+  /** GET /api/grades/form — definisi butir LEMBARAN PENILAIAN (dipakai form siswa & admin) */
+  form = asyncHandler(async (_req: Request, res: Response) => {
+    return sendSuccess(res, gradeService.getForm(), 'OK');
+  });
+
   /** POST /api/grades — Siswa (fase Pasca PKL) / Admin: input nilai akhir */
   inputGrade = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as CreateGradeDTO;
@@ -24,20 +29,12 @@ export class GradeController {
     return sendSuccess(res, result, 'Nilai berhasil diinput', 201);
   });
 
-  /** POST /api/grades/:id/approve — Guru: setujui/tolak nilai siswa */
+  /** POST /api/grades/:id/approve — Admin: setujui/tolak nilai siswa */
   approve = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as ApproveGradeDTO;
     const ctx = getRequestContext(req);
     const result = await gradeService.approveGrade(req.user!.sub, req.params.id as string, dto, ctx);
     return sendSuccess(res, result, dto.approved ? 'Nilai disetujui' : 'Nilai ditolak');
-  });
-
-  /** POST /api/grades/:id/guidance — Guru: input nilai bimbingan */
-  inputGuidance = asyncHandler(async (req: Request, res: Response) => {
-    const dto = req.body as UpdateGuidanceScoreDTO;
-    const ctx = getRequestContext(req);
-    const result = await gradeService.inputGuidanceScore(req.user!.sub, req.params.id as string, dto, ctx);
-    return sendSuccess(res, result, 'Nilai bimbingan berhasil diinput');
   });
 
   /** GET /api/grades/me — Siswa: rekap nilai sendiri */
@@ -46,7 +43,7 @@ export class GradeController {
     return sendSuccess(res, result, 'OK');
   });
 
-  /** GET /api/grades — Admin/Guru: daftar nilai */
+  /** GET /api/grades — Admin: daftar nilai */
   list = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as ListGradeQueryDTO;
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
@@ -62,16 +59,32 @@ export class GradeController {
   });
 
   /** GET /api/grades/recap — Admin: rekap semua nilai */
-  recap = asyncHandler(async (_req: Request, res: Response) => {
-    const result = await gradeService.getRecap();
+  recap = asyncHandler(async (req: Request, res: Response) => {
+    const result = await gradeService.getRecap({ id: req.user!.sub, role: req.user!.role });
     return sendSuccess(res, result, 'OK');
   });
 
   /** GET /api/grades/recap-by-class — Admin: rekap per kelas → siswa */
   recapByClass = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as RecapByClassQueryDTO;
-    const result = await gradeService.getRecapByClass({ cohortId: query.cohortId });
+    const result = await gradeService.getRecapByClass(
+      { cohortId: query.cohortId },
+      { id: req.user!.sub, role: req.user!.role }
+    );
     return sendSuccess(res, result, 'OK');
+  });
+
+  /** GET /api/grades/recap-by-class/export — unduh rekap .xlsx, satu worksheet per kelas */
+  exportRecapByClass = asyncHandler(async (req: Request, res: Response) => {
+    const query = req.query as unknown as RecapByClassQueryDTO;
+    const recap = await gradeService.getRecapByClass(
+      { cohortId: query.cohortId },
+      { id: req.user!.sub, role: req.user!.role }
+    );
+    const { buffer, filename } = await exportService.gradeWorkbook(recap, query.cohortId);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(buffer);
   });
 }
 

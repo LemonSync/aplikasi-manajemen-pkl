@@ -125,6 +125,7 @@ export class PernyataanService {
       tempat_pkl: tempatPkl,
       tanggal_pkl: tanggalPkl,
       tahun_pelajaran: tahunPelajaran,
+      nama_sekolah: school.schoolName,
       nama_wali_kelas: namaWaliKelas,
       kota: school.city ?? 'Medan',
     };
@@ -157,6 +158,7 @@ export class PernyataanService {
       tempatPkl: data.tempat_pkl,
       tanggalPkl: data.tanggal_pkl,
       tahunPelajaran: data.tahun_pelajaran,
+      namaSekolah: data.nama_sekolah,
       namaWaliKelas: data.nama_wali_kelas,
       kota: data.kota,
       tanggalSurat: formatLongDate(new Date()),

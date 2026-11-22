@@ -1,5 +1,6 @@
 import { Role, StudentPhase, User } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
+import { prisma } from '../config/prisma';
 import { userRepository } from '../repositories/user.repository';
 import { refreshTokenRepository } from '../repositories/refreshToken.repository';
 import { comparePassword, hashPassword, isStrongPassword } from '../utils/password';
@@ -9,6 +10,7 @@ import { MESSAGES } from '../config/constants';
 import { env } from '../config/env';
 import { auditService } from './audit.service';
 import { cohortService } from './cohortManage.service';
+import { studentWorkflowService } from './studentWorkflow.service';
 import { AUDIT_ACTIONS } from '../config/constants';
 
 export interface LoginInput {
@@ -31,6 +33,8 @@ export interface AuthenticatedUser {
   phase: StudentPhase | null;
   cohortId: string | null;
   mustChangePassword: boolean;
+  /** Khusus role ADMIN: jurusan yang diawasi (kosong bila tidak ada). */
+  supervisedMajors?: Array<{ id: string; code: string; name: string }>;
 }
 
 export interface LoginResult {
@@ -51,13 +55,16 @@ export const durationToDate = (duration: string): Date => {
   return new Date(now + value * unitMs[match[2]]);
 };
 
-const toAuthenticatedUser = (user: User): AuthenticatedUser => ({
+const toAuthenticatedUser = (
+  user: User & { supervisedMajors?: Array<{ id: string; code: string; name: string }> }
+): AuthenticatedUser => ({
   id: user.id,
   username: user.username,
   role: user.role,
   phase: user.phase,
   cohortId: user.cohortId,
   mustChangePassword: user.mustChangePassword,
+  ...(user.supervisedMajors ? { supervisedMajors: user.supervisedMajors } : {}),
 });
 
 /**
@@ -88,13 +95,28 @@ export class AuthService {
     return { accessToken, refreshToken, refreshTokenExpiresAt };
   }
 
-  /** Terapkan aturan gelombang/fase yang sama pada login dan refresh. */
-  private async assertStudentAccess(user: User): Promise<void> {
-    if (user.role !== Role.SISWA) return;
-    if (!user.phase) throw new ForbiddenError(MESSAGES.AUTH.PHASE_UNSET);
+  /**
+   * Gerbang login/refresh SISWA: fase ditetapkan, gelombang global aktif, dan
+   * tanggal hari ini termasuk salah satu jendela fase pada jadwal gelombang.
+   * Mengembalikan fase hasil sinkronisasi jadwal (bukan kolom mentah) supaya
+   * token dan UI memakai fase yang sama dengan kalender admin.
+   */
+  private async assertStudentAccess(user: User): Promise<StudentPhase | null> {
+    if (user.role !== Role.SISWA) return user.phase;
     const activeCohortId = await cohortService.getActiveCohortId();
     if (!activeCohortId) throw new ForbiddenError(MESSAGES.AUTH.NO_ACTIVE_COHORT);
-    if (user.cohortId !== activeCohortId) throw new ForbiddenError(MESSAGES.AUTH.COHORT_INACTIVE);
+    if (!user.cohortId || user.cohortId !== activeCohortId) {
+      throw new ForbiddenError(MESSAGES.AUTH.COHORT_INACTIVE);
+    }
+
+    // Gelombang tanpa jadwal bertanggal dianggap belum diatur (seed tidak
+    // membuat PhaseSchedule) — siswa tidak boleh terkunci karenanya.
+    const gate = await studentWorkflowService.getCalendarGate(user.cohortId);
+    if (gate.hasDatedSchedule && !gate.activeToday) {
+      throw new ForbiddenError(MESSAGES.AUTH.NO_ACTIVE_PHASE);
+    }
+
+    return studentWorkflowService.syncScheduledPhase(user.id);
   }
 
   async login(input: LoginInput): Promise<LoginResult> {
@@ -110,10 +132,10 @@ export class AuthService {
       throw new ForbiddenError(MESSAGES.AUTH.ACCOUNT_INACTIVE);
     }
 
-    // Gerbang login SISWA: fase valid + gelombang global aktif.
-    await this.assertStudentAccess(user);
+    // Gerbang login SISWA: gelombang aktif + jendela fase hari ini + fase tersinkron.
+    const phase = await this.assertStudentAccess(user);
 
-    const tokens = await this.issueTokens(user, { userAgent: input.userAgent, ipAddress: input.ipAddress });
+    const tokens = await this.issueTokens({ ...user, phase }, { userAgent: input.userAgent, ipAddress: input.ipAddress });
     await userRepository.updateLastLogin(user.id);
     await auditService.record({
       actorId: user.id,
@@ -124,7 +146,7 @@ export class AuthService {
       userAgent: input.userAgent,
     });
 
-    return { user: toAuthenticatedUser(user), tokens };
+    return { user: toAuthenticatedUser({ ...user, phase }), tokens };
   }
 
   /** Refresh token rotation: token lama dicabut, token baru diterbitkan. */
@@ -148,17 +170,18 @@ export class AuthService {
     if (!user || !user.isActive || user.deletedAt) {
       throw new UnauthorizedError(MESSAGES.AUTH.REFRESH_INVALID);
     }
+    let phase: StudentPhase | null = user.phase;
     try {
-      await this.assertStudentAccess(user);
+      phase = await this.assertStudentAccess(user);
     } catch {
       await refreshTokenRepository.revoke(stored.id);
       throw new UnauthorizedError(MESSAGES.AUTH.REFRESH_INVALID);
     }
 
     await refreshTokenRepository.revoke(stored.id);
-    const tokens = await this.issueTokens(user, ctx);
+    const tokens = await this.issueTokens({ ...user, phase }, ctx);
 
-    return { user: toAuthenticatedUser(user), tokens };
+    return { user: toAuthenticatedUser({ ...user, phase }), tokens };
   }
 
   async logout(refreshToken: string | undefined, actorId?: string): Promise<void> {
@@ -172,9 +195,16 @@ export class AuthService {
   }
 
   async me(userId: string): Promise<AuthenticatedUser> {
-    const user = await userRepository.findById(userId);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { supervisedMajors: { select: { id: true, code: true, name: true } } },
+    });
     if (!user) throw new BadRequestError(MESSAGES.NOT_FOUND);
-    return toAuthenticatedUser(user);
+    // Fase dikembalikan sesuai kalender gelombang, bukan kolom mentah, supaya
+    // sidebar siswa berubah begitu admin menggeser jadwal.
+    const phase =
+      user.role === Role.SISWA ? await studentWorkflowService.syncScheduledPhase(user.id) : user.phase;
+    return toAuthenticatedUser({ ...user, phase });
   }
 
   /**

@@ -8,6 +8,7 @@ import { parsePagination } from '../utils/pagination';
 import { BadRequestError } from '../errors/AppError';
 import { getRequestContext } from '../utils/request';
 import { userManageService } from '../services/userManage.service';
+import { resolveScope, scopeRegistryWhere } from '../services/majorScope.service';
 
 /**
  * Controller Master Siswa (StudentRegistry).
@@ -73,11 +74,15 @@ export class StudentRegistryController {
     const search = (req.query.search as string | undefined)?.trim() || undefined;
 
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
+    // Scope jurusan: ADMIN hanya melihat siswa pada jurusan yang diawasi.
+    const scope = await resolveScope({ id: req.user!.sub, role: req.user!.role });
+    const scopeWhere = scopeRegistryWhere(scope);
     const { items, total } = await studentRegistryRepository.findByCohort(
       cohortId,
       (page - 1) * perPage,
       perPage,
-      search
+      search,
+      scopeWhere
     );
 
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));

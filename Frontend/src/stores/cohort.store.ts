@@ -39,5 +39,17 @@ export const useCohortStore = defineStore('cohort', () => {
     if (v) localStorage.setItem(STORAGE_KEY, v);
   });
 
-  return { cohorts, activeCohortId, activeCohort, loaded, loading, ensureLoaded };
+  /**
+   * Kembalikan pilihan ke default (gelombang aktif) — dipanggil tiap login
+   * baru, supaya pilihan admin di sesi sebelumnya tidak terbawa.
+   */
+  const reset = (): void => {
+    activeCohortId.value = '';
+    localStorage.removeItem(STORAGE_KEY);
+    cohorts.value = [];
+    loaded.value = false;
+    loading.value = false;
+  };
+
+  return { cohorts, activeCohortId, activeCohort, loaded, loading, ensureLoaded, reset };
 });

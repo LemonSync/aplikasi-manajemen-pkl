@@ -27,6 +27,11 @@ backend/prisma/migrations/dev.db*
 # Uploads (runtime storage, bukan untuk di-commit)
 backend/storage/
 backend/uploads/
+Backend/storage/
+Backend/uploads/
+
+# Sesi WhatsApp bot: kredensial Baileys (jangan pernah di-commit)
+Backend/storage/wa-auth/
 
 # Test coverage
 coverage/

@@ -1,8 +1,20 @@
-import { DocumentType, DocumentStatus, RegistrationStatus, StudentPhase, Role } from '@prisma/client';
+import { DocumentType, DocumentStatus, Prisma, RegistrationStatus, StudentPhase, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { phaseScheduleRepository } from '../repositories/phaseSchedule.repository';
 import { NotFoundError } from '../errors/AppError';
 import { MESSAGES, PHASE_ORDER, ALLOWED_PHASE_TRANSITIONS } from '../config/constants';
+
+/** Kunci tanggal YYYY-MM-DD dalam timezone lokal (WIB) — jam diabaikan. */
+const todayKey = (): string => new Date().toLocaleDateString('en-CA');
+
+/** Apakah jendela fase ini mencakup `todayStr`? Kedua tanggal wajib terisi. */
+const inWindow = (s: { startDate: Date | null; endDate: Date | null }, todayStr: string): boolean => {
+  if (!s.startDate || !s.endDate) return false;
+  return (
+    todayStr >= new Date(s.startDate).toLocaleDateString('en-CA') &&
+    todayStr <= new Date(s.endDate).toLocaleDateString('en-CA')
+  );
+};
 
 export interface WorkflowPhaseInfo {
   phase: StudentPhase;
@@ -12,10 +24,24 @@ export interface WorkflowPhaseInfo {
 
 export interface StudentWorkflowStatus {
   effectivePhase: StudentPhase | null;
+  /**
+   * Nama lengkap siswa (StudentProfile.fullName) untuk sapaan di UI pemandu.
+   * Null bila profil belum ada — frontend jatuh ke username.
+   */
+  studentName: string | null;
   hasCompleted: boolean;
   currentSchedule: WorkflowPhaseInfo | null;
   nextSchedule: WorkflowPhaseInfo | null;
   registrationStatus: string | null;
+  /**
+   * Kapan pendaftaran diajukan (ISO string). MC membedakan "baru saja dikirim"
+   * dari "sudah tiga hari antre" tanpa menebak-nebak.
+   */
+  registrationSubmittedAt: string | null;
+  /** Keputusan admin (setuju/tolak) terakhir — MC tahu bahwa ini "barusan" atau sudah lama. */
+  registrationReviewedAt: string | null;
+  /** Kapan Surat Penerimaan diunggah (ISO string) — untuk kalimat antrean yang jujur. */
+  suratPenerimaanSubmittedAt: string | null;
   registrationDocumentId: string | null;
   /** Gerbang Fase 1 → Fase 2: siswa sudah mengunduh Surat Permohonan? */
   permohonanDownloaded: boolean;
@@ -99,19 +125,25 @@ export class StudentWorkflowService {
    */
   private async getCurrentSchedule(cohortId: string): Promise<WorkflowPhaseInfo | null> {
     const schedules = await phaseScheduleRepository.findByCohort(cohortId);
-    // Bandingkan tanggal saja (ignore jam) menggunakan timezone lokal
-    const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD dalam timezone lokal
+    const todayStr = todayKey();
     for (const s of schedules) {
-      if (s.startDate && s.endDate) {
-        const startStr = new Date(s.startDate).toLocaleDateString('en-CA');
-        const endStr = new Date(s.endDate).toLocaleDateString('en-CA');
-        if (todayStr >= startStr && todayStr <= endStr) {
-          return { phase: s.phase, startDate: s.startDate, endDate: s.endDate };
-        }
+      if (inWindow(s, todayStr)) {
+        return { phase: s.phase, startDate: s.startDate, endDate: s.endDate };
       }
     }
     return null;
+  }
+
+  /**
+   * Gerbang kalender untuk login/refresh siswa. `hasDatedSchedule` menandai
+   * gelombang yang jadwalnya sudah benar-benar diisi (seed tidak pernah
+   * membuat PhaseSchedule, jadi jadwal kosong = belum diatur, bukan dilanggar).
+   */
+  async getCalendarGate(cohortId: string): Promise<{ hasDatedSchedule: boolean; activeToday: boolean }> {
+    const schedules = await phaseScheduleRepository.findByCohort(cohortId);
+    const dated = schedules.filter((s) => s.startDate && s.endDate);
+    const todayStr = todayKey();
+    return { hasDatedSchedule: dated.length > 0, activeToday: dated.some((s) => inWindow(s, todayStr)) };
   }
 
   /**
@@ -135,6 +167,32 @@ export class StudentWorkflowService {
       }
     }
     return null;
+  }
+
+  /**
+   * Filter Surat Penerimaan yang BERLAKU untuk seorang siswa: hanya dokumen
+   * yang terikat pada pendaftaran yang sedang berjalan. Baris Registration
+   * dipakai ulang saat siswa ganti perusahaan, jadi tanpa ikatan ini surat dari
+   * perusahaan lama ikut dinilai dan siswa melompati Fase 2 perusahaan barunya.
+   * Dokumen TIDAK_BERLAKU (ronde yang dibatalkan) selalu diabaikan.
+   */
+  private async activeAcceptanceWhere(userId: string): Promise<Prisma.DocumentWhereInput> {
+    const registration = await prisma.registration.findFirst({
+      where: {
+        studentId: userId,
+        deletedAt: null,
+        status: { not: RegistrationStatus.DIBATALKAN },
+      },
+      select: { id: true },
+    });
+    return {
+      ownerId: userId,
+      type: DocumentType.SURAT_PENERIMAAN,
+      // Cuid tidak pernah bernilai '' — tanpa pendaftaran berjalan tidak ada
+      // satu pun surat penerimaan yang dihitung.
+      registrationId: registration?.id ?? '',
+      status: { not: DocumentStatus.TIDAK_BERLAKU },
+    };
   }
 
   /**
@@ -176,8 +234,7 @@ export class StudentWorkflowService {
         // Masuk Fase 3 setelah Surat Penerimaan dari perusahaan disetujui.
         const penerimaan = await prisma.document.findFirst({
           where: {
-            ownerId: userId,
-            type: DocumentType.SURAT_PENERIMAAN,
+            ...(await this.activeAcceptanceWhere(userId)),
             status: DocumentStatus.DISETUJUI,
           },
         });
@@ -208,12 +265,20 @@ export class StudentWorkflowService {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
     if (!user.cohortId) {
+      const profile = await prisma.studentProfile.findUnique({
+        where: { userId },
+        select: { fullName: true },
+      });
       return {
         effectivePhase: null,
+        studentName: profile?.fullName ?? null,
         hasCompleted: false,
         currentSchedule: null,
         nextSchedule: null,
         registrationStatus: null,
+        registrationSubmittedAt: null,
+        registrationReviewedAt: null,
+        suratPenerimaanSubmittedAt: null,
         registrationDocumentId: null,
         permohonanDownloaded: false,
         hasParentData: false,
@@ -251,9 +316,13 @@ export class StudentWorkflowService {
 
     // Cek dokumen surat permohonan (terkait pendaftaran)
     let registrationDocumentId: string | null = null;
-    if (registration) {
+    if (registration && registration.status !== RegistrationStatus.DIBATALKAN) {
       const suratPermohonan = await prisma.document.findFirst({
-        where: { registrationId: registration.id, type: DocumentType.SURAT_PERMOHONAN },
+        where: {
+          registrationId: registration.id,
+          type: DocumentType.SURAT_PERMOHONAN,
+          status: { not: DocumentStatus.TIDAK_BERLAKU },
+        },
       });
       registrationDocumentId = suratPermohonan?.id ?? null;
     }
@@ -264,20 +333,25 @@ export class StudentWorkflowService {
       include: { parentData: true },
     });
 
-    // Cek dokumen — surat penerimaan harus DISETUJUI (bukan cuma ada)
+    // Cek dokumen — surat penerimaan harus DISETUJUI (bukan cuma ada) dan
+    // berasal dari pendaftaran yang sedang berjalan.
+    const acceptanceWhere = await this.activeAcceptanceWhere(userId);
     const [suratPenerimaan, suratPenerimaanDoc, suratPernyataan, laporanAkhir] = await Promise.all([
       prisma.document.findFirst({
-        where: { ownerId: userId, type: DocumentType.SURAT_PENERIMAAN, status: DocumentStatus.DISETUJUI },
+        where: { ...acceptanceWhere, status: DocumentStatus.DISETUJUI },
       }),
       prisma.document.findFirst({
-        where: { ownerId: userId, type: DocumentType.SURAT_PENERIMAAN, status: { not: DocumentStatus.DISETUJUI } },
+        where: { ...acceptanceWhere, status: { not: DocumentStatus.DISETUJUI } },
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.document.findFirst({
         where: {
           ownerId: userId,
           type: DocumentType.SURAT_PERNYATAAN,
-          status: { not: DocumentStatus.DITOLAK },
+          // DRAFT = PDF baru dibuat dan BELUM diunggah kembali oleh siswa
+          // (pernyataan.service.ts). Menghitungnya sebagai "selesai" membuat
+          // langkah ini terlewat dan siswa kehilangan jalan balik.
+          status: { in: [DocumentStatus.DIUNGGAH, DocumentStatus.MENUNGGU_VERIFIKASI, DocumentStatus.DISETUJUI] },
         },
       }),
       prisma.document.findFirst({
@@ -306,12 +380,21 @@ export class StudentWorkflowService {
 
     return {
       effectivePhase,
+      studentName: studentProfile?.fullName ?? null,
       hasCompleted,
       currentSchedule,
       nextSchedule,
       registrationStatus: registration?.status ?? null,
+      registrationSubmittedAt: registration?.submittedAt?.toISOString() ?? null,
+      registrationReviewedAt: registration?.reviewedAt?.toISOString() ?? null,
+      suratPenerimaanSubmittedAt: suratPenerimaanDoc?.createdAt?.toISOString() ?? null,
       registrationDocumentId,
-      permohonanDownloaded: registration?.permohonanDownloadedAt != null,
+      // Pendaftaran yang dibatalkan (siswa ganti perusahaan) mulai dari nol:
+      // gerbang unduh surat permohonan tidak dihitung untuk ronde sebelumnya.
+      permohonanDownloaded:
+        registration != null &&
+        registration.status !== RegistrationStatus.DIBATALKAN &&
+        registration.permohonanDownloadedAt != null,
       hasParentData: studentProfile?.parentData !== null && studentProfile?.parentData !== undefined,
       hasSuratPenerimaan: suratPenerimaan !== null,
       hasSuratPenerimaanPending: pendingDoc !== null,

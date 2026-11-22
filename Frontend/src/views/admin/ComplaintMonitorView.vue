@@ -7,11 +7,11 @@ import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import { notify } from '@/composables/useNotify';
 
 const complaints = ref<ComplaintRecord[]>([]);
 const cohortStore = useCohortStore();
 const loading = ref(true);
-const error = ref('');
 const statusFilter = ref('');
 const search = ref('');
 // Filter opsional per penulis (param authorId) — dipilih dengan mengklik nama penulis.
@@ -43,7 +43,7 @@ const filteredComplaints = computed(() => {
  */
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const res = await complaintService.list({
       ...(statusFilter.value ? { status: statusFilter.value } : {}),
@@ -52,7 +52,7 @@ const load = async (): Promise<void> => {
     });
     complaints.value = res.items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -79,7 +79,7 @@ const open = async (id: string): Promise<void> => {
     const idx = complaints.value.findIndex((c) => c.id === id);
     if (idx >= 0) complaints.value[idx] = detail;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -92,7 +92,7 @@ const sendReply = async (): Promise<void> => {
     if (idx >= 0) complaints.value[idx] = detail;
     replyBody.value = '';
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     busy.value = false;
   }
@@ -106,7 +106,7 @@ const closeComplaint = async (): Promise<void> => {
     const idx = complaints.value.findIndex((c) => c.id === activeId.value);
     if (idx >= 0) complaints.value[idx] = detail;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     busy.value = false;
   }
@@ -125,7 +125,6 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">

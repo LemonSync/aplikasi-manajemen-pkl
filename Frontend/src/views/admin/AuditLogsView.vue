@@ -4,10 +4,10 @@ import { auditLogService, type AuditLogRecord } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
+import { notify } from '@/composables/useNotify';
 
 const logs = ref<AuditLogRecord[]>([]);
 const loading = ref(true);
-const error = ref('');
 const filterAction = ref('');
 const search = ref('');
 const active = ref<AuditLogRecord | null>(null);
@@ -22,7 +22,7 @@ const load = async (): Promise<void> => {
     const { items } = await auditLogService.list(Object.keys(params).length > 0 ? params : undefined);
     logs.value = items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }

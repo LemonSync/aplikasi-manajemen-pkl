@@ -6,7 +6,6 @@ import { validate } from '../middlewares/validate';
 import {
   createGradeSchema,
   approveGradeSchema,
-  updateGuidanceScoreSchema,
   listGradeQuerySchema,
   recapByClassQuerySchema,
 } from '../validators/phase4.validator';
@@ -18,6 +17,9 @@ const router = Router();
 
 router.use(authenticate);
 
+// Definisi butir penilaian (sumber tunggal: konfigurasi sekolah)
+router.get('/form', gradeController.form);
+
 // Siswa (fase Pasca PKL) / Admin: input nilai akhir
 router.post(
   '/',
@@ -26,29 +28,21 @@ router.post(
   gradeController.inputGrade
 );
 
-// Guru/Admin: setujui/tolak nilai siswa
+// Admin: setujui/tolak nilai siswa
 router.post(
   '/:id/approve',
-  authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
   validate({ body: approveGradeSchema }),
   gradeController.approve
-);
-
-// Guru: input nilai bimbingan
-router.post(
-  '/:id/guidance',
-  authorizeRoles(Role.GURU_PEMBIMBING, Role.ADMIN, Role.SUPER_ADMIN),
-  validate({ body: updateGuidanceScoreSchema }),
-  gradeController.inputGuidance
 );
 
 // Siswa: rekap nilai sendiri
 router.get('/me', authorizeRoles(Role.SISWA), gradeController.myGrades);
 
-// Admin/Guru: daftar nilai
+// Admin: daftar nilai
 router.get(
   '/',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.GURU_PEMBIMBING, Role.KEPALA_SEKOLAH),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH),
   validate({ query: listGradeQuerySchema }),
   gradeController.list
 );
@@ -66,6 +60,14 @@ router.get(
   authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH),
   validate({ query: recapByClassQuerySchema }),
   gradeController.recapByClass
+);
+
+// Admin: unduh rekap per kelas sebagai .xlsx (satu worksheet per kelas)
+router.get(
+  '/recap-by-class/export',
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH),
+  validate({ query: recapByClassQuerySchema }),
+  gradeController.exportRecapByClass
 );
 
 export default router;

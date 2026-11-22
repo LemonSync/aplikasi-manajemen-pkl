@@ -3,11 +3,15 @@ import { prisma } from '../config/prisma';
 
 /**
  * Repository Master Guru (TeacherRegistry).
+ *
+ * Master guru bersifat GLOBAL: satu daftar berlaku untuk semua gelombang
+ * (beda dengan master siswa yang diimport per gelombang). Karena itu tidak
+ * ada lagi filter `cohortId` di sini.
  */
 export class TeacherRegistryRepository {
-  async findByNip(nip: string, cohortId: string): Promise<TeacherRegistry | null> {
+  async findByNip(nip: string): Promise<TeacherRegistry | null> {
     return prisma.teacherRegistry.findFirst({
-      where: { nip, cohortId, isActive: true },
+      where: { nip, isActive: true },
     });
   }
 
@@ -25,17 +29,16 @@ export class TeacherRegistryRepository {
     });
   }
 
-  /** Semua baris NIP (tanpa filter gelombang/isActive) + nama gelombang — untuk deteksi duplikat lintas gelombang. */
+  /** Semua baris NIP (tanpa filter isActive) — untuk deteksi duplikat saat import. */
   async findManyByNipGlobal(nips: string[]) {
     if (nips.length === 0) return [];
     return prisma.teacherRegistry.findMany({
       where: { nip: { in: nips } },
-      include: { cohort: { select: { name: true } } },
     });
   }
 
-  async findByCohort(cohortId: string, skip: number, take: number, search?: string) {
-    const where: Record<string, unknown> = { cohortId, isActive: true };
+  async findAll(skip: number, take: number, search?: string) {
+    const where: Record<string, unknown> = { isActive: true };
     if (search) {
       where.OR = [
         { fullName: { contains: search } },
@@ -55,10 +58,10 @@ export class TeacherRegistryRepository {
     return { items, total };
   }
 
-  /** Semua baris aktif satu gelombang — untuk pembuatan akun otomatis. */
-  async findActiveByCohort(cohortId: string): Promise<TeacherRegistry[]> {
+  /** Semua baris aktif — untuk pembuatan akun otomatis setelah import. */
+  async findActive(): Promise<TeacherRegistry[]> {
     return prisma.teacherRegistry.findMany({
-      where: { cohortId, isActive: true },
+      where: { isActive: true },
       orderBy: { nip: 'asc' },
     });
   }
@@ -66,21 +69,18 @@ export class TeacherRegistryRepository {
   async upsert(data: {
     nip: string;
     fullName: string;
-    cohortId: string;
     majorId?: string | null;
   }): Promise<TeacherRegistry> {
     return prisma.teacherRegistry.upsert({
       where: { nip: data.nip },
       update: {
         fullName: data.fullName,
-        cohortId: data.cohortId,
         majorId: data.majorId ?? null,
         isActive: true,
       },
       create: {
         nip: data.nip,
         fullName: data.fullName,
-        cohortId: data.cohortId,
         majorId: data.majorId ?? null,
       },
     });
@@ -89,7 +89,6 @@ export class TeacherRegistryRepository {
   async upsertMany(items: Array<{
     nip: string;
     fullName: string;
-    cohortId: string;
     majorId?: string | null;
   }>): Promise<{ created: number; updated: number; errors: string[] }> {
     let created = 0;
@@ -104,7 +103,6 @@ export class TeacherRegistryRepository {
             where: { nip: item.nip },
             data: {
               fullName: item.fullName,
-              cohortId: item.cohortId,
               majorId: item.majorId ?? null,
               isActive: true,
             },
@@ -115,7 +113,6 @@ export class TeacherRegistryRepository {
             data: {
               nip: item.nip,
               fullName: item.fullName,
-              cohortId: item.cohortId,
               majorId: item.majorId ?? null,
             },
           });
@@ -129,8 +126,8 @@ export class TeacherRegistryRepository {
     return { created, updated, errors };
   }
 
-  async countByCohort(cohortId: string): Promise<number> {
-    return prisma.teacherRegistry.count({ where: { cohortId, isActive: true } });
+  async countActive(): Promise<number> {
+    return prisma.teacherRegistry.count({ where: { isActive: true } });
   }
 }
 

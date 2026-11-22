@@ -6,6 +6,7 @@ import type { PaginationMeta } from '@/types';
 import Modal from '@/components/Modal.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import LocationMapModal, { type MapPoint } from '@/components/LocationMapModal.vue';
+import { notify } from '@/composables/useNotify';
 
 /**
  * Verifikasi absensi siswa bimbingan OLEH GURU PEMBIMBING (bukan DUDI).
@@ -16,8 +17,6 @@ const rows = ref<AttendanceRecord[]>([]);
 const meta = ref<PaginationMeta | undefined>(undefined);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 
 const page = ref(1);
 const perPage = 10;
@@ -39,7 +38,7 @@ const STATUS_OPTIONS = [
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const res = await attendanceService.list({
       page: page.value,
@@ -51,7 +50,7 @@ const load = async (): Promise<void> => {
     rows.value = res.items;
     meta.value = res.meta;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -79,7 +78,7 @@ const openVerify = (action: 'APPROVE' | 'REJECT', row: AttendanceRecord): void =
   verifyTarget.value = row;
   verifyAction.value = action;
   verifyNote.value = '';
-  error.value = '';
+  notify.clear();
 };
 
 const closeVerify = (): void => {
@@ -93,24 +92,23 @@ const submitVerify = async (): Promise<void> => {
   if (!target) return;
   // Backend mewajibkan alasan saat penolakan.
   if (verifyAction.value === 'REJECT' && !verifyNote.value.trim()) {
-    error.value = 'Alasan penolakan wajib diisi.';
+    notify.error('Alasan penolakan wajib diisi.');
     return;
   }
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await attendanceService.verify(
       target.id,
       verifyAction.value,
       verifyNote.value.trim() || undefined
     );
-    success.value = verifyAction.value === 'APPROVE' ? 'Absensi disetujui.' : 'Absensi ditolak.';
+    notify.success(verifyAction.value === 'APPROVE' ? 'Absensi disetujui.' : 'Absensi ditolak.');
     verifyTarget.value = null;
     verifyNote.value = '';
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -137,10 +135,22 @@ const hasLocation = (r: AttendanceRecord): boolean => r.checkInLat != null || r.
 
 const openMap = (r: AttendanceRecord): void => {
   const points: MapPoint[] = [
-    { label: `Masuk - ${fmtDate(r.date)}`, lat: r.checkInLat, long: r.checkInLong, note: r.checkInNote },
+    {
+      label: `Masuk - ${fmtDate(r.date)}`,
+      lat: r.checkInLat,
+      long: r.checkInLong,
+      note: r.checkInNote,
+      accuracy: r.checkInAccuracy,
+    },
   ];
   if (r.checkOutAt) {
-    points.push({ label: `Keluar - ${fmtDate(r.date)}`, lat: r.checkOutLat, long: r.checkOutLong, note: r.checkOutNote });
+    points.push({
+      label: `Keluar - ${fmtDate(r.date)}`,
+      lat: r.checkOutLat,
+      long: r.checkOutLong,
+      note: r.checkOutNote,
+      accuracy: r.checkOutAccuracy,
+    });
   }
   mapTitle.value = `Lokasi Presensi - ${studentName(r)}`;
   mapPoints.value = points;
@@ -152,8 +162,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -188,7 +196,7 @@ onMounted(load);
             <th>Tanggal</th>
             <th>Siswa</th>
             <th>Status</th>
-            <th>Keterangan</th>
+            <th>Kegiatan / Keterangan</th>
             <th>Check-in</th>
             <th>Check-out</th>
             <th>Lokasi</th>
@@ -202,7 +210,7 @@ onMounted(load);
             <td class="font-medium text-gray-800">{{ studentName(r) }}</td>
             <td><span class="badge" :class="statusBadgeClass(r.status)">{{ r.status }}</span></td>
             <td class="max-w-xs">
-              <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? '-' }}</span>
+              <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? (r.status === 'HADIR' && !r.checkOutAt ? '(diisi saat check-out)' : '-') }}</span>
               <span v-if="r.sickProofPath" class="block text-xs text-gray-400" :title="r.sickProofMime ?? ''">
                 Bukti: {{ r.sickProofName ?? 'terlampir' }}
               </span>
@@ -307,10 +315,12 @@ onMounted(load);
           <p class="mb-1 font-medium text-gray-700">Lokasi GPS siswa:</p>
           <p v-if="verifyTarget.checkInLat != null">
             Check-in: {{ Number(verifyTarget.checkInLat).toFixed(6) }}, {{ Number(verifyTarget.checkInLong).toFixed(6) }}
+            <span v-if="verifyTarget.checkInAccuracy != null" class="font-medium text-gray-700">±{{ verifyTarget.checkInAccuracy }} m</span>
             <span v-if="verifyTarget.checkInNote"> — {{ verifyTarget.checkInNote }}</span>
           </p>
           <p v-if="verifyTarget.checkOutAt && verifyTarget.checkOutLat != null">
             Check-out: {{ Number(verifyTarget.checkOutLat).toFixed(6) }}, {{ Number(verifyTarget.checkOutLong).toFixed(6) }}
+            <span v-if="verifyTarget.checkOutAccuracy != null" class="font-medium text-gray-700">±{{ verifyTarget.checkOutAccuracy }} m</span>
             <span v-if="verifyTarget.checkOutNote"> — {{ verifyTarget.checkOutNote }}</span>
           </p>
           <button

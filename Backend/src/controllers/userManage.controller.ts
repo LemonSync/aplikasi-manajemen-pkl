@@ -13,13 +13,15 @@ import {
 export class UserManageController {
   create = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as CreateUserDTO;
-    const result = await userManageService.create(dto);
+    const result = await userManageService.create(dto, req.user!.role);
     return sendSuccess(res, result, 'User berhasil dibuat', 201);
   });
 
   update = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as UpdateUserDTO;
-    const result = await userManageService.update(req.params.id as string, dto);
+    const result = await userManageService.update(
+      req.params.id as string, dto, req.user!.role, req.user!.sub
+    );
     return sendSuccess(res, result, 'User berhasil diupdate');
   });
 
@@ -28,6 +30,7 @@ export class UserManageController {
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
     const { items, total } = await userManageService.list({
       page, perPage, role: query.role, search: query.search, cohortId: query.cohortId,
+      actorRole: req.user!.role,
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
@@ -43,13 +46,17 @@ export class UserManageController {
   });
 
   delete = asyncHandler(async (req: Request, res: Response) => {
-    const result = await userManageService.delete(req.params.id as string, req.user!.sub);
+    const result = await userManageService.delete(
+      req.params.id as string, req.user!.sub, req.user!.role
+    );
     return sendSuccess(res, result, 'User berhasil dihapus');
   });
 
   resetPassword = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as ResetPasswordDTO;
-    const result = await userManageService.resetPassword(req.params.id as string, dto);
+    const result = await userManageService.resetPassword(
+      req.params.id as string, dto, req.user!.role, req.user!.sub
+    );
     return sendSuccess(res, result, 'Password berhasil direset');
   });
 }

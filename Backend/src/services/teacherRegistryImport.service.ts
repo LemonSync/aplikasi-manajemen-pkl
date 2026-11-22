@@ -2,8 +2,7 @@ import * as XLSX from 'xlsx';
 import { teacherRegistryRepository } from '../repositories/teacherRegistry.repository';
 import { teacherRegistryService, NIP_PATTERN, normalizeNip, TeacherProvisionResult } from './teacherRegistry.service';
 import { majorRepository } from '../repositories/major.repository';
-import { cohortRepository } from '../repositories/cohort.repository';
-import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { BadRequestError } from '../errors/AppError';
 import { ensureSchoolMajors } from './schoolMajor.service';
 
 export interface TeacherImportRow {
@@ -43,6 +42,7 @@ export interface TeacherInspectResult {
 /**
  * Service import data guru dari Excel.
  * Format Excel: NIP | Nama Lengkap | Jurusan (kode, opsional)
+ * Master guru bersifat global — hasil import berlaku di semua gelombang.
  */
 export class TeacherRegistryImportService {
   /** Baca baris header file + auto-detect kolom (untuk modal pemetaan sebelum import). */
@@ -158,21 +158,16 @@ export class TeacherRegistryImportService {
    * Import data guru ke database dengan pengecekan duplikat:
    * - NIP sama lebih dari sekali dalam 1 file -> pakai baris pertama, sisanya dilaporkan
    * - NIP sudah ada di master dengan data sama -> dilewati (dilaporkan, tidak menimpa)
-   * - NIP sudah terdaftar di gelombang lain -> dilewati (dilaporkan, gelombang asal tidak berubah)
    * - Data berbeda / baris hasil-hapus -> diperbarui/dipulihkan (upsert, alur import-ulang tetap jalan)
    * Setelahnya akun login (username = NIP) dibuat otomatis untuk semua baris aktif
-   * gelombang ini yang belum punya akun.
+   * yang belum punya akun.
    */
   async importData(
     rows: TeacherImportRow[],
-    cohortId: string,
     parseErrors: string[] = [],
     actor?: { actorId?: string; ipAddress?: string; userAgent?: string }
   ): Promise<TeacherImportResult> {
     await ensureSchoolMajors();
-    // Validasi cohort exists
-    const cohort = await cohortRepository.findById(cohortId);
-    if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
 
     // Resolve major codes ke major IDs
     const majorMap = new Map<string, string>();
@@ -184,7 +179,6 @@ export class TeacherRegistryImportService {
     const itemsToImport: Array<{
       nip: string;
       fullName: string;
-      cohortId: string;
       majorId: string | null;
     }> = [];
     const errors: string[] = [];
@@ -202,7 +196,6 @@ export class TeacherRegistryImportService {
       itemsToImport.push({
         nip: row.nip,
         fullName: row.fullName,
-        cohortId,
         majorId,
       });
     }
@@ -226,7 +219,7 @@ export class TeacherRegistryImportService {
       candidates.push(item);
     }
 
-    // 2) Cocokkan dengan master yang sudah ada (termasuk lintas gelombang)
+    // 2) Cocokkan dengan master yang sudah ada (satu daftar untuk semua gelombang)
     const existingRows = await teacherRegistryRepository.findManyByNipGlobal(candidates.map((c) => c.nip));
     const existingMap = new Map(existingRows.map((r) => [r.nip, r]));
     const toImport: typeof itemsToImport = [];
@@ -236,16 +229,6 @@ export class TeacherRegistryImportService {
 
       if (!existing) {
         toImport.push(item);
-        continue;
-      }
-
-      // Sudah terdaftar di gelombang lain -> jangan dipindah, laporkan
-      if (existing.cohortId !== cohortId) {
-        duplicates.push({
-          nip: item.nip,
-          fullName: item.fullName,
-          reason: `Sudah terdaftar di gelombang "${existing.cohort.name}" — dilewati`,
-        });
         continue;
       }
 
@@ -270,8 +253,8 @@ export class TeacherRegistryImportService {
     // Import ke database (hanya baris yang bukan duplikat)
     const result = await teacherRegistryRepository.upsertMany(toImport);
 
-    // Akun login dibuat otomatis untuk semua baris aktif gelombang ini
-    const accounts = await teacherRegistryService.ensureAccounts(cohortId, actor);
+    // Akun login dibuat otomatis untuk semua baris master yang aktif
+    const accounts = await teacherRegistryService.ensureAccounts(actor);
 
     return {
       total: rows.length,

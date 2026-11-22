@@ -1,9 +1,10 @@
-import { ComplaintStatus, Prisma } from '@prisma/client';
+import { ComplaintStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { complaintRepository } from '../repositories/complaint.repository';
 import { auditService } from './audit.service';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
+import { resolveScope, scopeUserWhere, andWhere } from './majorScope.service';
 
 export interface CreateComplaintInput {
   subject: string;
@@ -121,7 +122,7 @@ export class ComplaintService {
     },
     actor?: { id: string; role: string }
   ) {
-    const where: Prisma.ComplaintWhereInput = {
+    const baseWhere: Prisma.ComplaintWhereInput = {
       ...(params.status ? { status: params.status } : {}),
       ...(params.authorId ? { authorId: params.authorId } : {}),
       // Filter per gelombang lewat relasi penulis
@@ -140,7 +141,17 @@ export class ComplaintService {
       } else if (supervisedIds.length === 0) {
         return { items: [], total: 0 };
       } else {
-        where.authorId = { in: supervisedIds };
+        baseWhere.authorId = { in: supervisedIds };
+      }
+    }
+
+    // Scope jurusan: ADMIN hanya pengaduan milik siswa dalam jurusan yang diawasi.
+    let where: Prisma.ComplaintWhereInput = baseWhere;
+    if (actor && actor.role === 'ADMIN') {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'author');
+      if (scoped) {
+        where = andWhere(baseWhere as Record<string, unknown>, scoped) as Prisma.ComplaintWhereInput;
       }
     }
 

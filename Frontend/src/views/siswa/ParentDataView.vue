@@ -3,12 +3,14 @@ import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { profileService } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
+import { notify } from '@/composables/useNotify';
+import HostStrip from '@/components/host/HostStrip.vue';
 
 const router = useRouter();
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
+/** Setelah simpan berhasil, strip MC berganti jadi balon reaksi. */
+const saved = ref(false);
 
 const form = ref({
   fatherName: '', fatherJob: '', fatherPhone: '',
@@ -28,30 +30,31 @@ const load = async (): Promise<void> => {
       };
     }
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
 };
 
 const submit = async (): Promise<void> => {
-  error.value = '';
-  success.value = '';
+  notify.clear();
   // Validasi frontend: minimal salah satu nama harus terisi (sinkron dengan backend).
   if (!form.value.fatherName.trim() && !form.value.motherName.trim() && !form.value.guardianName.trim()) {
-    error.value = 'Minimal salah satu harus diisi: nama Ayah, Ibu, atau Wali.';
+    notify.error('Minimal salah satu harus diisi: nama Ayah, Ibu, atau Wali.');
     return;
   }
   saving.value = true;
   try {
     await profileService.upsertParentData(form.value);
-    success.value = 'Data orang tua berhasil disimpan. Mengalihkan ke Alur PKL…';
-    // Kembali ke halaman alur PKL setelah berhasil menyimpan.
+    saved.value = true;
+    notify.success('Data orang tua berhasil disimpan. Mengalihkan ke Alur PKL…');
+    // Kembali ke halaman alur PKL. Jeda cukup untuk membaca balon MC — lebih
+    // cepat dari ini, strip-nya hilang di tengah kalimat.
     setTimeout(() => {
       void router.push({ name: 'student-workflow' });
-    }, 1200);
+    }, 2200);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -62,13 +65,12 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
+    <HostStrip :action="saved ? 'simpan' : undefined" :step-key="saved ? undefined : 'data-ortu'" />
     <div class="card">
       <h2 class="mb-1 text-lg font-semibold text-gray-800">Data Orang Tua / Wali</h2>
       <p class="mb-4 text-sm text-gray-500">
         Minimal salah satu harus diisi: nama <strong>Ayah</strong>, <strong>Ibu</strong>, atau <strong>Wali</strong>.
       </p>
-      <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-      <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
       <div v-if="loading" class="loading" />
 
       <div v-else class="space-y-6">

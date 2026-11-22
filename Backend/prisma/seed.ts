@@ -1,6 +1,7 @@
 import { PrismaClient, Role, CohortStatus, StudentPhase } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
+import { seedWaGuides } from './seed-wa-guides';
 
 dotenv.config();
 
@@ -165,6 +166,12 @@ async function main(): Promise<void> {
     });
     console.log('✅ Penandatangan surat default (dapat diganti di UI)');
   }
+
+  // ---------------------------------------------------------------------------
+  // 7. Pohon panduan bot WhatsApp (dapat diedit di menu Config)
+  // ---------------------------------------------------------------------------
+  const waGuides = await seedWaGuides(prisma);
+  console.log(waGuides.skipped ? '⏭️ Panduan bot WA sudah ada, tidak diubah.' : `✅ ${waGuides.created} tombol panduan bot WA default`);
 
   console.log('🎉 Seeding selesai.');
   console.log('   Fase enum contoh:', StudentPhase.PRA_PKL, '(digunakan pada profil siswa)');

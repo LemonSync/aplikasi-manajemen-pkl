@@ -5,16 +5,23 @@ import {
   cohortService,
   registrationService,
   documentService,
+  configService,
   downloadFile,
   type UserRecord,
   type CohortRecord,
   type StudentPklData,
+  type ConfigMajor,
 } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
+import DataTable from '@/components/DataTable.vue';
+import PageHeader from '@/components/PageHeader.vue';
+import Tabs from '@/components/Tabs.vue';
+import { toast } from '@/composables/useToast';
 import StatusBadge from '@/components/StatusBadge.vue';
 import AppIcon from '@/components/AppIcon.vue';
 
@@ -28,13 +35,37 @@ type TabKey = (typeof TABS)[number]['key'];
 
 const users = ref<UserRecord[]>([]);
 const cohorts = ref<CohortRecord[]>([]);
+const majors = ref<ConfigMajor[]>([]);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 
 const activeTab = ref<TabKey>('ALL');
 const cohortStore = useCohortStore();
+const auth = useAuthStore();
+
+// Hanya SUPER_ADMIN yang boleh membuat/mengelola akun admin & melihat tab Admin.
+const isSuperAdmin = computed(() => auth.role === 'SUPER_ADMIN');
+
+// Role yang boleh dipilih sesuai actor: ADMIN biasa hanya Siswa & Guru Pembimbing.
+const roleOptions = computed(() =>
+  isSuperAdmin.value
+    ? [
+        { value: 'SISWA', label: 'Siswa' },
+        { value: 'GURU_PEMBIMBING', label: 'Guru Pembimbing' },
+        { value: 'ADMIN', label: 'Admin' },
+        { value: 'SUPER_ADMIN', label: 'Super Admin' },
+        { value: 'KEPALA_SEKOLAH', label: 'Kepala Sekolah' },
+      ]
+    : [
+        { value: 'SISWA', label: 'Siswa' },
+        { value: 'GURU_PEMBIMBING', label: 'Guru Pembimbing' },
+      ]
+);
+
+// Tab Admin disembunyikan bagi ADMIN biasa (ia tak melihat akun admin).
+const visibleTabs = computed(() =>
+  isSuperAdmin.value ? TABS : TABS.filter((t) => t.key !== 'ADMIN')
+);
 
 // --- Filter ---
 const search = ref('');
@@ -93,6 +124,24 @@ const filteredUsers = computed(() =>
   baseFiltered.value.filter((u) => matchesTab(u, activeTab.value))
 );
 
+/** Item Tabs: label + hitungan per tab. */
+const tabItems = computed(() =>
+  visibleTabs.value.map((t) => ({ key: t.key, label: t.label, count: counts.value[t.key] }))
+);
+
+const setTab = (key: string): void => {
+  activeTab.value = key as TabKey;
+};
+
+const userColumns = [
+  { key: 'username', label: 'Username' },
+  { key: 'name', label: 'Nama' },
+  { key: 'class', label: 'Kelas' },
+  { key: 'role', label: 'Role' },
+  { key: 'status', label: 'Status' },
+  { key: 'actions', label: 'Aksi', class: 'text-right whitespace-nowrap' },
+];
+
 const hasActiveFilter = computed(
   () => search.value.trim() !== '' || statusFilter.value !== '' || cohortFilter.value !== 'ACTIVE'
 );
@@ -109,7 +158,17 @@ const userFullName = (u: UserRecord): string =>
   u.studentProfile?.fullName ?? u.teacherProfile?.fullName ?? '-';
 
 const showForm = ref(false);
-const form = ref({ username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '' });
+const form = ref({ username: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '' });
+// Jurusan yang diawasi (hanya role ADMIN, hanya diisi SUPER_ADMIN).
+const formMajorIds = ref<string[]>([]);
+
+const emptyForm = (): typeof form.value => ({
+  username: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '',
+});
+
+// Kredensial akun yang baru dibuat — password acak dari sistem, ditampilkan
+// sekali saja (sama seperti hasil pembuatan akun massal dari Master Siswa).
+const createdAccount = ref<{ username: string; fullName: string; password: string } | null>(null);
 
 const confirmDelete = ref<UserRecord | null>(null);
 const showResetPassword = ref<UserRecord | null>(null);
@@ -153,7 +212,6 @@ const openStudentData = async (u: UserRecord): Promise<void> => {
   studentData.value = null;
   permohonanDocId.value = null;
   loadingStudentData.value = true;
-  error.value = '';
   try {
     const [data, docId] = await Promise.all([
       userManageService.getStudentData(u.id),
@@ -162,7 +220,7 @@ const openStudentData = async (u: UserRecord): Promise<void> => {
     studentData.value = data;
     permohonanDocId.value = docId;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
     showStudentData.value = false;
   } finally {
     loadingStudentData.value = false;
@@ -182,7 +240,7 @@ const downloadPermohonan = async (): Promise<void> => {
       `surat-permohonan-${studentData.value?.pendaftaran?.code ?? 'pkl'}.pdf`
     );
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   }
 };
 
@@ -201,38 +259,52 @@ const fetchAllUsers = async (): Promise<UserRecord[]> => {
 const load = async (): Promise<void> => {
   loading.value = true;
   try {
-    const [userList, cohortResult] = await Promise.all([
+    const [userList, cohortResult, , majorList] = await Promise.all([
       fetchAllUsers(),
       cohortService.list(),
       cohortStore.ensureLoaded(),
+      configService.majors(),
     ]);
     users.value = userList;
     cohorts.value = cohortResult.items;
+    majors.value = majorList;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
 };
 
 const submit = async (): Promise<void> => {
-  if (!form.value.username || !form.value.password) return;
+  if (!form.value.username) return;
+  const { username, fullName } = form.value;
   saving.value = true;
-  error.value = '';
-  success.value = '';
   try {
-    await userManageService.create({
+    const created = await userManageService.create({
       ...form.value,
       cohortId: form.value.cohortId || null,
+      ...(form.value.role === 'ADMIN' ? { majorIds: formMajorIds.value } : {}),
     });
-    success.value = 'User berhasil dibuat.';
+    createdAccount.value = { username, fullName, password: created.password ?? '' };
     showForm.value = false;
-    form.value = { username: '', password: '', role: 'SISWA', identifier: '', fullName: '', nisn: '', nip: '', cohortId: '' };
+    form.value = emptyForm();
+    formMajorIds.value = [];
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
+  }
+};
+
+const copyCreatedAccount = async (): Promise<void> => {
+  const account = createdAccount.value;
+  if (!account) return;
+  try {
+    await navigator.clipboard.writeText(`${account.username}\t${account.password}`);
+    toast.success('Kredensial disalin.');
+  } catch {
+    toast.error('Gagal menyalin kredensial.');
   }
 };
 
@@ -241,7 +313,7 @@ const toggleActive = async (u: UserRecord): Promise<void> => {
     await userManageService.update(u.id, { isActive: !u.isActive } as never);
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   }
 };
 
@@ -253,11 +325,11 @@ const doDelete = async (): Promise<void> => {
   saving.value = true;
   try {
     await userManageService.remove(confirmDelete.value.id);
-    success.value = `User "${confirmDelete.value.username}" berhasil dihapus.`;
+    toast.success(`User "${confirmDelete.value.username}" berhasil dihapus.`);
     confirmDelete.value = null;
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -275,15 +347,14 @@ const cancelResetPassword = (): void => {
 const doResetPassword = async (generateRandom: boolean): Promise<void> => {
   if (!showResetPassword.value) return;
   saving.value = true;
-  error.value = '';
   try {
     const result = await userManageService.resetPassword(showResetPassword.value.id, {
       generateRandom,
     });
     resetPasswordResult.value = result.plainPassword;
-    success.value = `Password ${showResetPassword.value.username} berhasil direset.`;
+    toast.success(`Password ${showResetPassword.value.username} berhasil direset.`);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    toast.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -294,31 +365,24 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div class="card">
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800">Manajemen User</h2>
-        <div class="flex items-center gap-2">
-          <button class="btn-primary" @click="showForm = true">Tambah User</button>
-        </div>
-      </div>
-      <div v-if="error" class="mb-3 mt-3 bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-      <div v-if="success" class="mb-3 mt-3 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
-    </div>
+    <PageHeader title="Manajemen User" subtitle="Buat, nonaktifkan, dan atur akses akun sekolah.">
+      <template #actions>
+        <button class="btn-primary" @click="showForm = true; formMajorIds = []">
+          <AppIcon name="plus" :size="16" />
+          Tambah User
+        </button>
+      </template>
+    </PageHeader>
 
     <!-- Modal Tambah User -->
     <Modal :open="showForm" title="Tambah User" size="md" :busy="saving" @close="showForm = false">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div><label class="label">Role</label>
           <select v-model="form.role" class="input">
-            <option value="SISWA">Siswa</option>
-            <option value="GURU_PEMBIMBING">Guru Pembimbing</option>
-            <option value="ADMIN">Admin</option>
-            <option value="SUPER_ADMIN">Super Admin</option>
-            <option value="KEPALA_SEKOLAH">Kepala Sekolah</option>
+            <option v-for="r in roleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
           </select>
         </div>
         <div><label class="label">Username</label><input v-model="form.username" class="input" /></div>
-        <div><label class="label">Password</label><input v-model="form.password" type="password" class="input" /></div>
         <div><label class="label">Nama Lengkap</label><input v-model="form.fullName" class="input" /></div>
         <div v-if="form.role === 'SISWA'"><label class="label">NISN</label><input v-model="form.nisn" class="input" /></div>
         <div v-if="form.role === 'GURU_PEMBIMBING'"><label class="label">NIP</label><input v-model="form.nip" class="input" /></div>
@@ -328,17 +392,72 @@ onMounted(load);
             <option v-for="c in cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </div>
+        <!-- Jurusan yang diawasi (khusus akun ADMIN, hanya diatur Super Admin). -->
+        <div v-if="form.role === 'ADMIN'" class="sm:col-span-2">
+          <label class="label">Jurusan yang Diawasi</label>
+          <p class="mb-2 text-xs text-gray-500">
+            Admin hanya melihat data pada jurusan yang dipilih. Kosongkan = tidak ada data terlihat.
+          </p>
+          <div class="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-lg border border-gray-200 p-2">
+            <label v-for="m in majors" :key="m.id" class="flex cursor-pointer items-center gap-2 text-sm">
+              <input v-model="formMajorIds" type="checkbox" :value="m.id" />
+              <span>{{ m.code }} — {{ m.name }}</span>
+            </label>
+            <p v-if="majors.length === 0" class="text-xs text-gray-400">Belum ada data jurusan.</p>
+          </div>
+        </div>
       </div>
+      <p class="mt-4 text-xs text-gray-500">
+        Password tidak perlu diisi — sistem yang membuatkan password acak dan
+        menampilkannya satu kali setelah akun tersimpan. Pemilik akun wajib
+        menggantinya pada login pertama.
+      </p>
       <template #footer>
         <button class="btn-secondary" :disabled="saving" @click="showForm = false">Batal</button>
         <button
           class="btn-primary"
-          :disabled="saving || !form.username || !form.password"
+          :disabled="saving || !form.username"
           @click="submit"
         >
           <LoadingSpinner v-if="saving" inline />
           {{ saving ? 'Menyimpan…' : 'Simpan' }}
         </button>
+      </template>
+    </Modal>
+
+    <!-- Modal kredensial akun baru — password acak hanya tampil di sini -->
+    <Modal
+      :open="!!createdAccount"
+      title="Akun Berhasil Dibuat"
+      size="sm"
+      @close="createdAccount = null"
+    >
+      <p class="text-sm text-gray-600">
+        <strong>{{ createdAccount?.username }}</strong>
+        <span v-if="createdAccount?.fullName"> — {{ createdAccount.fullName }}</span>
+      </p>
+      <p class="mt-2 text-sm font-medium text-amber-600">
+        Salin &amp; catat sekarang — password hanya ditampilkan sekali.
+      </p>
+      <div class="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm">
+        <p class="font-medium text-emerald-800">Password awal:</p>
+        <div class="mt-1 flex items-center justify-between gap-2">
+          <p class="font-mono text-lg font-bold text-emerald-700">{{ createdAccount?.password }}</p>
+          <button
+            class="btn-secondary !px-2 !py-1 text-xs"
+            title="Salin username dan password"
+            aria-label="Salin kredensial"
+            @click="copyCreatedAccount"
+          >
+            <AppIcon name="clipboard" :size="14" /> Salin
+          </button>
+        </div>
+        <p class="mt-1 text-xs text-emerald-600">
+          Pemilik akun diminta mengganti password saat login pertama.
+        </p>
+      </div>
+      <template #footer>
+        <button class="btn-primary" @click="createdAccount = null">Selesai</button>
       </template>
     </Modal>
 
@@ -375,46 +494,52 @@ onMounted(load);
         </button>
       </div>
 
-      <div class="mb-4 flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1">
-        <button
-          v-for="t in TABS"
-          :key="t.key"
-          class="rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="
-            activeTab === t.key
-              ? 'bg-white font-medium text-primary-700 shadow'
-              : 'text-gray-600 hover:text-gray-900'
-          "
-          @click="activeTab = t.key"
-        >
-          {{ t.label }}
-          <span
-            class="ml-1 rounded-full px-1.5 py-0.5 text-xs"
-            :class="activeTab === t.key ? 'bg-primary-100 text-primary-700' : 'bg-gray-200 text-gray-500'"
-          >{{ counts[t.key] }}</span>
-        </button>
-      </div>
+      <Tabs :model-value="activeTab" :items="tabItems" @update:model-value="setTab" />
 
-      <div v-if="loading" class="loading" />
-      <table v-else class="table">
-        <thead><tr><th>Username</th><th>Nama</th><th>Kelas</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead>
-        <tbody>
-          <tr v-for="u in filteredUsers" :key="u.id">
-            <td class="font-mono">{{ u.username }}</td>
-            <td>{{ userFullName(u) }}</td>
-            <td>{{ u.studentProfile?.class?.name ?? '-' }}</td>
-            <td>{{ u.role }}</td>
-            <td><StatusBadge :status="u.isActive ? 'AKTIF' : 'NONAKTIF'" /></td>
-            <td class="flex gap-2">
-              <button v-if="u.role === 'SISWA'" class="text-sm text-emerald-600 hover:underline" @click="openStudentData(u)">Data PKL</button>
-              <button class="text-sm text-primary-600 hover:underline" @click="toggleActive(u)">{{ u.isActive ? 'Nonaktifkan' : 'Aktifkan' }}</button>
-              <button class="text-sm text-amber-600 hover:underline" @click="openResetPassword(u)">Reset Password</button>
-              <button class="text-sm text-red-600 hover:underline" @click="askDelete(u)">Hapus</button>
-            </td>
-          </tr>
-          <tr v-if="!loading && filteredUsers.length === 0"><td colspan="6" class="py-4 text-center text-gray-400">{{ emptyText }}</td></tr>
-        </tbody>
-      </table>
+      <DataTable :columns="userColumns" :rows="filteredUsers" :loading="loading" :empty-title="emptyText" empty-icon="users">
+        <template #cell-username="{ row }">
+          <span class="font-mono text-[13px]">{{ row.username }}</span>
+        </template>
+        <template #cell-name="{ row }">{{ userFullName(row) }}</template>
+        <template #cell-class="{ row }">{{ row.studentProfile?.class?.name ?? '–' }}</template>
+        <template #cell-role="{ row }">
+          <span class="text-[13px]">{{ row.role }}</span>
+          <span
+            v-if="row.role === 'ADMIN' && row.supervisedMajors?.length"
+            class="mt-0.5 block text-xs text-ink-500"
+            >Awasi: {{ row.supervisedMajors.map((m) => m.code).join(', ') }}</span
+          >
+          <span v-else-if="row.role === 'ADMIN'" class="mt-0.5 block text-xs text-ink-400"
+            >Tanpa jurusan</span
+          >
+        </template>
+        <template #cell-status="{ row }">
+          <StatusBadge :status="row.isActive ? 'AKTIF' : 'NONAKTIF'" />
+        </template>
+        <template #cell-actions="{ row }">
+          <div class="flex items-center justify-end gap-1">
+            <button
+              v-if="row.role === 'SISWA'"
+              class="btn-ghost !px-2 !py-1 !text-[12px] text-ok"
+              @click="openStudentData(row)"
+            >
+              Data PKL
+            </button>
+            <button class="btn-ghost !px-2 !py-1 !text-[12px]" @click="toggleActive(row)">
+              {{ row.isActive ? 'Nonaktifkan' : 'Aktifkan' }}
+            </button>
+            <button
+              class="btn-ghost !px-2 !py-1 !text-[12px] text-warn"
+              @click="openResetPassword(row)"
+            >
+              Reset Password
+            </button>
+            <button class="btn-ghost !px-2 !py-1 !text-[12px] text-no" @click="askDelete(row)">
+              Hapus
+            </button>
+          </div>
+        </template>
+      </DataTable>
     </div>
 
     <!-- Modal Data PKL Siswa -->

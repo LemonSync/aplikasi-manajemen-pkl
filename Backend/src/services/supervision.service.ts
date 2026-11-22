@@ -4,6 +4,7 @@ import { auditService } from './audit.service';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { registryClassByNisn } from './classResolver.service';
+import { resolveScope } from './majorScope.service';
 
 export interface SupervisionRow {
   studentId: string;
@@ -109,9 +110,25 @@ export class SupervisionService {
     supervisorId?: string;
     unassignedOnly?: boolean;
     supervisorSelf?: string;
+    actor?: { id: string; role: Role };
   }) {
     const supervisorId = params.supervisorSelf ?? params.supervisorId;
     const unassignedOnly = !supervisorId && params.unassignedOnly;
+
+    // Scope jurusan: ADMIN hanya siswa pada jurusan yang diawasi.
+    let scopeFilter: Prisma.UserWhereInput = {};
+    if (params.actor && params.actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: params.actor.id, role: Role.ADMIN });
+      if (!('all' in scope)) {
+        const majorIds = scope.majorIds;
+        scopeFilter = {
+          studentProfile:
+            majorIds.length === 0
+              ? { id: { in: [] } }
+              : { OR: [{ majorId: { in: majorIds } }, { class: { majorId: { in: majorIds } } }] },
+        };
+      }
+    }
 
     const where: Prisma.UserWhereInput = {
       role: Role.SISWA,
@@ -120,6 +137,7 @@ export class SupervisionService {
       ...(params.cohortId ? { cohortId: params.cohortId } : {}),
       ...(supervisorId ? { supervision: { is: { supervisorId } } } : {}),
       ...(unassignedOnly ? { supervision: { is: null } } : {}),
+      ...scopeFilter,
       ...(params.search
         ? {
             OR: [

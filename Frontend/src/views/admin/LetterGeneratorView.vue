@@ -11,6 +11,7 @@ import {
   type CompanyOption,
   type UserRecord,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 
@@ -25,8 +26,6 @@ const companies = ref<CompanyOption[]>([]);
 const gurus = ref<UserRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 
 const permohonan = ref({ cohortId: '', companyId: '', number: '' });
 const pengantar = ref({ supervisorId: '', number: '', replyNumber: '' });
@@ -41,7 +40,7 @@ const canSubmitPenugasan = computed(() => penugasan.value.supervisorId && !savin
 
 const loadOptions = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const [c, comp, g] = await Promise.all([
       cohortService.list(),
@@ -53,7 +52,7 @@ const loadOptions = async (): Promise<void> => {
     gurus.value = g.items;
     permohonan.value.cohortId = pickActiveCohortId(c.items);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -66,8 +65,7 @@ const resetForms = (): void => {
 
 const submitPermohonan = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const r = await letterGeneratorService.generatePermohonan({
       cohortId: permohonan.value.cohortId,
@@ -75,10 +73,10 @@ const submitPermohonan = async (): Promise<void> => {
       number: permohonan.value.number.trim() || null,
     });
     done.value = { title: 'Surat Permohonan PKL', letterId: r.letterId };
-    success.value = `Surat Permohonan terbit — ${r.studentCount ?? 0} siswa, ditandatangani ${r.signerName}.`;
+    notify.success(`Surat Permohonan terbit — ${r.studentCount ?? 0} siswa, ditandatangani ${r.signerName}.`);
     permohonan.value.number = '';
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -86,8 +84,7 @@ const submitPermohonan = async (): Promise<void> => {
 
 const submitPengantar = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const r = await phase4Service.generateBulkLetter({
       type: 'SURAT_PENGANTAR',
@@ -96,11 +93,11 @@ const submitPengantar = async (): Promise<void> => {
       supervisorId: pengantar.value.supervisorId,
     });
     done.value = { title: 'Surat Pengantar', letterId: r.letterId };
-    success.value = `Surat Pengantar terbit — ${r.studentCount} siswa, ditandatangani ${r.signerName}.`;
+    notify.success(`Surat Pengantar terbit — ${r.studentCount} siswa, ditandatangani ${r.signerName}.`);
     pengantar.value.number = '';
     pengantar.value.replyNumber = '';
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -108,8 +105,7 @@ const submitPengantar = async (): Promise<void> => {
 
 const submitPenugasan = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const r = await letterGeneratorService.generatePenugasan({
       supervisorId: penugasan.value.supervisorId,
@@ -117,11 +113,11 @@ const submitPenugasan = async (): Promise<void> => {
       dasar: penugasan.value.dasar.trim() || null,
     });
     done.value = { title: 'Surat Penugasan Pembimbing', letterId: r.letterId };
-    success.value = `Surat Penugasan terbit — ${r.studentCount ?? 0} siswa, ${r.tujuanCount ?? 0} perusahaan tujuan, ditandatangani ${r.signerName}.`;
+    notify.success(`Surat Penugasan terbit — ${r.studentCount ?? 0} siswa, ${r.tujuanCount ?? 0} perusahaan tujuan, ditandatangani ${r.signerName}.`);
     penugasan.value.number = '';
     penugasan.value.dasar = '';
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -132,7 +128,7 @@ const downloadDone = async (): Promise<void> => {
   try {
     await phase4Service.downloadLetterById(done.value.letterId, `${done.value.title.replace(/\s+/g, '-')}.pdf`);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -141,8 +137,6 @@ onMounted(() => void loadOptions());
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="bg-green-50 px-3 py-2 text-sm text-green-700">{{ success }}</div>
 
     <div class="card">
       <h2 class="text-lg font-semibold text-gray-800">Generator Surat</h2>

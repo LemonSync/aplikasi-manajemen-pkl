@@ -6,6 +6,7 @@ import {
   type AttendanceRecord,
   type AttendanceStudentGroup,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
@@ -18,7 +19,6 @@ const total = ref(0);
 const summary = ref<Array<{ status: string; _count: number }>>([]);
 const cohortStore = useCohortStore();
 const loading = ref(true);
-const error = ref('');
 const filters = ref<{ status: string; from: string; to: string }>({
   status: '',
   from: '',
@@ -83,7 +83,7 @@ const closeModals = (): void => {
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const f = filters.value;
     const range = { ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}) };
@@ -100,7 +100,7 @@ const load = async (): Promise<void> => {
     total.value = byClass.total;
     summary.value = sum;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -116,10 +116,22 @@ const hasLocation = (r: AttendanceRecord): boolean => r.checkInLat != null || r.
 
 const openMap = (r: AttendanceRecord, studentName: string): void => {
   const points: MapPoint[] = [
-    { label: `Masuk — ${fmtDate(r.date)}`, lat: r.checkInLat, long: r.checkInLong, note: r.checkInNote },
+    {
+      label: `Masuk — ${fmtDate(r.date)}`,
+      lat: r.checkInLat,
+      long: r.checkInLong,
+      note: r.checkInNote,
+      accuracy: r.checkInAccuracy,
+    },
   ];
   if (r.checkOutAt) {
-    points.push({ label: `Keluar — ${fmtDate(r.date)}`, lat: r.checkOutLat, long: r.checkOutLong, note: r.checkOutNote });
+    points.push({
+      label: `Keluar — ${fmtDate(r.date)}`,
+      lat: r.checkOutLat,
+      long: r.checkOutLong,
+      note: r.checkOutNote,
+      accuracy: r.checkOutAccuracy,
+    });
   }
   mapTitle.value = `Lokasi Presensi — ${studentName}`;
   mapPoints.value = points;
@@ -155,7 +167,6 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
 
     <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
       <div v-for="s in summary" :key="s.status" class="card">
@@ -300,7 +311,7 @@ watch(
               <th>Masuk</th>
               <th>Keluar</th>
               <th>Status</th>
-              <th>Keterangan</th>
+              <th>Kegiatan / Keterangan</th>
               <th>Verifikasi</th>
               <th>Lokasi</th>
             </tr>
@@ -317,7 +328,7 @@ watch(
                 </span>
               </td>
               <td class="max-w-[220px] text-gray-600">
-                <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? '—' }}</span>
+                <span class="block truncate" :title="r.activity ?? ''">{{ r.activity ?? (r.status === 'HADIR' && !r.checkOutAt ? '(diisi saat check-out)' : '—') }}</span>
                 <span v-if="r.sickProofPath" class="block text-xs text-gray-400">Bukti: {{ r.sickProofName ?? 'terlampir' }}</span>
               </td>
               <td class="whitespace-nowrap text-sm" :class="verificationLabel(r).cls">{{ verificationLabel(r).text }}</td>

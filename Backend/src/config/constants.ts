@@ -30,6 +30,7 @@ export const MESSAGES = {
     PHASE_UNSET: 'Fase PKL akun Anda belum ditetapkan. Hubungi administrator',
     NO_ACTIVE_COHORT: 'Belum ada gelombang PKL yang aktif. Hubungi administrator',
     COHORT_INACTIVE: 'Gelombang PKL akun Anda sedang tidak aktif',
+    NO_ACTIVE_PHASE: 'Tidak ada fase PKL yang aktif pada tanggal ini untuk gelombang Anda. Hubungi administrator',
   },
   VALIDATION: 'Data yang dikirim tidak valid',
   NOT_FOUND: 'Data tidak ditemukan',
@@ -127,6 +128,9 @@ export const AUDIT_ACTIONS = {
   SET_ACTIVE_COHORT: 'SET_ACTIVE_COHORT',
   CREATE_COMPANY: 'CREATE_COMPANY',
   UPDATE_COMPANY: 'UPDATE_COMPANY',
+  CREATE_COMPANY_REQUEST: 'CREATE_COMPANY_REQUEST',
+  APPROVE_COMPANY_REQUEST: 'APPROVE_COMPANY_REQUEST',
+  REJECT_COMPANY_REQUEST: 'REJECT_COMPANY_REQUEST',
   CHECK_IN: 'CHECK_IN',
   CHECK_OUT: 'CHECK_OUT',
   CREATE_COMPLAINT: 'CREATE_COMPLAINT',
@@ -137,6 +141,7 @@ export const AUDIT_ACTIONS = {
   ASSIGN_SUPERVISOR: 'ASSIGN_SUPERVISOR',
   UNASSIGN_SUPERVISOR: 'UNASSIGN_SUPERVISOR',
   SECURITY_ALERT: 'SECURITY_ALERT',
+  GENERATE_CERTIFICATE: 'GENERATE_CERTIFICATE',
 } as const;
 
 /** Jenis entitas untuk audit/approval */
@@ -147,12 +152,15 @@ export const ENTITY_TYPES = {
   USER: 'USER',
   COHORT: 'COHORT',
   COMPANY: 'COMPANY',
+  COMPANY_REQUEST: 'COMPANY_REQUEST',
   REGISTRATION: 'REGISTRATION',
   ATTENDANCE: 'ATTENDANCE',
   COMPLAINT: 'COMPLAINT',
   VISIT: 'VISIT',
   SUPERVISION: 'SUPERVISION',
   SECURITY: 'SECURITY',
+  GRADE: 'GRADE',
+  CERTIFICATE: 'CERTIFICATE',
 } as const;
 
 /** Nama cookie refresh token */

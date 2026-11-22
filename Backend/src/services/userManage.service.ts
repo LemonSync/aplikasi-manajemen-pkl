@@ -1,31 +1,67 @@
 import { prisma } from '../config/prisma';
-import { DocumentType, RegistrationStatus, Role } from '@prisma/client';
+import { DocumentType, RegistrationStatus, Role, User } from '@prisma/client';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { encryptCredential } from '../utils/credentialCipher';
-import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { MESSAGES, AUDIT_ACTIONS, ENTITY_TYPES } from '../config/constants';
 import { auditService } from './audit.service';
 import { resolveOrCreateClass, classNameWithFallback } from './classResolver.service';
 import { CreateUserDTO, UpdateUserDTO, ResetPasswordDTO } from '../validators/user.validator';
 
 /**
+ * Role yang BOLEH dibuat oleh ADMIN biasa (non-super).
+ * KETUA & DUDI sudah tidak dipakai; hanya siswa & guru pembimbing.
+ */
+const ADMIN_CREATABLE_ROLES: Role[] = [Role.SISWA, Role.GURU_PEMBIMBING];
+
+/**
  * Service manajemen user (admin).
  */
 export class UserManageService {
-  async create(dto: CreateUserDTO) {
-    const username = dto.username;
-    const plainPassword = dto.password;
-
-    // Validasi username & password
-    if (!username || !plainPassword) {
-      throw new BadRequestError('Username dan password wajib diisi');
+  /**
+   * Guard: apakah `actorRole` boleh membuat/mengubah akun ber-role `targetRole`.
+   * SUPER_ADMIN bebas; ADMIN hanya boleh utk SISWA & GURU_PEMBIMBING.
+   */
+  private assertCanManageRole(actorRole: Role, targetRole: Role): void {
+    if (actorRole === Role.SUPER_ADMIN) return;
+    if (actorRole === Role.ADMIN) {
+      if (!ADMIN_CREATABLE_ROLES.includes(targetRole)) {
+        throw new ForbiddenError(
+          'Hanya Super Admin yang dapat membuat/mengubah akun admin, kepala sekolah, atau super admin'
+        );
+      }
+      return;
     }
+    throw new ForbiddenError(MESSAGES.AUTH.FORBIDDEN);
+  }
+
+  /**
+   * Buat satu akun. Password tidak lagi dipilih oleh pembuat akun — sistem
+   * yang membangkitkannya (pola yang sama dengan pembuatan akun massal dari
+   * Master Siswa & Master Guru). Plaintext-nya hanya muncul sekali di respons
+   * ini — sisanya ada hash bcrypt dan salinan terenkripsi di InitialCredential
+   * yang dibuang saat pemilik akun mengganti password.
+   */
+  async create(dto: CreateUserDTO, actorRole: Role) {
+    const username = dto.username;
+
+    if (!username) {
+      throw new BadRequestError('Username wajib diisi');
+    }
+
+    // Guard role: ADMIN hanya boleh buat siswa & guru pembimbing.
+    this.assertCanManageRole(actorRole, dto.role);
+
+    // Jurusan yang diawasi hanya relevan & hanya boleh diisi SUPER_ADMIN utk ADMIN.
+    const supervisedMajorIds =
+      dto.role === Role.ADMIN && actorRole === Role.SUPER_ADMIN ? (dto.majorIds ?? []) : [];
 
     const existing = await prisma.user.findFirst({
       where: { username, deletedAt: null },
     });
     if (existing) throw new BadRequestError('Username sudah digunakan');
 
+    const plainPassword = generateRandomPassword();
     const passwordHash = await hashPassword(plainPassword);
 
     const user = await prisma.user.create({
@@ -37,7 +73,17 @@ export class UserManageService {
         role: dto.role,
         cohortId: dto.cohortId || null,
         phase: dto.role === 'SISWA' ? 'PRA_PKL' : null,
+        mustChangePassword: true,
+        ...(dto.role === Role.ADMIN
+          ? { supervisedMajors: { connect: supervisedMajorIds.map((id) => ({ id })) } }
+          : {}),
       },
+    });
+
+    await prisma.initialCredential.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id, encryptedPassword: encryptCredential(plainPassword) },
+      update: { encryptedPassword: encryptCredential(plainPassword) },
     });
 
     // Buat profil berdasarkan role
@@ -63,7 +109,12 @@ export class UserManageService {
       });
     }
 
-    return user;
+    // `password` hanya muncul sekali di respons ini; setelah itu tidak ada lagi
+    // jalur untuk membacanya (hanya reset password oleh admin). Hash bcrypt
+    // sengaja tidak ikut dikirim ke klien.
+    const tanpaHash: Partial<User> = { ...user };
+    delete tanpaHash.passwordHash;
+    return { ...tanpaHash, password: plainPassword };
   }
 
   /**
@@ -181,17 +232,64 @@ export class UserManageService {
     return { total: rows.length, created, skipped, classBackfilled };
   }
 
-  async update(id: string, dto: UpdateUserDTO) {
-    const user = await prisma.user.findUnique({ where: { id } });
+  async update(id: string, dto: UpdateUserDTO, actorRole: Role, actorId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { supervisedMajors: { select: { id: true } } },
+    });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
 
-    return prisma.user.update({ where: { id }, data: dto });
+    // Tidak boleh mengubah akun sendiri (mencegah self-elevate / self-disable).
+    if (id === actorId) {
+      throw new BadRequestError('Tidak dapat mengubah akun sendiri');
+    }
+
+    // Guard role: ADMIN hanya boleh ubah akun siswa & guru pembimbing.
+    this.assertCanManageRole(actorRole, user.role);
+    // Jika actor ADMIN mencoba mengubah role jadi staf, tolak.
+    if (dto.role && actorRole !== Role.SUPER_ADMIN) {
+      this.assertCanManageRole(actorRole, dto.role);
+    }
+
+    // Ubah jurusan pengawasan: hanya SUPER_ADMIN & hanya utk akun ADMIN.
+    const wantMajorChange =
+      actorRole === Role.SUPER_ADMIN && dto.majorIds !== undefined && user.role === Role.ADMIN;
+
+    const data: Record<string, unknown> = {
+      ...(dto.username !== undefined ? { username: dto.username } : {}),
+      ...(dto.email !== undefined ? { email: dto.email } : {}),
+      ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      ...(dto.role !== undefined ? { role: dto.role } : {}),
+    };
+    if (wantMajorChange) {
+      data.supervisedMajors = { set: (dto.majorIds ?? []).map((mid) => ({ id: mid })) };
+    }
+
+    return prisma.user.update({
+      where: { id },
+      data,
+      include: { supervisedMajors: { select: { id: true, code: true, name: true } } },
+    });
   }
 
-  async list(params: { page: number; perPage: number; role?: string; search?: string; cohortId?: string }) {
+  async list(params: {
+    page: number;
+    perPage: number;
+    role?: string;
+    search?: string;
+    cohortId?: string;
+    actorRole: Role;
+  }) {
     const where: Record<string, unknown> = { deletedAt: null };
     if (params.role) where.role = params.role;
     if (params.cohortId) where.cohortId = params.cohortId;
+
+    // ADMIN biasa hanya melihat akun siswa & guru (tanpa filter jurusan).
+    // Akun admin/kepala/superadmin disembunyikan darinya.
+    if (params.actorRole === Role.ADMIN) {
+      where.role = { in: [Role.SISWA, Role.GURU_PEMBIMBING] };
+    }
+
     if (params.search) {
       where.OR = [
         { username: { contains: params.search } },
@@ -209,6 +307,7 @@ export class UserManageService {
         include: {
           studentProfile: { include: { class: { select: { name: true } } } },
           teacherProfile: true,
+          supervisedMajors: { select: { id: true, code: true, name: true } },
         },
       }),
       prisma.user.count({ where }),
@@ -219,7 +318,11 @@ export class UserManageService {
   async getById(id: string) {
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { studentProfile: true, teacherProfile: true },
+      include: {
+        studentProfile: true,
+        teacherProfile: true,
+        supervisedMajors: { select: { id: true, code: true, name: true } },
+      },
     });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
     return user;
@@ -357,13 +460,16 @@ export class UserManageService {
    *  - Admin & super_admin dilindungi.
    *  - Pendaftaran milik user yang belum selesai ikut dinonaktifkan.
    */
-  async delete(id: string, actorId: string) {
+  async delete(id: string, actorId: string, actorRole: Role) {
     if (id === actorId) {
       throw new BadRequestError('Tidak dapat menghapus akun sendiri');
     }
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
+
+    // Guard role: ADMIN hanya boleh hapus siswa & guru pembimbing.
+    this.assertCanManageRole(actorRole, user.role);
 
     // Lindungi admin & super_admin dari penghapusan
     if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
@@ -404,9 +510,18 @@ export class UserManageService {
    * Reset password user.
    * Admin bisa set password baru atau generate random.
    */
-  async resetPassword(id: string, dto: ResetPasswordDTO): Promise<{ plainPassword: string }> {
+  async resetPassword(
+    id: string, dto: ResetPasswordDTO, actorRole: Role, actorId: string
+  ): Promise<{ plainPassword: string }> {
+    if (id === actorId) {
+      throw new BadRequestError('Tidak dapat mereset password akun sendiri');
+    }
+
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundError(MESSAGES.NOT_FOUND);
+
+    // Guard role: ADMIN hanya boleh reset siswa & guru pembimbing.
+    this.assertCanManageRole(actorRole, user.role);
 
     if (!dto.newPassword && !dto.generateRandom) {
       throw new BadRequestError('Isi password baru atau centang generate random');

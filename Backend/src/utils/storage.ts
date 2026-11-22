@@ -9,7 +9,16 @@ import { env } from '../config/env';
  */
 
 /** Sub-folder kategori dokumen. */
-export type StorageCategory = 'documents' | 'letters' | 'avatars' | 'visits' | 'signatures' | 'attendance' | 'temp';
+export type StorageCategory =
+  | 'documents'
+  | 'letters'
+  | 'avatars'
+  | 'visits'
+  | 'signatures'
+  | 'attendance'
+  | 'logos'
+  | 'wa-guides'
+  | 'temp';
 
 /**
  * Memastikan direktori ada (rekursif), lalu mengembalikan path absolutnya.
@@ -92,7 +101,15 @@ export const readStoredFile = (relativePath: string): Buffer | null => {
 /** Memastikan storage root ada saat bootstrap. */
 export const initStorage = (): void => {
   ensureDir(env.storageRoot);
-  (['documents', 'letters', 'avatars', 'visits', 'signatures', 'attendance', 'temp'] as StorageCategory[]).forEach((c) =>
-    ensureDir(path.join(env.storageRoot, c))
-  );
+  const categories: StorageCategory[] = [
+    'documents',
+    'letters',
+    'avatars',
+    'visits',
+    'signatures',
+    'attendance',
+    'logos',
+    'temp',
+  ];
+  categories.forEach((c) => ensureDir(path.join(env.storageRoot, c)));
 };

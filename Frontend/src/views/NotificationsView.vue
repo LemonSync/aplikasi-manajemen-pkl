@@ -3,17 +3,17 @@ import { onMounted, ref } from 'vue';
 import { notificationService, type NotificationRecord } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import { notify } from '@/composables/useNotify';
 
 const notifications = ref<NotificationRecord[]>([]);
 const loading = ref(true);
-const error = ref('');
 
 const load = async (): Promise<void> => {
   loading.value = true;
   try {
     notifications.value = await notificationService.listMine();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -24,7 +24,7 @@ const markRead = async (id: string): Promise<void> => {
     await notificationService.markRead(id);
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -33,7 +33,7 @@ const markAllRead = async (): Promise<void> => {
     await notificationService.markAllRead();
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -46,7 +46,6 @@ onMounted(load);
       <h2 class="text-lg font-semibold text-gray-800">Notifikasi</h2>
       <button class="btn-secondary text-sm" @click="markAllRead">Tandai Semua Dibaca</button>
     </div>
-    <div v-if="error" class="mt-3 bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
     <LoadingSpinner v-if="loading" />
     <div v-else class="mt-4 space-y-2">
       <div

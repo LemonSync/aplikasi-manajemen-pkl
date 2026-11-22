@@ -140,7 +140,7 @@ export const renderFinalReportPdf = (data: FinalReportData): Promise<Buffer> => 
       doc.moveDown(1);
 
       // --- Judul ---
-      doc.font(FONT_BOLD).fontSize(13).text('LAPORAN HASIL PRAKTIK KER LAPANGAN', { align: 'center' });
+      doc.font(FONT_BOLD).fontSize(13).text('LAPORAN HASIL PRAKTIK KERJA LAPANGAN', { align: 'center' });
       doc.font(FONT).fontSize(10).text(data.student.fullName, { align: 'center' });
       doc.moveDown(1.2);
 

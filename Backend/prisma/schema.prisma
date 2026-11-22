@@ -59,6 +59,13 @@ enum AttendanceStatus {
   ALPHA
 }
 
+/// Status usulan tempat PKL dari siswa (fase 1) — direview admin
+enum CompanyRequestStatus {
+  MENUNGGU
+  DISETUJUI
+  DITOLAK
+}
+
 /// Jenis dokumen/surat yang dikelola sistem
 enum DocumentType {
   SURAT_PERMOHONAN        // Fase 1: surat permohonan ke perusahaan (per siswa)
@@ -79,6 +86,7 @@ enum DocumentStatus {
   MENUNGGU_VERIFIKASI      // menunggu review admin
   DISETUJUI
   DITOLAK                  // disertai alasan
+  TIDAK_BERLAKU            // dibatalkan sistem (mis. siswa ganti perusahaan)
 }
 
 /// Status generik persetujuan (ajuan, laporan, dsb.)
@@ -160,10 +168,18 @@ model User {
   registrationReviews  Registration[]  @relation("RegistrationReviewer")
   initialCredential    InitialCredential?
 
+  // Usulan tempat PKL dari siswa & review-nya oleh admin
+  companyRequests      CompanyRequest[] @relation("CompanyRequestStudent")
+  companyRequestReviews CompanyRequest[] @relation("CompanyRequestReviewer")
+
   // Pembimbingan per siswa (1 siswa = 1 guru pembimbing)
   supervision          StudentSupervisor? @relation("SupervisedStudent")
   supervisedStudents   StudentSupervisor[] @relation("StudentSupervisorGuru")
   finalReports         FinalReport[] @relation("FinalReportStudent")
+  certificates         Certificate[] @relation("CertificateStudent")
+
+  // Jurusan yang diawasi (khusus role ADMIN; many-to-many)
+  supervisedMajors     Major[] @relation("AdminSupervisedMajors")
 
   @@index([role])
   @@index([cohortId])
@@ -226,8 +242,9 @@ model Cohort {
   registrations Registration[]
   phaseSchedules PhaseSchedule[]
   studentRegistries StudentRegistry[]
-  teacherRegistries TeacherRegistry[]
   finalReports FinalReport[]
+  certificates Certificate[]
+  waGroup      WaGroup?
 
   @@index([status])
   @@map("cohorts")
@@ -246,6 +263,7 @@ model Major {
   registrations    Registration[]
   studentRegistries StudentRegistry[]
   teacherRegistries TeacherRegistry[]
+  supervisedAdmins User[] @relation("AdminSupervisedMajors")
 
   @@map("majors")
 }
@@ -273,19 +291,18 @@ model StudentRegistry {
 /// Master guru pembimbing dari import sekolah. Ini bukan akun login; menjadi
 /// sumber kebenaran untuk validasi NIP & nama. Akun guru dibuat otomatis
 /// (username = NIP) saat baris ditambahkan/diimport.
+/// Sifatnya GLOBAL — satu daftar berlaku untuk semua gelombang, tidak seperti
+/// StudentRegistry yang per gelombang. Guru tidak diulang import tiap angkatan.
 model TeacherRegistry {
   id        String   @id @default(cuid())
   nip       String   @unique @db.VarChar(18)
   fullName  String
-  cohortId  String
-  cohort    Cohort   @relation(fields: [cohortId], references: [id], onDelete: Restrict)
   majorId   String?
   major     Major?   @relation(fields: [majorId], references: [id], onDelete: SetNull)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([cohortId])
   @@map("teacher_registries")
 }
 
@@ -317,7 +334,8 @@ model Industry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  companies Company[]
+  companies       Company[]
+  companyRequests CompanyRequest[]
 
   @@map("industries")
 }
@@ -431,9 +449,39 @@ model Company {
 
   registrations Registration[]
   visits       Visit[]
+  requestApprovals CompanyRequest[]
 
   @@index([industryId])
   @@map("companies")
+}
+
+/// Usulan tempat PKL dari siswa (fase 1).
+/// Siswa mengusulkan perusahaan yang belum ada di daftar; admin menghubungi
+/// perusahaan lalu ACC (otomatis menjadi Company aktif) atau Tolak.
+model CompanyRequest {
+  id           String              @id @default(cuid())
+  studentId    String
+  student      User                @relation("CompanyRequestStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  name         String              @db.VarChar(200)   // selalu disimpan KAPITAL
+  address      String              @db.Text
+  industryId   String?
+  industry     Industry?           @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  phone        String?             @db.VarChar(30)
+  email        String?
+  website      String?             @db.VarChar(255)
+  status       CompanyRequestStatus @default(MENUNGGU)
+  reviewNote   String?             @db.Text           // catatan admin saat menolak
+  reviewedById String?
+  reviewedBy   User?               @relation("CompanyRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  companyId    String?                                // diisi saat DISETUJUI
+  company      Company?            @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([status])
+  @@index([studentId])
+  @@map("company_requests")
 }
 
 // ============================================================================
@@ -492,7 +540,7 @@ model Registration {
   updatedAt     DateTime           @updatedAt
   deletedAt     DateTime?
 
-  document      Document?
+  documents     Document[]
 
   @@unique([studentId, cohortId])
   @@index([cohortId])
@@ -539,11 +587,14 @@ model Attendance {
   checkInLat   Decimal?         @db.Decimal(10, 7)
   checkInLong  Decimal?         @db.Decimal(10, 7)
   checkInNote  String?          @db.Text
+  // Radius kesalahan (meter) yang dilaporkan browser saat pembacaan masuk.
+  checkInAccuracy Int?
 
   checkOutAt   DateTime?
   checkOutLat  Decimal?         @db.Decimal(10, 7)
   checkOutLong Decimal?         @db.Decimal(10, 7)
   checkOutNote String?          @db.Text
+  checkOutAccuracy Int?
 
   // Konfirmasi kehadiran oleh guru pembimbing (admin bisa melihat)
   verifiedById String?
@@ -654,6 +705,36 @@ model FinalReport {
   @@map("final_reports")
 }
 
+/// Sertifikat PKL per siswa. Logo perusahaan diunggah siswa (wajib), nomor
+/// sertifikat dibangkitkan sistem dan boleh diganti manual oleh admin.
+model Certificate {
+  id           String   @id @default(cuid())
+  studentId    String   @unique
+  student      User     @relation("CertificateStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  cohortId     String?
+  cohort       Cohort?  @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+
+  number       String   @unique @db.VarChar(80)
+  /// SISTEM = dibangkitkan otomatis; MANUAL = diketik admin (tidak ditimpa lagi).
+  numberSource String   @default("SISTEM") @db.VarChar(12)
+
+  /// Penandatangan kanan halaman 1 — diketik siswa (boleh kosong).
+  kepalaBagianName String? @db.VarChar(120)
+
+  /// Baru diisi setelah siswa mengunggah logo; baris bisa ada lebih dulu
+  /// (mis. siswa menyimpan nama penandatangan sebelum unggah logo).
+  logoPath     String?  // logo perusahaan (path relatif storage root)
+  logoName     String?
+  pdfPath      String?  // sertifikat 2 halaman (sertifikat + lembar penilaian)
+  issuedAt     DateTime @default(now())
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([cohortId])
+  @@map("certificates")
+}
+
 // ============================================================================
 // DOKUMEN & SURAT
 // ============================================================================
@@ -665,7 +746,10 @@ model Document {
   owner      User           @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   cohortId   String?
   cohort     Cohort?        @relation(fields: [cohortId], references: [id], onDelete: SetNull)
-  registrationId String?    @unique
+  // Dokumen Surat Penerimaan diikat ke pendaftaran yang sedang berjalan;
+  // satu pendaftaran (satu baris per siswa+gelombang) bisa punya beberapa
+  // ronde dokumen karena barisnya dipakai ulang saat siswa ganti perusahaan.
+  registrationId String?
   registration   Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
   type       DocumentType
   status     DocumentStatus @default(DRAFT)
@@ -683,6 +767,7 @@ model Document {
   @@index([type])
   @@index([status])
   @@index([cohortId])
+  @@index([registrationId])
   @@map("documents")
 }
 
@@ -785,7 +870,8 @@ model Approval {
 // ============================================================================
 
 /// Nilai PKL per siswa. Diisi oleh akun siswa pada fase 4 (mewakili penilaian
-/// DUDI) lalu disetujui guru pembimbing. Nilai akhir = 100% nilai DUDI.
+/// DUDI) lalu disetujui guru pembimbing. Nilai akhir =
+/// (rata-rata butir penilaian x 80%) + (nilai laporan PKL x 20%).
 model Grade {
   id            String   @id @default(cuid())
   studentId     String
@@ -797,10 +883,18 @@ model Grade {
   // Komponen nilai DUDI (mis. 0-100)
   scoreDudi     Decimal? @db.Decimal(5, 2)
   scoreGuidance Decimal? @db.Decimal(5, 2)  // nilai bimbingan guru (catatan, bukan penambah)
-  finalScore    Decimal? @db.Decimal(5, 2)  // = scoreDudi (100%)
+  scoreReport   Decimal? @db.Decimal(5, 2)  // Nilai Laporan PKL — pembobot 20%
+  finalScore    Decimal? @db.Decimal(5, 2)  // Nilai Akhir PKL
   predicate     String?  @db.VarChar(2)     // A/B/C/D
 
+  // Pendamping (mentor) PKL dari perusahaan — penandatangan kolom "Pembimbing PKL".
+  mentorName    String?  @db.VarChar(120)
+
   note          String? @db.Text
+
+  // Setelah dikirim, penilaian TERKUNCI dan tidak dapat diubah siswa lagi;
+  // hanya bisa dikirim ulang bila guru pembimbing menolaknya.
+  submittedAt   DateTime?
 
   aspects       GradeAspect[]
 
@@ -811,13 +905,17 @@ model Grade {
   @@map("grades")
 }
 
-/// Indikator nilai per penilaian DUDI (form penilaian per aspek).
+/// Indikator nilai per penilaian DUDI (butir LEMBARAN PENILAIAN sekolah).
 model GradeAspect {
   id        String   @id @default(cuid())
   gradeId   String
   grade     Grade    @relation(fields: [gradeId], references: [id], onDelete: Cascade)
   label     String   @db.VarChar(120)
   score     Decimal  @db.Decimal(5, 2)
+  /// Huruf butir pada lembar penilaian ('a', 'b', 'c', ...)
+  code      String?  @db.VarChar(8)
+  /// Kelompok butir: 1 = Sikap/Softskill, 2 = Pengetahuan/Knowledge, 3 = Ketrampilan/Hardskill
+  groupCode String?  @db.VarChar(2)
   createdAt DateTime @default(now())
 
   @@index([gradeId])
@@ -898,4 +996,76 @@ model AuditLog {
   @@index([action])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// ============================================================================
+// BOT WHATSAPP (Baileys)
+// ============================================================================
+
+/// Grup pengumuman per gelombang — dibuat bot, diisi lewat link invite.
+model WaGroup {
+  id        String   @id @default(cuid())
+  cohortId  String   @unique
+  cohort    Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  jid       String   @unique @db.VarChar(60)        // e.g. "1234567890-1591284521@g.us"
+  subject   String   @db.VarChar(120)
+  invite    String?  @db.VarChar(255)               // link groupInviteCode (siapa pun boleh masuk)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("wa_groups")
+}
+
+/// Satu node pohon panduan customer service (diedit SUPER_ADMIN di halaman Config).
+model WaGuide {
+  id        String    @id @default(cuid())
+  parentId  String?
+  parent    WaGuide?  @relation("WaGuideTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  WaGuide[] @relation("WaGuideTree")
+  role      String    @default("SISWA") @db.VarChar(20)  // SISWA | GURU | ADMIN
+  rowId     String    @unique @db.VarChar(60)            // kunci stabil utk selectedRowId / kata kunci
+  label     String    @db.VarChar(120)                   // teks tombol
+  body      String?   @db.Text                           // teks panduan (node daun)
+  imagePath String?   @db.VarChar(255)                   // path relatif storage/wa-guides
+  order     Int       @default(0)
+  depth     Int       @default(0)                        // dijaga <= 3 di service
+  isActive  Boolean   @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([parentId])
+  @@index([role, isActive])
+  @@map("wa_guides")
+}
+
+/// Kunci idempotensi pengingat fase: satu kirim per (gelombang, fase, jenis, hari).
+model WaReminderLog {
+  id       String       @id @default(cuid())
+  cohortId String
+  phase    StudentPhase
+  kind     String       @default("START") @db.VarChar(20) // START | END | UPCOMING
+  dayKey   String       @db.VarChar(10)                   // YYYY-MM-DD (TIMEZONE)
+  ok       Boolean
+  detail   String?      @db.Text
+  sentAt   DateTime     @default(now())
+
+  @@unique([cohortId, phase, kind, dayKey])
+  @@index([dayKey])
+  @@map("wa_reminder_logs")
+}
+
+/// Jejak percakapan customer service (dipangkas sesuai retensi).
+model WaMessageLog {
+  id        String   @id @default(cuid())
+  direction String   @db.VarChar(3)      // IN | OUT
+  chatJid   String   @db.VarChar(60)
+  senderJid String?  @db.VarChar(60)
+  kind      String?  @db.VarChar(40)     // text | list-response | media | group
+  body      String?  @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([chatJid, createdAt])
+  @@map("wa_message_logs")
 }

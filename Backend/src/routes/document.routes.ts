@@ -28,16 +28,16 @@ router.post(
 router.get('/me', documentController.myDocuments);
 router.get('/type/:type/download', authorizeRoles(Role.SISWA, Role.KETUA), documentController.downloadByType);
 
-// --- Admin/Guru: daftar & verifikasi ---
+// --- Admin: daftar & verifikasi ---
 router.get(
   '/',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH, Role.GURU_PEMBIMBING),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.KEPALA_SEKOLAH),
   validate({ query: listDocumentQuerySchema }),
   documentController.list
 );
 router.post(
   '/:id/verify',
-  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN, Role.GURU_PEMBIMBING),
+  authorizeRoles(Role.ADMIN, Role.SUPER_ADMIN),
   validate({ body: verifyDocumentSchema }),
   documentController.verify
 );

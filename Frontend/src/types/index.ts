@@ -21,6 +21,8 @@ export interface AuthUser {
   phase: StudentPhase | null;
   cohortId: string | null;
   mustChangePassword: boolean;
+  /** Khusus role ADMIN: jurusan yang diawasi. */
+  supervisedMajors?: Array<{ id: string; code: string; name: string }>;
 }
 
 export interface LoginResponse {

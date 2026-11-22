@@ -4,6 +4,7 @@ import { supervisionService, type SupervisionRow } from '@/services/api.service'
 import { extractErrorMessage } from '@/services/http';
 import type { PaginationMeta } from '@/types';
 import SkeletonTable from '@/components/SkeletonTable.vue';
+import { notify } from '@/composables/useNotify';
 
 /**
  * Siswa Bimbingan (per-orang: 1 siswa = 1 guru).
@@ -12,7 +13,6 @@ import SkeletonTable from '@/components/SkeletonTable.vue';
 const rows = ref<SupervisionRow[]>([]);
 const meta = ref<PaginationMeta | undefined>(undefined);
 const loading = ref(true);
-const error = ref('');
 
 const searchInput = ref('');
 const search = ref('');
@@ -24,7 +24,7 @@ const teacherName = ref('');
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const res = await supervisionService.list({
       page: page.value,
@@ -36,7 +36,7 @@ const load = async (): Promise<void> => {
     const name = res.items.find((r) => r.supervisorName)?.supervisorName;
     if (name) teacherName.value = name;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -69,7 +69,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">

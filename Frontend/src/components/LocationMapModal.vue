@@ -6,6 +6,8 @@ export interface MapPoint {
   lat: string | number | null;
   long: string | number | null;
   note?: string | null;
+  /** Radius kesalahan pembacaan GPS (meter) seperti dilaporkan browser. */
+  accuracy?: number | null;
 }
 
 const props = defineProps<{
@@ -32,12 +34,38 @@ const parsed = computed<ResolvedPoint[]>(() =>
   })
 );
 
-const osmEmbedUrl = (p: ResolvedPoint): string =>
-  `https://www.openstreetmap.org/export/embed.html?bbox=${p.lo - 0.004},${p.la - 0.003},${p.lo + 0.004},${p.la + 0.003}&layer=mapnik&marker=${p.la},${p.lo}`;
+/**
+ * Jendela peta dibuat minimal selebar radius akurasi. Tanpa ini, peta yang di-zoom
+ * rapat ke satu blok menyiratkan presisi yang sebenarnya tidak dimiliki titiknya.
+ */
+const halfSpan = (p: ResolvedPoint): { lat: number; long: number } => {
+  const meters = p.accuracy && p.accuracy > 0 ? p.accuracy : 0;
+  const latHalf = Math.max(0.003, meters / 111320);
+  const metersPerDegLon = 111320 * Math.max(0.2, Math.cos((p.la * Math.PI) / 180));
+  return { lat: latHalf, long: Math.max(0.004, meters / metersPerDegLon) };
+};
+
+const osmEmbedUrl = (p: ResolvedPoint): string => {
+  const span = halfSpan(p);
+  const bbox = [p.lo - span.long, p.la - span.lat, p.lo + span.long, p.la + span.lat]
+    .map((v) => v.toFixed(6))
+    .join(',');
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${p.la},${p.lo}`;
+};
 
 const googleMapsUrl = (p: ResolvedPoint): string => `https://www.google.com/maps?q=${p.la},${p.lo}`;
 
 const formatCoord = (p: ResolvedPoint): string => `${p.la.toFixed(6)}, ${p.lo.toFixed(6)}`;
+
+const accuracyText = (p: ResolvedPoint): string | null =>
+  p.accuracy === null || p.accuracy === undefined ? null : `±${Math.round(p.accuracy)} m`;
+
+const accuracyClass = (meters: number): string =>
+  meters <= 50
+    ? 'bg-emerald-100 text-emerald-700'
+    : meters <= 150
+      ? 'bg-amber-100 text-amber-700'
+      : 'bg-red-100 text-red-700';
 </script>
 
 <template>
@@ -57,7 +85,20 @@ const formatCoord = (p: ResolvedPoint): string => `${p.la.toFixed(6)}, ${p.lo.to
             <p class="text-sm font-semibold text-gray-800">{{ p.label }}</p>
             <p v-if="p.note" class="text-xs text-gray-500">Catatan: {{ p.note }}</p>
           </div>
-          <p v-if="p.valid" class="font-mono text-xs text-gray-600">{{ formatCoord(p) }}</p>
+          <div v-if="p.valid" class="flex items-center gap-2">
+            <p class="font-mono text-xs text-gray-600">{{ formatCoord(p) }}</p>
+            <span
+              v-if="accuracyText(p)"
+              class="rounded-full px-2 py-0.5 text-xs font-medium"
+              :class="accuracyClass(p.accuracy as number)"
+              :title="'Perkiraan kesalahan pembacaan GPS: ' + accuracyText(p) + '. Titik sebenarnya berada di dalam lingkaran sejarak itu.'"
+            >
+              {{ accuracyText(p) }}
+            </span>
+            <span v-else class="text-xs text-gray-400" title="Perangkat tidak melaporkan radius akurasi.">
+              akurasi tidak dilaporkan
+            </span>
+          </div>
         </div>
 
         <template v-if="p.valid">

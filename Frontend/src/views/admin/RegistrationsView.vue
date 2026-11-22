@@ -6,10 +6,9 @@ import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import { notify } from '@/composables/useNotify';
 
 const loading = ref(true);
-const error = ref('');
-const success = ref('');
 
 // Filter gelombang: mengikuti konteks global di header (cohortStore).
 const cohortStore = useCohortStore();
@@ -33,6 +32,9 @@ const EMPTY_TEXT: Record<StatusFilter, string> = {
   SEMUA: 'Belum ada pendaftaran.',
 };
 
+// Batas baris per permintaan server (parser backend juga memotong di 100).
+const MAX_ROWS = 100;
+
 // Daftar pendaftaran flat per tab status + jumlah total per status (meta.total).
 const itemsByStatus = ref<Record<StatusFilter, Registration[]>>({
   DIAJUKAN: [],
@@ -50,14 +52,16 @@ const fmtDate = (v?: string | null): string =>
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const cohortId = cohortStore.activeCohortId || undefined;
+    // perPage = batas server: pencarian di bawah menyaring hasil di sisi klien,
+    // jadi ambil sebanyak mungkin agar siswa yang antre duluan tidak terpotong.
     const [dDiajukan, dDisetujui, dDitolak, dSemua] = await Promise.all([
-      registrationService.list('DIAJUKAN', cohortId),
-      registrationService.list('DISETUJUI', cohortId),
-      registrationService.list('DITOLAK', cohortId),
-      registrationService.list(undefined, cohortId),
+      registrationService.list('DIAJUKAN', cohortId, MAX_ROWS),
+      registrationService.list('DISETUJUI', cohortId, MAX_ROWS),
+      registrationService.list('DITOLAK', cohortId, MAX_ROWS),
+      registrationService.list(undefined, cohortId, MAX_ROWS),
     ]);
     itemsByStatus.value = {
       DIAJUKAN: dDiajukan.items,
@@ -72,7 +76,7 @@ const load = async (): Promise<void> => {
       SEMUA: dSemua.meta?.total ?? dSemua.items.length,
     };
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -88,7 +92,7 @@ const filteredRegs = computed<Registration[]>(() => {
       r.code,
       studentName(r),
       r.student?.studentProfile?.nisn ?? '',
-      r.company.name,
+      r.company?.name ?? '',
       r.major?.name ?? r.major?.code ?? '',
     ]
       .join(' ')
@@ -100,31 +104,58 @@ const filteredRegs = computed<Registration[]>(() => {
 // --- Tinjauan: setujui / tolak ---
 const rejecting = ref<Registration | null>(null);
 const rejectNote = ref('');
+const approving = ref<Registration | null>(null);
+const letterNumber = ref('');
 const reviewing = ref(false);
 
-const doReview = async (regId: string, action: 'APPROVE' | 'REJECT', note?: string): Promise<void> => {
-  error.value = '';
-  success.value = '';
+const doReview = async (
+  regId: string,
+  action: 'APPROVE' | 'REJECT',
+  note?: string,
+  number?: string | null
+): Promise<void> => {
+  notify.clear();
   reviewing.value = true;
   try {
-    await registrationService.review(regId, action, note);
-    success.value = `Pendaftaran ${action === 'APPROVE' ? 'disetujui' : 'ditolak'}.`;
+    await registrationService.review(regId, action, note, number);
+    notify.success(`Pendaftaran ${action === 'APPROVE' ? 'disetujui' : 'ditolak'}.`);
     rejecting.value = null;
     rejectNote.value = '';
+    approving.value = null;
+    letterNumber.value = '';
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     reviewing.value = false;
   }
 };
 
-const approve = (reg: Registration): Promise<void> => doReview(reg.id, 'APPROVE');
+const startApprove = (reg: Registration): void => {
+  approving.value = reg;
+  letterNumber.value = '';
+  notify.clear();
+};
+
+const cancelApprove = (): void => {
+  approving.value = null;
+  letterNumber.value = '';
+};
+
+const submitApprove = (): Promise<void> => {
+  if (!approving.value) return Promise.resolve();
+  const number = letterNumber.value.trim();
+  if (number.length > 80) {
+    notify.error('Nomor surat maksimal 80 karakter.');
+    return Promise.resolve();
+  }
+  return doReview(approving.value.id, 'APPROVE', undefined, number || null);
+};
 
 const startReject = (reg: Registration): void => {
   rejecting.value = reg;
   rejectNote.value = '';
-  error.value = '';
+  notify.clear();
 };
 
 const cancelReject = (): void => {
@@ -135,7 +166,7 @@ const cancelReject = (): void => {
 const submitReject = (): Promise<void> => {
   if (!rejecting.value) return Promise.resolve();
   if (!rejectNote.value.trim()) {
-    error.value = 'Alasan penolakan wajib diisi.';
+    notify.error('Alasan penolakan wajib diisi.');
     return Promise.resolve();
   }
   return doReview(rejecting.value.id, 'REJECT', rejectNote.value.trim());
@@ -154,15 +185,16 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div class="flex flex-1 flex-wrap items-end gap-3">
           <div>
             <h2 class="text-lg font-semibold text-gray-800">Pendaftaran Siswa</h2>
-            <p class="text-sm text-gray-500">Satu baris untuk satu pendaftaran (per siswa).</p>
+            <p class="text-sm text-gray-500">
+              Satu baris untuk satu pendaftaran (per siswa), diurutkan dari yang paling awal mengajukan.
+              Ajuan ulang setelah ditolak otomatis kembali ke belakang antrean.
+            </p>
           </div>
           <input
             v-model="search"
@@ -218,13 +250,15 @@ watch(
                 {{ r.student.studentProfile.nisn }}
               </p>
             </td>
-            <td>{{ r.company.name }}</td>
+            <td>
+              <span :class="r.company ? '' : 'text-amber-600'">{{ r.company?.name ?? 'Perusahaan dihapus' }}</span>
+            </td>
             <td>{{ r.major?.name ?? r.major?.code ?? '-' }}</td>
             <td><StatusBadge :status="r.status" /></td>
             <td class="whitespace-nowrap text-sm">{{ fmtDate(r.submittedAt) }}</td>
             <td class="text-right">
               <template v-if="r.status === 'DIAJUKAN'">
-                <button class="text-sm text-emerald-600 hover:underline" @click="approve(r)">Setujui</button>
+                <button class="text-sm text-emerald-600 hover:underline" @click="startApprove(r)">Setujui</button>
                 <span class="mx-1 text-gray-300">|</span>
                 <button class="text-sm text-red-600 hover:underline" @click="startReject(r)">Tolak</button>
               </template>
@@ -243,10 +277,46 @@ watch(
         v-if="!loading && counts[statusFilter] > itemsByStatus[statusFilter].length"
         class="mt-2 text-xs text-gray-400"
       >
-        Menampilkan {{ itemsByStatus[statusFilter].length }} terbaru dari
+        Menampilkan {{ itemsByStatus[statusFilter].length }} tertua dari
         {{ counts[statusFilter] }} pendaftaran — persempit dengan filter status atau gelombang.
       </p>
     </div>
+
+    <!-- Modal Persetujuan: nomor Surat Permohonan diisi manual (opsional) -->
+    <Modal
+      :open="!!approving"
+      title="Setujui Pendaftaran"
+      size="md"
+      :busy="reviewing"
+      @close="cancelApprove"
+    >
+      <template v-if="approving">
+        <p class="mb-3 text-sm text-gray-600">
+          Pendaftaran <span class="font-mono">{{ approving.code }}</span> milik
+          <strong>{{ studentName(approving) }}</strong>
+          ({{ approving.company?.name ?? 'perusahaan sudah dihapus' }}). Surat Permohonan akan diterbitkan
+          setelah disetujui.
+        </p>
+        <label class="label" for="approve-number">Nomor Surat Permohonan (opsional)</label>
+        <input
+          id="approve-number"
+          v-model="letterNumber"
+          class="input font-mono"
+          maxlength="80"
+          placeholder="421/123/SMKN-9MDN/2026"
+        />
+        <p class="mt-1 text-xs text-gray-500">
+          Kosongkan bila nomor belum tersedia — surat tetap terbit tanpa nomor.
+        </p>
+      </template>
+      <template #footer>
+        <button class="btn-secondary" :disabled="reviewing" @click="cancelApprove">Batal</button>
+        <button class="btn-success" :disabled="reviewing" @click="submitApprove">
+          <LoadingSpinner v-if="reviewing" inline />
+          {{ reviewing ? 'Menyetujui…' : 'Setujui & Terbitkan Surat' }}
+        </button>
+      </template>
+    </Modal>
 
     <!-- Modal Penolakan -->
     <Modal
@@ -259,7 +329,7 @@ watch(
       <template v-if="rejecting">
         <p class="mb-3 text-sm text-gray-600">
           Pendaftaran <span class="font-mono">{{ rejecting.code }}</span> milik
-          <strong>{{ studentName(rejecting) }}</strong> ({{ rejecting.company.name }}).
+          <strong>{{ studentName(rejecting) }}</strong> ({{ rejecting.company?.name ?? 'perusahaan sudah dihapus' }}).
         </p>
         <label class="label">Alasan Penolakan</label>
         <textarea

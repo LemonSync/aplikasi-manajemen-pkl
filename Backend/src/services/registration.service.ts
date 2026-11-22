@@ -15,6 +15,7 @@ import { companyService } from './company.service';
 import { letterService } from './letter.service';
 import { settingService } from './setting.service';
 import { auditService } from './audit.service';
+import { resolveScope, scopeUserWhere, andWhere } from './majorScope.service';
 import {
   BadRequestError,
   ConflictError,
@@ -79,6 +80,28 @@ export class RegistrationService {
     };
   }
 
+  /**
+   * Batalkan dokumen ronde ini (Surat Permohonan + Surat Penerimaan) yang
+   * terikat pada pendaftaran. Dipanggil saat pilihan perusahaan pada baris
+   * pendaftaran berganti: baris Registration dipakai ulang (satu baris per
+   * siswa+gelombang), jadi tanpa penanda ini surat dari perusahaan lama akan
+   * dinilai sebagai surat dari perusahaan baru — siswa terlempar ke fase
+   * berikutnya dan antrean verifikasi admin berisi dua surat sekaligus.
+   * File lama tetap disimpan sebagai jejak; status TIDAK_BERLAKU membuatnya
+   * keluar dari inbox dan tidak bisa di-ACC.
+   */
+  private async invalidateRoundDocuments(registrationId: string, reason: string): Promise<number> {
+    const { count } = await prisma.document.updateMany({
+      where: {
+        registrationId,
+        type: { in: [DocumentType.SURAT_PERMOHONAN, DocumentType.SURAT_PENERIMAAN] },
+        status: { not: DocumentStatus.TIDAK_BERLAKU },
+      },
+      data: { status: DocumentStatus.TIDAK_BERLAKU, note: reason },
+    });
+    return count;
+  }
+
   /** Simpan (atau perbarui) pendaftaran DRAFT milik siswa. */
   async saveDraft(studentId: string, input: SaveRegistrationInput) {
     const user = await prisma.user.findUnique({
@@ -126,6 +149,15 @@ export class RegistrationService {
     };
 
     if (existing) {
+      // Ganti perusahaan = mulai ronde baru: surat ronde sebelumnya tidak lagi
+      // berlaku untuk pendaftaran ini (siswa harus unduh surat & upload surat
+      // penerimaan dari perusahaan yang baru).
+      if (existing.companyId !== input.companyId) {
+        await this.invalidateRoundDocuments(
+          existing.id,
+          'Tidak berlaku — siswa mengganti perusahaan tujuan'
+        );
+      }
       await registrationRepository.update(existing.id, {
         ...scalarData,
         status: RegistrationStatus.DRAFT,
@@ -141,7 +173,11 @@ export class RegistrationService {
     const code = await this.generateCode();
     const created = await registrationRepository.create({
       code,
-      ...scalarData,
+      cohort: { connect: { id: cohortId } },
+      company: { connect: { id: input.companyId } },
+      // `disconnect` bukan opsi yang valid pada create — siswa tanpa jurusan
+      // (mis. Master Siswa belum punya major) tetap boleh mendaftar.
+      ...(majorId ? { major: { connect: { id: majorId } } } : {}),
       student: { connect: { id: studentId } },
     });
     return registrationRepository.findById(created.id);
@@ -166,6 +202,8 @@ export class RegistrationService {
    * disetujui. Efek:
    *  - Pendaftaran ditandai DIBATALKAN → kuota perusahaan lama otomatis dilepas
    *    (kuota hanya menghitung pendaftaran DISETUJUI).
+   *  - Surat (permohonan & penerimaan) yang sudah terbit/tergantung untuk
+   *    perusahaan lama ditandai TIDAK_BERLAKU dan keluar dari inbox admin.
    *  - Fase siswa dikembalikan ke PRA_PKL untuk memilih perusahaan baru.
    */
   async cancelAndChangeCompany(studentId: string, ctx: { ipAddress?: string; userAgent?: string }) {
@@ -175,10 +213,16 @@ export class RegistrationService {
       throw new BadRequestError('Hanya pendaftaran yang sudah disetujui yang dapat dibatalkan untuk ganti perusahaan');
     }
 
-    // Terlalu jauh untuk berubah pikiran: surat resmi sudah disetujui admin
+    // Terlalu jauh untuk berubah pikiran: surat resmi perusahaan INI sudah
+    // disetujui admin. Surat Pernyataan bersifat umum (tidak terikat
+    // perusahaan) sehingga tetap dihitung.
     const [penerimaan, pernyataan] = await Promise.all([
       prisma.document.findFirst({
-        where: { ownerId: studentId, type: DocumentType.SURAT_PENERIMAAN, status: DocumentStatus.DISETUJUI },
+        where: {
+          registrationId: registration.id,
+          type: DocumentType.SURAT_PENERIMAAN,
+          status: DocumentStatus.DISETUJUI,
+        },
         select: { id: true },
       }),
       prisma.document.findFirst({
@@ -197,6 +241,14 @@ export class RegistrationService {
       note: 'Berubah pikiran — siswa kembali ke Fase 1 untuk memilih perusahaan baru',
     });
 
+    // Surat penerimaan yang masih menggantung (perusahaan lama) dibatalkan
+    // sekarang juga — kalau tidak, admin masih bisa me-ACC surat yang salah dan
+    // siswa otomatis melompati Fase 2 untuk perusahaan barunya.
+    const invalidatedDocuments = await this.invalidateRoundDocuments(
+      registration.id,
+      'Tidak berlaku — siswa berubah pikiran dan mengganti perusahaan'
+    );
+
     // Kembalikan fase ke pra-pendaftaran agar bisa mendaftar di perusahaan lain
     await prisma.user.update({ where: { id: studentId }, data: { phase: StudentPhase.PRA_PKL } });
 
@@ -209,6 +261,7 @@ export class RegistrationService {
         companyId: registration.companyId,
         companyQuotaReleased: true,
         phaseResetTo: StudentPhase.PRA_PKL,
+        invalidatedDocuments,
       },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
@@ -235,8 +288,17 @@ export class RegistrationService {
       throw new ConflictError('Pendaftaran sudah pernah diajukan');
     }
 
-    // Guard 1 (dua penjaga kuota): perusahaan tujuan harus masih punya sisa.
-    await companyService.assertSisaAvailable(registration.companyId);
+    // Guard 1 (dua penjaga kuota): perusahaan tujuan harus masih tersedia & aktif.
+    const targetCompany = await prisma.company.findFirst({
+      where: { id: registration.companyId, deletedAt: null },
+      select: { isActive: true },
+    });
+    if (!targetCompany || !targetCompany.isActive) {
+      throw new BadRequestError(
+        'Perusahaan tujuan sudah tidak tersedia (dihapus/dinonaktifkan admin). Simpan ulang pilihan perusahaan Anda.'
+      );
+    }
+    await companyService.assertSisaAvailable(registration.companyId, { cohortId: registration.cohortId });
 
     await registrationRepository.update(registration.id, {
       status: RegistrationStatus.DIAJUKAN,
@@ -258,7 +320,8 @@ export class RegistrationService {
 
   /** Buat surat permohonan (per siswa) sekali saja, setelah Admin menyetujui ajuan. */
   private async generateApplicationLetter(
-    registration: NonNullable<Awaited<ReturnType<typeof registrationRepository.findById>>>
+    registration: NonNullable<Awaited<ReturnType<typeof registrationRepository.findById>>>,
+    number?: string | null
   ) {
     const existing = registration.document;
     if (existing?.files.some((file) => file.isActive)) return existing.id;
@@ -269,6 +332,11 @@ export class RegistrationService {
       'Siswa';
     const nisn = registration.student?.studentProfile?.nisn ?? null;
     const company = registration.company;
+    if (!company) {
+      throw new BadRequestError(
+        'Perusahaan pada pendaftaran ini tidak valid (sudah dihapus). Hubungi Admin untuk memulihkan data perusahaan sebelum surat diterbitkan.'
+      );
+    }
 
     const school = await settingService.getSchoolIdentity();
     const rangeText = await letterService.getPklRangeText(registration.cohortId);
@@ -279,19 +347,19 @@ export class RegistrationService {
 
     const letter = await letterService.generateLetter({
       type: DocumentType.SURAT_PERMOHONAN,
+      number: number ?? null,
       hal: LETTER_TEXT.application.subject,
-      recipientLines: ['Bapak / Ibu Pimpinan', company.name, company.address ?? ''],
+      recipientLines: ['Bapak / Ibu Pimpinan', company.name],
       recipientCity: company.city ?? school.city,
       paragraphs: [
-        LETTER_TEXT.application.greeting,
-        LETTER_TEXT.application.body(school.schoolName, academicYear, company.name, dateClause),
+        LETTER_TEXT.application.opener +
+          LETTER_TEXT.application.body(school.schoolName, academicYear, company.name, dateClause),
         LETTER_TEXT.application.studentIntro,
       ],
       table: {
-        columns: ['NO', 'NAMA SISWA', 'PROGRAM KEAHLIAN'],
+        preset: 'siswa',
+        columns: [...LETTER_TEXT.application.tableHeaders],
         rows: [['1.', studentName, programKeahlian]],
-        widths: [36],
-        aligns: ['center', 'left', 'left'],
       },
       closing: LETTER_TEXT.application.closing,
       cohortId: registration.cohortId,
@@ -335,11 +403,17 @@ export class RegistrationService {
     perPage: number;
     status?: RegistrationStatus;
     cohortId?: string;
+    actor: { id: string; role: Role };
   }) {
-    const where = {
-      ...(params.status ? { status: params.status } : {}),
-      ...(params.cohortId ? { cohortId: params.cohortId } : {}),
-    };
+    // Scope jurusan: SUPER_ADMIN/KEPALA semua; ADMIN hanya jurusan yang diawasi.
+    const scope = await resolveScope(params.actor);
+    const where = andWhere(
+      {
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.cohortId ? { cohortId: params.cohortId } : {}),
+      },
+      scopeUserWhere(scope, 'student')
+    ) as Record<string, unknown>;
     return registrationRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
   }
 
@@ -347,12 +421,27 @@ export class RegistrationService {
   async review(
     id: string,
     actorId: string,
+    actorRole: Role,
     action: 'APPROVE' | 'REJECT',
     note: string | undefined,
+    letterNumber: string | null | undefined,
     ctx: { ipAddress?: string; userAgent?: string }
   ) {
     const registration = await registrationRepository.findById(id);
     if (!registration) throw new NotFoundError(MESSAGES.NOT_FOUND);
+
+    // Guard scope jurusan: ADMIN hanya boleh me-review pendaftaran milik
+    // siswa dalam jurusan yang diawasinya.
+    const scope = await resolveScope({ id: actorId, role: actorRole });
+    if (!scopeUserWhere(scope, 'student')) {
+      // scope=all → tidak ada batasan
+    } else {
+      const allowed = await prisma.registration.findFirst({
+        where: andWhere({ id }, scopeUserWhere(scope, 'student')!),
+        select: { id: true },
+      });
+      if (!allowed) throw new ForbiddenError(MESSAGES.SCOPE);
+    }
     const missingApprovedLetter =
       action === 'APPROVE' &&
       registration.status === RegistrationStatus.DISETUJUI &&
@@ -373,14 +462,23 @@ export class RegistrationService {
       // bersamaan tidak menjual slot kuota yang sama.
       updated = await prisma.$transaction(async (tx) => {
         await tx.$queryRawUnsafe('SELECT id FROM companies WHERE id = ? FOR UPDATE', registration.companyId);
+        // Perusahaan yang di-soft-delete tetap boleh diselesaikan approve-nya
+        // (riwayat pendaftaran siswa tidak boleh menggantung); kuota tetap dijaga.
         const company = await tx.company.findFirst({
-          where: { id: registration.companyId, deletedAt: null },
+          where: { id: registration.companyId },
           select: { quota: true },
         });
         if (!company) throw new NotFoundError('Perusahaan tidak ditemukan');
         if (company.quota !== null) {
+          // Pemakaian dihitung per gelombang — pendaftaran gelombang sebelumnya
+          // tidak memakan kuota gelombang ini.
           const used = await tx.registration.count({
-            where: { companyId: registration.companyId, status: RegistrationStatus.DISETUJUI, deletedAt: null },
+            where: {
+              companyId: registration.companyId,
+              cohortId: registration.cohortId,
+              status: RegistrationStatus.DISETUJUI,
+              deletedAt: null,
+            },
           });
           if (used >= company.quota) {
             throw new BadRequestError(`Kuota perusahaan sudah penuh (${used}/${company.quota} siswa). Silakan pilih perusahaan lain.`);
@@ -416,16 +514,18 @@ export class RegistrationService {
     });
 
     if (action === 'APPROVE') {
+      // Nomor surat diketik manual oleh admin (boleh kosong → surat tanpa nomor).
+      const letterNo = letterNumber?.trim() || null;
       try {
         const approved = await registrationRepository.findById(id);
         if (!approved) throw new NotFoundError(MESSAGES.NOT_FOUND);
-        const documentId = await this.generateApplicationLetter(approved);
+        const documentId = await this.generateApplicationLetter(approved, letterNo);
         await auditService.record({
           actorId,
           action: AUDIT_ACTIONS.GENERATE_LETTER,
           entityType: ENTITY_TYPES.DOCUMENT,
           entityId: documentId,
-          metadata: { registrationId: id, type: DocumentType.SURAT_PERMOHONAN },
+          metadata: { registrationId: id, type: DocumentType.SURAT_PERMOHONAN, number: letterNo },
           ipAddress: ctx.ipAddress,
           userAgent: ctx.userAgent,
         });

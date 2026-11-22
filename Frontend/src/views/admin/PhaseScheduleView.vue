@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { phaseScheduleService, type PhaseScheduleRecord } from '@/services/api.service';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
+import { notify } from '@/composables/useNotify';
 
 const cohortStore = useCohortStore();
 const activeCohortName = computed(() => cohortStore.activeCohort?.name ?? '-');
@@ -10,8 +11,6 @@ const schedules = ref<PhaseScheduleRecord[]>([]);
 const currentPhase = ref<string | null>(null);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 
 const PHASES = [
   { value: 'PRA_PKL', label: 'Pra-Pendaftaran PKL' },
@@ -26,7 +25,7 @@ const form = ref<Record<string, { start: string; end: string }>>({});
 const loadSchedule = async (): Promise<void> => {
   if (!cohortStore.activeCohortId) return;
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const ov = await phaseScheduleService.overview(cohortStore.activeCohortId);
     schedules.value = ov.schedules;
@@ -41,7 +40,7 @@ const loadSchedule = async (): Promise<void> => {
     }
     form.value = next;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -49,8 +48,7 @@ const loadSchedule = async (): Promise<void> => {
 
 const save = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const items = PHASES.filter((p) => form.value[p.value].start || form.value[p.value].end).map((p) => ({
       phase: p.value,
@@ -58,10 +56,10 @@ const save = async (): Promise<void> => {
       endDate: form.value[p.value].end ? new Date(form.value[p.value].end).toISOString() : null,
     }));
     await phaseScheduleService.replace(cohortStore.activeCohortId, items);
-    success.value = 'Jadwal fase berhasil disimpan.';
+    notify.success('Jadwal fase berhasil disimpan.');
     await loadSchedule();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -72,7 +70,7 @@ onMounted(async () => {
     await cohortStore.ensureLoaded();
     await loadSchedule();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
     loading.value = false;
   }
 });
@@ -85,8 +83,6 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <h2 class="mb-2 text-lg font-semibold text-gray-800">Jadwal Fase PKL</h2>

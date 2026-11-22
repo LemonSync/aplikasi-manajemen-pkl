@@ -48,7 +48,8 @@ export class StudentRegistryService {
     if (!fullName) throw new BadRequestError('Nama lengkap wajib diisi');
 
     const className = String(input.className ?? '').trim().toUpperCase();
-    if (!/^[A-Z]{2,5}-[A-Z]{2,5}-\d{1,2}$/.test(className)) {
+    // Segmen jurusan {2,12}: kode jurusan ada yang panjang (ANIMASI=7, PEKSOS=6).
+    if (!/^[A-Z]{2,5}-[A-Z]{2,12}-\d{1,2}$/.test(className)) {
       throw new BadRequestError('Format kelas tidak valid. Gunakan format XII-RPL-2');
     }
 

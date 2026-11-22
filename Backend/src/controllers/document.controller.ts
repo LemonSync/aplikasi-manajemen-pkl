@@ -5,14 +5,14 @@ import { getRequestContext } from '../utils/request';
 import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
 import { readStoredFile } from '../utils/storage';
-import { ForbiddenError, NotFoundError } from '../errors/AppError';
+import { NotFoundError } from '../errors/AppError';
 import { MESSAGES } from '../config/constants';
 import {
   UploadDocumentDTO,
   VerifyDocumentDTO,
   ListDocumentQueryDTO,
 } from '../validators/registration.validator';
-import { DocumentType, Role } from '@prisma/client';
+import { DocumentType } from '@prisma/client';
 
 /**
  * Controller dokumen (upload, unduh, verifikasi).
@@ -39,19 +39,16 @@ export class DocumentController {
     return sendSuccess(res, result, 'OK');
   });
 
-  /** GET /api/documents — daftar dokumen (admin/guru). */
+  /** GET /api/documents — daftar dokumen (admin). */
   list = asyncHandler(async (req: Request, res: Response) => {
     const query = req.query as unknown as ListDocumentQueryDTO;
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    // Guru pembimbing hanya boleh melihat laporan akhir
-    const type =
-      req.user!.role === Role.GURU_PEMBIMBING ? DocumentType.LAPORAN_AKHIR : query.type;
     const { items, total } = await documentService.list(
       {
         page,
         perPage,
         status: query.status,
-        type,
+        type: query.type,
         cohortId: query.cohortId,
       },
       { id: req.user!.sub, role: req.user!.role }
@@ -65,7 +62,7 @@ export class DocumentController {
       id: req.user!.sub,
       role: req.user!.role,
     });
-    const placement = await documentService.getOwnerPlacement(doc.ownerId ?? null);
+    const placement = await documentService.getOwnerPlacement(doc.ownerId ?? null, doc.registrationId);
     return sendSuccess(res, { ...doc, placement }, 'OK');
   });
 
@@ -93,18 +90,10 @@ export class DocumentController {
     return res.send(buffer);
   });
 
-  /** POST /api/documents/:id/verify — verifikasi (admin/guru). */
+  /** POST /api/documents/:id/verify — verifikasi (admin). */
   verify = asyncHandler(async (req: Request, res: Response) => {
     const dto = req.body as VerifyDocumentDTO;
     const ctx = getRequestContext(req);
-    // Guru pembimbing hanya boleh memverifikasi laporan akhir milik kelompok bimbingannya
-    if (req.user!.role === Role.GURU_PEMBIMBING) {
-      const doc = await documentService.assertCanAccess(req.params.id as string, {
-        id: req.user!.sub,
-        role: req.user!.role,
-      });
-      if (doc.type !== DocumentType.LAPORAN_AKHIR) throw new ForbiddenError(MESSAGES.SCOPE);
-    }
     const result = await documentService.verify(
       req.params.id as string,
       req.user!.sub,

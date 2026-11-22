@@ -5,6 +5,7 @@ import { phase4Service, type LetterRecord } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import { notify } from '@/composables/useNotify';
 
 /**
  * Daftar surat terbit (admin hanya membaca & mengunduh).
@@ -13,7 +14,6 @@ import StatusBadge from '@/components/StatusBadge.vue';
  */
 const letters = ref<LetterRecord[]>([]);
 const lettersLoading = ref(true);
-const error = ref('');
 const letterFilter = ref('');
 const letterSearch = ref('');
 
@@ -28,11 +28,11 @@ const filteredLetters = computed(() => {
 
 const loadLetters = async (): Promise<void> => {
   lettersLoading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     letters.value = await phase4Service.listLetters(letterFilter.value ? { type: letterFilter.value } : undefined);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     lettersLoading.value = false;
   }
@@ -42,7 +42,7 @@ const downloadLetter = async (letter: LetterRecord): Promise<void> => {
   try {
     await phase4Service.downloadLetter(letter);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -55,7 +55,6 @@ watch(letterFilter, () => void loadLetters());
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
 
     <!-- Daftar Surat Terbit -->
     <div class="card">

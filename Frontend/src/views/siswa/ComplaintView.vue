@@ -3,12 +3,11 @@ import { onMounted, ref } from 'vue';
 import { complaintService, type ComplaintRecord } from '@/services/api.service';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
+import { notify } from '@/composables/useNotify';
 
 const complaints = ref<ComplaintRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 const form = ref({ subject: '', body: '' });
 
 const expandId = ref<string | null>(null);
@@ -16,11 +15,11 @@ const replyBody = ref('');
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     complaints.value = await complaintService.listMine();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -28,15 +27,14 @@ const load = async (): Promise<void> => {
 
 const save = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await complaintService.create({ subject: form.value.subject, body: form.value.body });
-    success.value = 'Pengaduan terkirim.';
+    notify.success('Pengaduan terkirim.');
     form.value = { subject: '', body: '' };
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -54,7 +52,7 @@ const toggle = async (id: string): Promise<void> => {
     const idx = complaints.value.findIndex((c) => c.id === id);
     if (idx >= 0) complaints.value[idx] = detail;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -66,7 +64,7 @@ const sendReply = async (id: string): Promise<void> => {
     if (idx >= 0) complaints.value[idx] = detail;
     replyBody.value = '';
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -76,7 +74,7 @@ const close = async (id: string): Promise<void> => {
     const idx = complaints.value.findIndex((c) => c.id === id);
     if (idx >= 0) complaints.value[idx] = detail;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -85,8 +83,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Buat Pengaduan</h2>

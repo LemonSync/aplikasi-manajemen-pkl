@@ -1,7 +1,7 @@
 import { Role, StudentPhase } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { renderFinalReportPdf, FinalReportData } from '../templates/finalReport.template';
-import { readStoredFile, saveBuffer } from '../utils/storage';
+import { deleteStoredFile, readStoredFile, saveBuffer } from '../utils/storage';
 import { settingService } from './setting.service';
 import { classNameWithFallback } from './classResolver.service';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
@@ -35,12 +35,14 @@ const fmtDateTime = (d: Date | string): string =>
 
 /**
  * Laporan hasil akhir PKL per siswa (PDF).
- * - Diterbitkan satu kali (generate-once) setelah masa PKL selesai.
+ * - Terbit setelah masa PKL selesai; file snapshot dipakai selama tidak ada
+ *   data baru, jadi siswa tidak men-download PDF yang berbeda-beda tanpa sebab.
  * - Siswa mengunduh laporannya sendiri; guru pembimbing hanya untuk siswa
  *   bimbingannya; admin/kepsek bebas memilih siswa (query ?studentId=).
  * - Rekap absensi/kunjungan/nilai di-query per studentId.
- * - Isi nilai di-snapshot saat terbit: bila belum ada nilai,
- *   bagian nilai terbit dalam keadaan KOSONG (sel tanpa angka).
+ * - Bila monitoring, absensi, atau nilai masuk/berubah SETELAH laporan terbit,
+ *   laporan diterbitkan ulang saat unduhan berikutnya — kalau tidak, bagian
+ *   yang sempat kosong (mis. monitoring guru) terkunci kosong selamanya.
  */
 export class FinalReportService {
   async getOrCreateForStudent(
@@ -79,10 +81,9 @@ export class FinalReportService {
     const code = student.studentProfile?.nisn ?? student.username;
     const filename = `Laporan-Hasil-PKL-${code}.pdf`.replace(/[^\w.-]+/g, '_');
 
-    // Sudah terbit? Pakai file snapshot-nya (isi tidak berubah walau data
-    // bergerak setelah terbit — sesuai aturan "sudah terbit ya tetap").
+    // Sudah terbit dan belum ada data baru sejak terbit → pakai file snapshot-nya.
     const existing = await prisma.finalReport.findUnique({ where: { studentId: targetId } });
-    if (existing) {
+    if (existing && !(await this.hasNewerData(targetId, existing.issuedAt))) {
       const buf = readStoredFile(existing.pdfPath);
       if (buf) return { buffer: buf, filename };
       // File hilang dari storage → terbitkan ulang dan perbarui path.
@@ -96,7 +97,12 @@ export class FinalReportService {
     );
 
     if (existing) {
-      await prisma.finalReport.update({ where: { studentId: targetId }, data: { pdfPath: relativePath } });
+      const oldPath = existing.pdfPath;
+      await prisma.finalReport.update({
+        where: { studentId: targetId },
+        data: { pdfPath: relativePath, issuedAt: new Date() },
+      });
+      deleteStoredFile(oldPath);
       return { buffer: pdfBuffer, filename };
     }
 
@@ -114,6 +120,22 @@ export class FinalReportService {
     }
 
     return { buffer: pdfBuffer, filename };
+  }
+
+  /**
+   * Ada data penyusun laporan yang masuk/berubah setelah laporan terbit?
+   * Monitoring guru, absensi yang diverifikasi, atau nilai yang diinput
+   * belakangan akan membuat PDF terbitan pertama tampil kosong sebagian,
+   * jadi laporan perlu terbit ulang saat siswa mengunduh lagi.
+   */
+  private async hasNewerData(studentId: string, since: Date): Promise<boolean> {
+    const newer = { OR: [{ createdAt: { gt: since } }, { updatedAt: { gt: since } }] };
+    const [attendance, visit, grade] = await Promise.all([
+      prisma.attendance.count({ where: { userId: studentId, ...newer } }),
+      prisma.visit.count({ where: { studentId, ...newer } }),
+      prisma.grade.count({ where: { studentId, ...newer } }),
+    ]);
+    return attendance + visit + grade > 0;
   }
 
   /** Tentukan siswa yang laporan-nya diminta (scope per role). */
@@ -214,7 +236,7 @@ export class FinalReportService {
     }
 
     // Nilai — bila belum diinput → sel kosong di PDF
-    const score = grade ? grade.scoreDudi ?? grade.finalScore ?? null : null;
+    const score = grade ? grade.finalScore ?? grade.scoreDudi ?? null : null;
 
     const dates = attendances.map((a) => +new Date(a.date));
     const periodFrom =
