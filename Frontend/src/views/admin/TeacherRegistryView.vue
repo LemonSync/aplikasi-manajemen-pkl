@@ -1,32 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import {
   teacherRegistryService,
   type TeacherRegistryRecord,
   type TeacherRegistryImportResult,
   type TeacherProvisionedAccount,
 } from '@/services/api.service';
-import { useCohortStore } from '@/stores/cohort.store';
+import { notify } from '@/composables/useNotify';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import AppIcon from '@/components/AppIcon.vue';
+import { confirmDialog } from '@/composables/useDialog';
 
-const cohortStore = useCohortStore();
-// Mengikuti konteks gelombang global di header.
-const selectedCohort = computed<string>({
-  get: () => cohortStore.activeCohortId,
-  set: (v) => {
-    cohortStore.activeCohortId = v;
-  },
-});
-const activeCohortName = computed(() => cohortStore.activeCohort?.name ?? '-');
+// Master guru bersifat global: satu daftar berlaku untuk semua gelombang,
+// jadi halaman ini tidak membaca (dan tidak mengubah) konteks gelombang.
 const teachers = ref<TeacherRegistryRecord[]>([]);
 const loading = ref(false);
 const importing = ref(false);
 const deletingId = ref('');
-const error = ref('');
-const success = ref('');
 const importResult = ref<TeacherRegistryImportResult | null>(null);
 const selectedFile = ref<File | null>(null);
 const search = ref('');
@@ -53,18 +45,17 @@ const normalizeNip = (raw: string): string => raw.replace(/\s+/g, '');
 const nipValid = (raw: string): boolean => /^\d{18}$/.test(normalizeNip(raw));
 
 const loadTeachers = async (): Promise<void> => {
-  if (!selectedCohort.value) return;
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
-    const { items } = await teacherRegistryService.list(selectedCohort.value, {
+    const { items } = await teacherRegistryService.list({
       page: 1,
       perPage: 100,
       search: search.value.trim() || undefined,
     });
     teachers.value = items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -82,10 +73,9 @@ const onFileChange = (event: Event): void => {
 };
 
 const openMapping = async (): Promise<void> => {
-  if (!selectedFile.value || !selectedCohort.value) return;
+  if (!selectedFile.value) return;
   inspecting.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   importResult.value = null;
   try {
     const result = await teacherRegistryService.inspect(selectedFile.value);
@@ -97,7 +87,7 @@ const openMapping = async (): Promise<void> => {
     };
     showMapping.value = true;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     inspecting.value = false;
   }
@@ -108,16 +98,16 @@ const closeMapping = (): void => {
 };
 
 const confirmImport = async (): Promise<void> => {
-  if (!selectedFile.value || !selectedCohort.value) return;
+  if (!selectedFile.value) return;
   const m = mapForm.value;
   if (!m.nip.trim() || !m.fullName.trim()) {
-    error.value = 'Nama header kolom NIP dan Nama wajib diisi';
+    notify.error('Nama header kolom NIP dan Nama wajib diisi');
     return;
   }
   importing.value = true;
-  error.value = '';
+  notify.clear();
   try {
-    const result = await teacherRegistryService.importExcel(selectedCohort.value, selectedFile.value, {
+    const result = await teacherRegistryService.importExcel(selectedFile.value, {
       nip: m.nip.trim(),
       fullName: m.fullName.trim(),
       majorCode: m.majorCode.trim() || undefined,
@@ -126,11 +116,11 @@ const confirmImport = async (): Promise<void> => {
     importResult.value = result;
     const dupText = result.duplicates.length > 0 ? `, ${result.duplicates.length} duplikat dilewati` : '';
     const akunText = result.accounts.created.length > 0 ? `, ${result.accounts.created.length} akun dibuat otomatis` : '';
-    success.value = `Import selesai: ${result.created} baru, ${result.updated} diperbarui${dupText}${akunText}.`;
+    notify.success(`Import selesai: ${result.created} baru, ${result.updated} diperbarui${dupText}${akunText}.`);
     selectedFile.value = null;
     await loadTeachers();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     importing.value = false;
   }
@@ -138,7 +128,7 @@ const confirmImport = async (): Promise<void> => {
 
 const openAdd = (): void => {
   addForm.value = { nip: '', fullName: '', majorCode: '' };
-  error.value = '';
+  notify.clear();
   showAdd.value = true;
 };
 
@@ -147,27 +137,25 @@ const closeAdd = (): void => {
 };
 
 const submitAdd = async (): Promise<void> => {
-  if (!selectedCohort.value) return;
   const form = addForm.value;
   if (!nipValid(form.nip)) {
-    error.value = 'NIP harus terdiri dari 18 digit angka';
+    notify.error('NIP harus terdiri dari 18 digit angka');
     return;
   }
   if (!form.fullName.trim()) {
-    error.value = 'Nama lengkap wajib diisi';
+    notify.error('Nama lengkap wajib diisi');
     return;
   }
   adding.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const result = await teacherRegistryService.create({
-      cohortId: selectedCohort.value,
       nip: normalizeNip(form.nip),
       fullName: form.fullName.trim(),
       majorCode: form.majorCode.trim() || undefined,
     });
     showAdd.value = false;
-    success.value = `Data guru ${result.record.fullName} (${result.record.nip}) ditambahkan ke Master Guru.`;
+    notify.success(`Data guru ${result.record.fullName} (${result.record.nip}) ditambahkan ke Master Guru — berlaku di semua gelombang.`);
     if (result.account) {
       accountsModal.value = {
         title: 'Akun Guru Dibuat Otomatis',
@@ -178,24 +166,27 @@ const submitAdd = async (): Promise<void> => {
     }
     await loadTeachers();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     adding.value = false;
   }
 };
 
 const removeTeacher = async (t: TeacherRegistryRecord): Promise<void> => {
-  const ok = window.confirm(
-    `Hapus guru "${t.fullName}" (NIP ${t.nip})?\n\n` +
+  const ok = await confirmDialog({
+    title: 'Hapus Guru',
+    message:
+      `Hapus guru "${t.fullName}" (NIP ${t.nip})?\n\n` +
       '1. Baris master disembunyikan — dipulihkan dengan import ulang Excel.\n' +
       '2. AKUN guru beserta datanya DIHAPUS PERMANEN: penugasan bimbingan siswa ' +
       'dan kunjungan monitoring ikut terhapus.\n\n' +
-      'Tindakan ini TIDAK BISA dibatalkan. Lanjutkan?'
-  );
+      'Tindakan ini TIDAK BISA dibatalkan. Lanjutkan?',
+    confirmLabel: 'Hapus permanen',
+    danger: true,
+  });
   if (!ok) return;
   deletingId.value = t.id;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const result = await teacherRegistryService.remove(t.id);
     let extra = '';
@@ -204,10 +195,10 @@ const removeTeacher = async (t: TeacherRegistryRecord): Promise<void> => {
         ` ${result.accounts} akun beserta ${result.supervisions} penugasan bimbingan, ` +
         `${result.visits} kunjungan dihapus permanen.`;
     }
-    success.value = `Data ${t.fullName} (${t.nip}) dihapus dari Master Guru.${extra}`;
+    notify.success(`Data ${t.fullName} (${t.nip}) dihapus dari Master Guru.${extra}`);
     await loadTeachers();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     deletingId.value = '';
   }
@@ -222,36 +213,26 @@ const copyAccounts = async (): Promise<void> => {
   ];
   try {
     await navigator.clipboard.writeText(lines.join('\n'));
-    success.value = 'Daftar akun disalin ke clipboard.';
+    notify.success('Daftar akun disalin ke clipboard.');
   } catch {
-    error.value = 'Gagal menyalin ke clipboard.';
+    notify.error('Gagal menyalin ke clipboard.');
   }
 };
 
 const copyAccount = async (account: TeacherProvisionedAccount): Promise<void> => {
   try {
     await navigator.clipboard.writeText(`${account.username}\t${account.password}`);
-    success.value = `Kredensial ${account.username} disalin.`;
+    notify.success(`Kredensial ${account.username} disalin.`);
   } catch {
-    error.value = 'Gagal menyalin kredensial.';
+    notify.error('Gagal menyalin kredensial.');
   }
 };
 
-onMounted(async () => {
-  await cohortStore.ensureLoaded();
-  await loadTeachers();
-});
-
-watch(
-  () => cohortStore.activeCohortId,
-  () => void loadTeachers()
-);
+onMounted(loadTeachers);
 </script>
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <!-- Import Excel -->
     <div class="card">
@@ -259,19 +240,16 @@ watch(
       <p class="mb-4 text-sm text-gray-500">
         Format kolom Excel: <strong>NIP</strong> (18 digit) | <strong>Nama Lengkap</strong> | <strong>Jurusan</strong> (opsional, kode jurusan).
         Akun login (username = NIP) <strong>dibuat otomatis</strong> — password acak ditampilkan sekali setelah import.
+        Daftar ini berlaku untuk <strong>semua gelombang</strong>, jadi guru tidak perlu diimport ulang tiap angkatan.
       </p>
 
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label class="label">Gelombang</label>
-          <p class="text-sm font-medium text-gray-700">{{ activeCohortName }} (dipilih di header)</p>
-        </div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label class="label">File Excel</label>
           <input class="input" type="file" accept=".xlsx,.xls,.csv" @change="onFileChange" />
         </div>
         <div class="flex items-end">
-          <button class="btn-primary" :disabled="inspecting || importing || !selectedFile || !selectedCohort" @click="openMapping">
+          <button class="btn-primary" :disabled="inspecting || importing || !selectedFile" @click="openMapping">
             {{ inspecting ? 'Membaca header...' : 'Import Excel' }}
           </button>
         </div>
@@ -364,7 +342,7 @@ watch(
     <div class="card">
       <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-3">
-          <h2 class="text-lg font-semibold text-gray-800">Master Guru ({{ teachers.length }} data)</h2>
+          <h2 class="text-lg font-semibold text-gray-800">Master Guru ({{ teachers.length }} data) — semua gelombang</h2>
           <button class="btn-primary" @click="openAdd">+ Tambah Guru</button>
         </div>
         <input
@@ -447,10 +425,9 @@ watch(
     <!-- Modal Tambah Guru -->
     <Modal :open="showAdd" title="Tambah Guru" size="sm" :busy="adding" @close="closeAdd">
       <div class="space-y-3">
-        <div>
-          <label class="label">Gelombang</label>
-          <p class="text-sm font-medium text-gray-700">{{ activeCohortName }}</p>
-        </div>
+        <p class="text-sm text-gray-500">
+          Guru yang ditambahkan di sini berlaku untuk <strong>semua gelombang</strong>.
+        </p>
 
         <div>
           <label class="label">NIP (18 digit)</label>

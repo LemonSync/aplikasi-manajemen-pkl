@@ -16,6 +16,8 @@ export const saveRegistrationSchema = z.object({
 export const reviewRegistrationSchema = z.object({
   action: z.enum(['APPROVE', 'REJECT']),
   note: z.string().max(1000).optional(),
+  // Nomor Surat Permohonan, diisi manual oleh admin saat menyetujui. Boleh kosong.
+  number: z.string().max(80).optional().nullable(),
 });
 
 export const listRegistrationQuerySchema = z.object({

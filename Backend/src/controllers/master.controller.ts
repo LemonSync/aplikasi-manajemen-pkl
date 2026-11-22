@@ -54,9 +54,15 @@ export class CompanyController {
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
 
-  /** GET /api/companies/options — opsi dropdown pendaftaran siswa (sisa kuota > 0). */
-  options = asyncHandler(async (_req: Request, res: Response) => {
-    return sendSuccess(res, await companyService.listOptions(), 'OK');
+  /**
+   * GET /api/companies/options — opsi dropdown pendaftaran siswa.
+   * Default hanya yang bersisa kuota; `?includeFull=1` ikut menyertakan yang
+   * penuh (dipakai alur kuis siswa, yang menampilkannya sebagai kartu nonaktif).
+   */
+  options = asyncHandler(async (req: Request, res: Response) => {
+    const raw = req.query.includeFull;
+    const includeFull = raw === '1' || raw === 'true';
+    return sendSuccess(res, await companyService.listOptions(includeFull), 'OK');
   });
 
   /** GET /api/companies/:id */

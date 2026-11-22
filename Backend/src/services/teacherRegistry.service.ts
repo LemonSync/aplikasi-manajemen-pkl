@@ -35,9 +35,9 @@ export interface TeacherRegistryRemoveResult {
 }
 
 export class TeacherRegistryService {
-  async lookup(nip: string, cohortId: string) {
-    const row = await prisma.teacherRegistry.findFirst({ where: { nip, cohortId, isActive: true }, include: { major: true } });
-    if (!row) throw new NotFoundError('NIP tidak ditemukan pada master guru gelombang ini');
+  async lookup(nip: string) {
+    const row = await prisma.teacherRegistry.findFirst({ where: { nip, isActive: true }, include: { major: true } });
+    if (!row) throw new NotFoundError('NIP tidak ditemukan pada Master Guru');
     return row;
   }
 
@@ -87,15 +87,14 @@ export class TeacherRegistryService {
   }
 
   /**
-   * Pastikan semua baris master aktif satu gelombang punya akun (idempoten).
-   * Dipanggil otomatis setelah import Excel / tambah manual, dan bisa dipakai
-   * sebagai prosedur "tambal" bila ada baris yang belum punya akun.
+   * Pastikan semua baris master aktif punya akun (idempoten). Master guru bersifat
+   * global, jadi baris dari gelombang lama juga ikut dibuatkan akun tanpa perlu
+   * import ulang. Dipanggil otomatis setelah import Excel / tambah manual.
    */
   async ensureAccounts(
-    cohortId: string,
     opts: { actorId?: string; ipAddress?: string; userAgent?: string } = {}
   ): Promise<TeacherProvisionResult> {
-    const rows = await teacherRegistryRepository.findActiveByCohort(cohortId);
+    const rows = await teacherRegistryRepository.findActive();
     const result: TeacherProvisionResult = { created: [], skipped: 0, errors: [] };
 
     for (const row of rows) {
@@ -112,8 +111,7 @@ export class TeacherRegistryService {
       await auditService.record({
         actorId: opts.actorId,
         action: AUDIT_ACTIONS.CREATE_USER,
-        entityType: ENTITY_TYPES.COHORT,
-        entityId: cohortId,
+        entityType: ENTITY_TYPES.USER,
         metadata: { bulk: 'MASTER_GURU', created: result.created.length, skipped: result.skipped, errors: result.errors.length },
         ipAddress: opts.ipAddress,
         userAgent: opts.userAgent,
@@ -125,10 +123,9 @@ export class TeacherRegistryService {
 
   /**
    * Tambah guru manual ke Master Guru (admin), dengan pengecekan duplikat NIP.
-   * Akun login (username = NIP) dibuat otomatis.
+   * Akun login (username = NIP) dibuat otomatis. Barisnya berlaku di semua gelombang.
    */
   async create(input: {
-    cohortId?: unknown;
     nip?: unknown;
     fullName?: unknown;
     majorCode?: unknown;
@@ -138,10 +135,6 @@ export class TeacherRegistryService {
     restored: boolean;
   }> {
     await ensureSchoolMajors();
-    const cohortId = String(input.cohortId ?? '').trim();
-    if (!cohortId) throw new BadRequestError('Gelombang wajib dipilih');
-    const cohort = await prisma.cohort.findUnique({ where: { id: cohortId } });
-    if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
 
     const nip = normalizeNip(input.nip);
     if (!NIP_PATTERN.test(nip)) throw new BadRequestError('NIP harus terdiri dari 18 digit angka');
@@ -159,20 +152,13 @@ export class TeacherRegistryService {
       if (!majorId) throw new BadRequestError(`Jurusan "${majorCode}" tidak ditemukan`);
     }
 
-    // Cek duplikat (NIP unique global — termasuk baris nonaktif & gelombang lain)
-    const existing = await prisma.teacherRegistry.findUnique({
-      where: { nip },
-      include: { cohort: { select: { name: true } } },
-    });
-    if (existing && existing.isActive) {
-      throw new BadRequestError(
-        existing.cohortId === cohortId
-          ? `NIP ${nip} sudah terdaftar di Master Guru gelombang ini`
-          : `NIP ${nip} sudah terdaftar di gelombang "${existing.cohort.name}"`
-      );
+    // NIP unik global — satu guru hanya punya satu baris master, untuk semua gelombang.
+    const existing = await prisma.teacherRegistry.findUnique({ where: { nip } });
+    if (existing?.isActive) {
+      throw new BadRequestError(`NIP ${nip} sudah terdaftar di Master Guru`);
     }
 
-    const record = await teacherRegistryRepository.upsert({ nip, fullName, cohortId, majorId });
+    const record = await teacherRegistryRepository.upsert({ nip, fullName, majorId });
     const account = await this.createAccountFor({ id: record.id, nip, fullName, majorId });
     return { record, account, restored: existing !== null };
   }

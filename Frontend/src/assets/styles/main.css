@@ -2,151 +2,478 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Border radius global: 0 (sharp UI) */
-*,
-*::before,
-*::after {
-  border-radius: 0 !important;
-}
-
 @layer base {
+  /* ==========================================================================
+     DESIGN TOKENS — satu-satunya tempat nilai warna/radius/shadow/motion ditulis.
+     Ramp disimpan sebagai channel triple (`8 118 178`) karena tailwind.config.js
+     membungkusnya dengan rgb(var(--x) / <alpha-value>) agar modifier alpha tetap jalan.
+
+     Tema: HIJUT HUTAN dominan + radius 0 (datar/tajam). Semua nilai kontras di
+     bawah sudah diverifikasi AA 4.5:1 lewat scripts/contrast-check.mjs — jangan
+     turun tanpa menjalankan ulang skrip itu.
+     ========================================================================== */
+  :root {
+    /* Primary — hijau hutan: pinia pekat di ujung bawah, lumut terang di ujung atas */
+    --p-50: 240 246 242;
+    --p-100: 219 235 224;
+    --p-200: 183 215 194;
+    --p-300: 134 188 155;
+    --p-400: 79 154 114;
+    --p-500: 47 125 87;
+    --p-600: 31 97 68;
+    --p-700: 23 78 55;
+    --p-800: 18 61 44;
+    --p-900: 13 43 32;
+
+    /* Netral — seluruhnya diwarmakan hijau, jadi "putih/abu" pun terasa satu tema.
+       50..300 untuk surface/border, 400..950 untuk TEKS. Semua stop >=400 lolos
+       AA 4.5:1 di atas putih DAN di atas --bg. */
+    --k-50: 243 246 243;
+    --k-100: 235 239 236;
+    --k-200: 216 223 218;
+    --k-300: 181 191 185;
+    --k-400: 96 110 102;
+    --k-500: 88 102 94;
+    --k-600: 63 76 69;
+    --k-700: 42 54 48;
+    --k-800: 26 38 32;
+    --k-900: 13 26 21;
+    --k-950: 6 15 12;
+
+    /* Semantik: ok / no / warn.
+       "ok" sengaja daun-jeruk lebih terang dari primary: kalau keduanya pinia gelap,
+       badge sukses tidak bisa dibedakan dari tombol utama. */
+    --ok-50: 238 248 239; --ok-100: 214 239 218; --ok-200: 174 219 182;
+    --ok-300: 124 194 137; --ok-400: 69 167 92; --ok-500: 35 137 63;
+    --ok-600: 26 112 51; --ok-700: 23 92 43; --ok-800: 20 74 36; --ok-900: 15 58 29;
+
+    --no-50: 254 242 242; --no-100: 254 226 226; --no-200: 252 200 200;
+    --no-300: 247 166 166; --no-400: 236 88 84; --no-500: 211 36 36;
+    --no-600: 180 27 27; --no-700: 150 26 26; --no-800: 124 29 29; --no-900: 70 12 12;
+
+    --warn-50: 255 249 233; --warn-100: 254 241 196; --warn-200: 253 227 132;
+    --warn-300: 250 204 74; --warn-400: 240 158 20; --warn-500: 214 116 8;
+    --warn-600: 176 84 8; --warn-700: 143 64 14; --warn-800: 118 53 16; --warn-900: 70 27 5;
+
+    /* Info kembali ke biru-navi klasik: primary kini hijau, jadi info boleh
+       memakai saudaranya yang paling jauh agar badge "info" tetap terbaca beda. */
+    --info-50: 240 244 250; --info-100: 225 233 245; --info-200: 199 213 236;
+    --info-300: 160 182 222; --info-400: 118 148 203; --info-500: 76 111 176;
+    --info-600: 47 82 143; --info-700: 35 64 114; --info-800: 30 53 92; --info-900: 25 44 76;
+
+    /* Alias peran — pakai ini di kode baru, bukan stop mentah */
+    --bg: rgb(242 247 245);
+    --surface: rgb(255 255 255);
+    --surface-2: rgb(var(--k-100));
+    --border: rgb(var(--k-200));
+    --border-strong: rgb(var(--k-300));
+    --text: rgb(var(--k-800));
+    --text-muted: rgb(var(--k-500));
+    --text-faint: rgb(var(--k-400));
+    --primary: rgb(var(--p-600));
+    --primary-hover: rgb(var(--p-700));
+    --primary-soft: rgb(var(--p-50));
+    --primary-ring: rgb(var(--p-500) / 0.35);
+    /* Aksen jauh lebih terang dari primary: dipakai untuk highlight (gradien,
+       garis aktif). Di palette hutan ia jadi "cahaya daun", bukan warna kedua. */
+    --accent: rgb(var(--p-400));
+    /* Teks semantik memakai stop 600/700: di atas -soft masing-masing, stop 500
+       hanya lolos ~3:1 dan badge status adalah teks kecil. */
+    --ok: rgb(var(--ok-600));
+    --ok-soft: rgb(var(--ok-50));
+    --no: rgb(var(--no-600));
+    --no-soft: rgb(var(--no-50));
+    --warn: rgb(var(--warn-600));
+    --warn-soft: rgb(var(--warn-50));
+    --info: rgb(var(--info-700));
+    --info-soft: rgb(var(--info-50));
+    --sidebar: rgb(var(--p-900));
+
+    /* Radius — 0 SEMUA. Permukaan datar & tegas sesuai arah desain baru.
+       --r-full tetap lingkaran penuh dan sengaja tidak dinolkan: dipakai oleh
+       hal yang memang bulat (avatar, titik status, cincin spinner, orb glow).
+       Kalau token ini ikut 0, spinner ter-render sebagai PERSEGI yang berputar. */
+    --r-sm: 0px;
+    --r-md: 0px;
+    --r-lg: 0px;
+    --r-xl: 0px;
+    --r-full: 9999px;
+
+    /* Shadow berlapis: 1px ring + ambient + diffuse, diwarnai pinia agar menyatu
+       dengan kanvas hijau (shadow abu-netral terlihat kotor di atas --bg). */
+    --sh-xs: 0 1px 1px rgb(12 38 28 / 0.05);
+    --sh-sm: 0 0 0 1px rgb(12 38 28 / 0.05), 0 1px 2px rgb(12 38 28 / 0.06);
+    --sh-md: 0 0 0 1px rgb(12 38 28 / 0.06), 0 2px 4px rgb(12 38 28 / 0.05),
+      0 8px 20px -6px rgb(12 38 28 / 0.13);
+    --sh-lg: 0 0 0 1px rgb(12 38 28 / 0.06), 0 4px 8px rgb(12 38 28 / 0.06),
+      0 18px 36px -12px rgb(12 38 28 / 0.2);
+    --sh-xl: 0 0 0 1px rgb(12 38 28 / 0.07), 0 12px 24px -8px rgb(12 38 28 / 0.22),
+      0 32px 64px -16px rgb(12 38 28 / 0.28);
+    /* Garis aksen 2px di tepi kiri/atas — pengganti "radius" sebagai penanda hierarki */
+    --sh-edge: inset 3px 0 0 0 var(--primary);
+
+    /* Motion */
+    --dur-fast: 120ms;
+    --dur: 200ms;
+    --dur-slow: 320ms;
+    --dur-page: 380ms;
+    --dur-reveal: 640ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    /* overshoot ringan: hanya untuk elemen kecil (badge toast, tombol, modal) */
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-expo: cubic-bezier(0.19, 1, 0.22, 1);
+
+    /* Tumpukan */
+    --z-header: 20;
+    --z-sidebar: 30;
+    --z-drawer: 40;
+    --z-dropdown: 45;
+    --z-modal: 50;
+    --z-toast: 60;
+    --z-fab: 55;
+  }
+
   html {
     @apply antialiased;
+    scroll-behavior: smooth;
   }
   body {
-    @apply bg-ink-100 font-sans text-ink-800;
+    @apply bg-canvas font-sans text-fg;
   }
   ::selection {
     @apply bg-primary-600 text-white;
   }
+  /* Outline, bukan ring: ring memakai offset berwarna putih yang hilang
+     kontrasnya saat elemen berada di sidebar gelap. */
   :focus-visible {
-    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
   }
-  /* Scrollbar tipis */
+  /* Scrollbar tipis, tajam */
   * {
     scrollbar-width: thin;
-    scrollbar-color: theme('colors.ink.300') transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-ink-300;
+    border-radius: 0;
+    background-color: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--k-400));
   }
   ::-webkit-scrollbar-track {
     background: transparent;
+  }
+
+  /* Hormati preferensi gerakan: lapisan ini menambah transisi di mana-mana. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* Elemen scroll-reveal berstatus "siap muncul tapi belum di-scroll" — tanpa
+       aturan ini isinya hilang permanen bagi pengguna reduced-motion. */
+    .motion-ready .reveal-pending {
+      opacity: 1 !important;
+      transform: none !important;
+    }
   }
 }
 
 @layer components {
   /* ============ Tombol ============ */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-none px-4 py-2 text-sm font-semibold shadow-xs transition-[transform,box-shadow,background-color,border-color,color] duration-150 ease-spring disabled:pointer-events-none disabled:opacity-50;
+  }
+  /* Ikon-only: kotak tajam, konsisten dengan radius 0 di seluruh UI */
+  .btn-square {
+    @apply rounded-none;
+  }
+  /* Efek tekan seragam untuk semua varian tombol */
+  .btn {
+    transform: translateZ(0);
+  }
+  .btn:active {
+    transform: translateY(1px) scale(0.985);
   }
   .btn-primary {
-    @apply btn bg-primary-600 text-white shadow-sm hover:bg-primary-700 hover:shadow-md active:translate-y-px;
+    @apply btn bg-primary-600 text-white shadow-sm hover:bg-primary-700 hover:shadow-md;
   }
   .btn-secondary {
-    @apply btn border border-ink-200 bg-white text-ink-700 hover:border-ink-300 hover:bg-ink-50 active:translate-y-px;
+    @apply btn border border-line bg-surface text-ink-700 shadow-xs hover:border-ink-300 hover:bg-ink-50 hover:shadow-sm;
+  }
+  .btn-ghost {
+    @apply btn border border-transparent bg-transparent text-ink-600 shadow-none hover:bg-ink-100 hover:text-ink-800;
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700 active:translate-y-px;
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700 hover:shadow-md;
   }
   .btn-success {
-    @apply btn bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:translate-y-px;
+    @apply btn bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 hover:shadow-md;
   }
 
   /* ============ Kartu ============ */
   .card {
-    @apply bg-white p-5 shadow-panel;
+    @apply rounded-none bg-surface p-5 shadow-md;
   }
   .card-hover {
-    @apply transition-shadow hover:shadow-panel-hover;
+    @apply relative transition-[transform,box-shadow] duration-200 ease-spring hover:-translate-y-0.5 hover:shadow-lg;
+  }
+  /* Penanda hierarki tanpa radius: garis aksen yang menjalar dari kiri saat hover. */
+  .card-hover::after {
+    content: '';
+    @apply absolute inset-x-0 top-0 h-[3px] origin-left scale-x-0 bg-gradient-to-r from-primary-500 to-accent transition-transform duration-300 ease-expo;
+  }
+  .card-hover:hover::after {
+    transform: scaleX(1);
+  }
+  /* Sebagian view masih menulis <table> mentah di dalam .card. Tanpa aturan ini
+     tabel yang lebih lebar dari layar meluber keluar tepi kartu di HP; dengan ini
+     kartunya yang bisa digeser. Kartu tidak punya tinggi tetap, jadi overflow-y
+     yang ikut terhitung ulang tidak pernah memunculkan scrollbar vertikal. */
+  .card:has(.table):not(:has(.table-wrap)) {
+    overflow-x: auto;
+    overflow-y: visible;
   }
 
   /* ============ Form ============ */
   .input {
-    @apply w-full border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none transition placeholder:text-ink-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100;
+    @apply w-full rounded-none border border-line bg-surface px-3 py-2 text-sm text-ink-800 shadow-xs outline-none transition placeholder:text-ink-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-100;
   }
+  /* Garis bawah input menebal & berubah warna saat fokus: penanda aktif versi datar. */
+  .input:focus {
+    box-shadow: inset 0 -2px 0 0 var(--primary);
+  }
+  /* Tombol "Choose File" bawaan browser selalu membulat dan abu-abu — satu-satunya
+     sisa gaya default di seluruh UI. Ditarik ke kotak biru supaya seragam. */
+  .input[type='file'] {
+    @apply cursor-pointer p-0 text-ink-600;
+  }
+  .input[type='file']::file-selector-button {
+    @apply mr-3 cursor-pointer border-0 border-r border-line bg-primary-50 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-primary-700 transition-colors;
+  }
+  .input[type='file']::file-selector-button:hover {
+    @apply bg-primary-100 text-primary-800;
+  }
+  /* Label diturunkan dari UPPERCASE tebal → sentence case.
+     39 view memakainya serentak; teks biasa lebih cepat dipindai mata. */
   .label {
-    @apply mb-1 block text-[13px] font-semibold uppercase tracking-wide text-ink-600;
+    @apply mb-1.5 block text-[13px] font-medium text-ink-600;
   }
 
-  /* ============ Badge status: micro-kaps, rata ============ */
+  /* ============ Badge status: kotak, bukan pil ============ */
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider;
+    @apply inline-flex items-center gap-1 rounded-none px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ring-1 ring-inset ring-black/5;
   }
 
-  /* ============ Tabel ============ */
+  /* ============ Tabel ============
+     .table tetap tajam; wrapper .table-wrap dulu ikut membulat dan kini 0 juga. */
   .table {
-    @apply w-full text-left text-sm;
+    @apply w-full rounded-none text-left text-sm;
   }
   .table thead th {
-    @apply border-b border-ink-200 bg-ink-50 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-500;
+    @apply border-b-2 border-line bg-ink-50/70 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-500;
   }
   .table tbody td {
-    @apply border-b border-ink-100 px-3 py-2.5 text-ink-700;
+    @apply border-b border-ink-100 px-3 py-2.5 text-ink-700 transition-colors;
   }
   .table tbody tr {
     @apply transition-colors;
+    animation: row-in var(--dur-slow) var(--ease-out) both;
+    animation-delay: calc(min(var(--row-i, 0), 12) * 28ms);
   }
   .table tbody tr:hover {
-    @apply bg-ink-50/60;
+    @apply bg-primary-50/70;
+  }
+  /* Garis bawah baris terakhir menempel tepi .card dan terlihat seperti bocor. */
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* Wrapper tabel: pembungkus netral + bisa di-scroll horizontal di layar sempit.
+     Tanpa ini 23 view terpotong di HP. */
+  .table-wrap {
+    @apply overflow-x-auto rounded-none bg-surface shadow-md ring-1 ring-line;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* ============ Sidebar ============ */
   .side-link {
-    @apply relative flex items-center gap-3 px-3 py-2 text-[13px] font-medium text-ink-300 transition-all duration-150 hover:bg-white/5 hover:text-white;
+    @apply relative flex items-center gap-3 rounded-none px-3 py-2 text-[13px] font-medium text-ink-300 transition-[background-color,color,transform,padding] duration-200 ease-spring hover:bg-white/5 hover:text-white hover:pl-4;
+    animation: nav-in var(--dur-slow) var(--ease-out) both;
   }
   .side-link-active {
-    @apply bg-white/10 text-white;
+    @apply bg-primary-600/25 text-white;
   }
   .side-link-active::before {
     content: '';
-    @apply absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 bg-primary-400;
+    @apply absolute left-0 top-0 h-full w-[3px] bg-accent;
+    animation: edge-grow var(--dur-slow) var(--ease-out) both;
+  }
+  .side-link:focus-visible {
+    outline-color: rgb(var(--p-300));
   }
   .side-section {
-    @apply px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-ink-500;
+    /* ink-500 di atas ink-900 hanya 2.6:1 — label section harus tetap terbaca. */
+    @apply px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-ink-300/65;
+  }
+
+  /* ============ Item menu dropdown ============ */
+  .menu-item {
+    @apply flex w-full items-center gap-2.5 rounded-none px-3 py-2 text-left text-[13px] font-medium text-ink-700 transition-[background-color,color,padding-left] duration-150 ease-out hover:bg-primary-50 hover:pl-3.5 hover:text-ink-900;
+  }
+  .menu-item-danger {
+    @apply text-red-700 hover:bg-red-50 hover:text-red-700;
+  }
+  .menu-sep {
+    @apply my-1 h-px bg-ink-200;
+  }
+
+  /* ============ Permukaan buram & drawer ============ */
+  /* Token --surface dipakai polos (bukan rgb(var()/alpha)), jadi bg-surface/70 tidak
+     bisa dihitung Tailwind — tulis alpha-nya langsung di sini. */
+  .frosted {
+    background-color: rgb(255 255 255 / 0.78);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    backdrop-filter: blur(14px) saturate(1.4);
+  }
+  /* Header naik tingkat saat halaman digulir: batas bawah berubah jadi bayangan. */
+  .header-elevated {
+    border-bottom-color: transparent !important;
+    box-shadow: var(--sh-md);
+  }
+  .drawer-overlay {
+    @apply fixed inset-0 bg-ink-950/45 backdrop-blur-[2px];
+    z-index: var(--z-drawer);
+    animation: fade-in var(--dur-fast) var(--ease-out) both;
+  }
+
+  /* ============ Tile statistik ============ */
+  .stat-tile {
+    @apply card flex flex-col gap-1;
+  }
+  .stat-tile-value {
+    @apply text-xl font-bold tracking-tight text-ink-900 tabular-nums;
+  }
+  .stat-tile-label {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-ink-500;
   }
 
   /* ============ Animasi ============ */
   .animate-fade-in {
-    animation: fade-in 0.2s ease-out both;
+    animation: fade-in var(--dur) var(--ease-out) both;
   }
   .animate-slide-up {
-    animation: slide-up 0.25s ease-out both;
+    animation: slide-up var(--dur-slow) var(--ease-out) both;
   }
+  .animate-scale-in {
+    animation: scale-in var(--dur-slow) var(--ease-spring) both;
+  }
+  /* Judul header masuk lagi setiap ganti rute (di-trigger lewat :key di AppLayout). */
+  .animate-title {
+    animation: title-in var(--dur-slow) var(--ease-out) both;
+  }
+  .animate-pulse-ring {
+    animation: pulse-ring 2.8s var(--ease-out) infinite;
+  }
+  /* Pesan error yang hanya berubah teks terasa "tidak terjadi apa-apa"; getaran
+     pendek ini menandai baris baru tanpa mengganggu pembacaan. */
+  .animate-shake {
+    animation: shake 420ms var(--ease-in-out) both;
+  }
+  /* Garis penghubung stepper yang "mengalir" ke kanan saat langkah selesai. */
+  .animate-grow-x {
+    transform-origin: left center;
+    animation: grow-x var(--dur-slow) var(--ease-out) both;
+  }
+  /* MC masuk dari bawah-kiri sambil membesar sedikit: mata mengikuti datangnya
+     "pembicara", bukan teks yang tiba-tiba ada. */
+  .animate-host-in {
+    animation: host-in var(--dur-slow) var(--ease-spring) both;
+  }
+  .animate-bubble-in {
+    animation: bubble-in var(--dur) var(--ease-out) both;
+  }
+
+  /* Anak elemen sebuah .stagger naik bertahap 40ms per posisi — untuk grid kartu
+     dan daftar yang muncul sekaligus. Setelah anak ke-10 jedanya tidak bertambah
+     lagi supaya bagian bawah daftar panjang tidak terasa lambat. */
+  .stagger > * {
+    animation: slide-up var(--dur-slow) var(--ease-out) both;
+  }
+  .stagger > :nth-child(2) { animation-delay: 40ms; }
+  .stagger > :nth-child(3) { animation-delay: 80ms; }
+  .stagger > :nth-child(4) { animation-delay: 120ms; }
+  .stagger > :nth-child(5) { animation-delay: 160ms; }
+  .stagger > :nth-child(6) { animation-delay: 200ms; }
+  .stagger > :nth-child(7) { animation-delay: 240ms; }
+  .stagger > :nth-child(8) { animation-delay: 280ms; }
+  .stagger > :nth-child(9) { animation-delay: 320ms; }
+  .stagger > :nth-child(n + 10) { animation-delay: 360ms; }
 
   /* Skeleton shimmer */
   .skeleton {
-    @apply relative overflow-hidden bg-ink-200;
+    @apply relative overflow-hidden rounded-none bg-ink-200/70;
   }
   .skeleton::after {
     content: '';
     @apply absolute inset-0 -translate-x-full;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
-    animation: shimmer 1.4s ease-in-out infinite;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.75),
+      rgb(var(--p-100) / 0.6),
+      transparent
+    );
+    animation: shimmer 1.5s var(--ease-in-out) infinite;
   }
 
-  /* ============ Loading spinner ============ */
+  /* ============ Loading spinner ============
+     Dipakai ~10 view lama sebagai `<div class="loading" />`, jadi bentuknya
+     dipertebal jadi dua cincin berlawanan — loader lama ikut terasa baru tanpa
+     menyentuh view-nya satu per satu. */
   .loading {
-    @apply flex justify-center py-8;
+    @apply relative mx-auto my-8 flex h-7 w-7 items-center justify-center;
+  }
+  .loading::before,
+  .loading::after {
+    content: '';
+    @apply absolute inset-0 rounded-full border-2;
+    /* rounded-full di sini BUKAN hiasan: radius token kini 0, dan tanpa kelas ini
+       spinner ter-render sebagai PERSEGI yang berputar. */
   }
   .loading::before {
-    content: '';
-    @apply block h-6 w-6 border-2 border-ink-200 border-t-primary-600;
-    animation: spin 0.7s linear infinite;
+    @apply border-ink-200 border-t-primary-600;
+    animation: spin 0.8s linear infinite;
+  }
+  .loading::after {
+    inset: 5px;
+    @apply border-primary-100 border-b-primary-400;
+    animation: spin-rev 1.2s linear infinite;
   }
 
-  /* ============ Modal ============ */
+  /* ============ Modal ============
+     Gerak masuk/keluar ditangani <Transition> di Modal.vue, bukan `animation` di
+     sini: kalau keduanya ada, opacity dianimasikan dua kali dan penutupan terasa
+     seperti kedip. */
   .modal-overlay {
-    @apply fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 p-4 backdrop-blur-[2px];
-    animation: fade-in 0.15s ease-out both;
+    @apply fixed inset-0 flex items-center justify-center bg-ink-950/55 p-4 backdrop-blur-[4px];
+    z-index: var(--z-modal);
   }
   .modal-panel {
-    @apply flex max-h-[90vh] w-full flex-col border border-ink-200 bg-white shadow-pop;
-    animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+    @apply flex max-h-[90vh] w-full flex-col overflow-hidden rounded-none bg-surface shadow-xl ring-1 ring-black/5;
   }
   .modal-panel[data-size='sm'] {
     @apply max-w-sm;
@@ -161,7 +488,7 @@
     @apply max-w-4xl;
   }
   .modal-header {
-    @apply flex items-center justify-between border-b border-ink-100 bg-ink-50/70 px-5 py-3.5;
+    @apply flex items-center justify-between border-b border-ink-100 bg-ink-50/60 px-5 py-4;
   }
   .modal-body {
     @apply flex-1 overflow-y-auto px-5 py-4;
@@ -169,6 +496,180 @@
   .modal-footer {
     @apply flex items-center justify-end gap-3 border-t border-ink-100 bg-ink-50/70 px-5 py-3.5;
   }
+}
+
+/* ==========================================================================
+   LAPISAN GERAK — transisi halaman, gulir, dan mikro-interaksi.
+   Ditempatkan di luar @layer components agar menang atas utilitas Tailwind
+   yang ikut dipanggil dari template (mis. `transition-opacity`).
+   ========================================================================== */
+
+/* ---------- Transisi halaman dua arah ---------- */
+/* Arah ditentukan useRouteTransition: maju = konten masuk dari kanan, mundur =
+   dari kiri, sehingga orientasi gerakan mencerminkan riwayat browser. */
+.page-fade-enter-active,
+.page-forward-enter-active,
+.page-back-enter-active {
+  transition: opacity var(--dur-page) var(--ease-out), transform var(--dur-page) var(--ease-expo);
+}
+.page-fade-leave-active,
+.page-forward-leave-active,
+.page-back-leave-active {
+  transition: opacity calc(var(--dur-page) * 0.55) var(--ease-in),
+    transform calc(var(--dur-page) * 0.55) var(--ease-in);
+  /* Keluar dari aliran dokumen: tanpa ini kedua halaman menempati tinggi
+     bergantian dan konten di bawahnya melompat. */
+  position: absolute;
+  inset: 0;
+  /* Halaman lama masih terlihat ~200ms; klik tidak boleh mendarat di sana. */
+  pointer-events: none;
+}
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+}
+.page-fade-enter-to,
+.page-fade-leave-from {
+  opacity: 1;
+}
+.page-forward-enter-from {
+  opacity: 0;
+  transform: translate3d(28px, 0, 0);
+}
+.page-forward-leave-to {
+  opacity: 0;
+  transform: translate3d(-18px, 0, 0);
+}
+.page-back-enter-from {
+  opacity: 0;
+  transform: translate3d(-28px, 0, 0);
+}
+.page-back-leave-to {
+  opacity: 0;
+  transform: translate3d(18px, 0, 0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-forward-enter-from,
+  .page-back-enter-from,
+  .page-forward-leave-to,
+  .page-back-leave-to {
+    transform: none;
+  }
+}
+
+/* ---------- Lompat antar layout (login <-> aplikasi) ---------- */
+/* Crossfade biasa, TANPA position:absolute seperti transisi halaman: layout lama
+   dan baru tidak pernah hidup bersamaan (mode out-in), jadi tidak ada tinggi
+   dokumen yang hilang di tengah jalan. */
+.app-switch-enter-active,
+.app-switch-leave-active {
+  transition: opacity var(--dur) var(--ease-out);
+}
+.app-switch-enter-from,
+.app-switch-leave-to {
+  opacity: 0;
+}
+
+/* ---------- Scroll reveal ----------
+   Tiga keputusan di sini berbeda dari lapisan lain dan semuanya sengaja:
+
+   1) Digembok di belakang `html.motion-ready` (dipasang installMotionLayer).
+      Tanpa gembok itu, elemen yang belum ter-reveal terkunci transparan kalau JS
+      gagal jalan — halaman tampak kosong alih-alih beranimasi.
+   2) Yang dipantau bukan hanya `[data-reveal]` tetapi setiap `.card`, jadi ~37 view
+      yang tidak disentuh pun punya gerak masuk. `.no-reveal` memuat kartu keluar.
+   3) Pakai `animation` dengan fill `backwards`, bukan `transition`. Transition
+      harus dideklarasikan pada gaya SESUDAH perubahan, dan menulisnya di kartu akan
+      menimpa `transition-[transform,box-shadow] .card-hover` (lapisan tanpa @layer
+      menang atas utilitas) sehingga hover kartu melambat jadi 640ms. Dengan
+      animation + backwards, keadaan akhir kartu ya keadaan alaminya. */
+.motion-ready .reveal-pending {
+  opacity: 0;
+}
+.motion-ready .is-revealed {
+  animation: reveal var(--dur-reveal) var(--ease-out) var(--reveal-delay, 0ms) backwards;
+}
+.motion-ready .is-revealed[data-reveal='left'] {
+  animation-name: reveal-left;
+}
+.motion-ready .is-revealed[data-reveal='right'] {
+  animation-name: reveal-right;
+}
+.motion-ready .is-revealed[data-reveal='scale'] {
+  animation-name: reveal-scale;
+}
+
+/* ---------- Progres baca + progres rute ---------- */
+.scroll-progress {
+  @apply pointer-events-none fixed left-0 top-0 h-[2px] w-full origin-left bg-gradient-to-r from-primary-600 via-primary-400 to-accent;
+  transform: scaleX(var(--scroll-ratio, 0));
+  transition: transform 80ms linear;
+  /* Sedikit di bawah route-progress: keduanya memakai lajur yang sama di tepi
+     atas layar dan bar navigasi harus menang saat sedang perpindahan halaman. */
+  z-index: calc(var(--z-toast) - 1);
+}
+
+.route-progress {
+  @apply fixed left-0 top-0 h-[3px] bg-gradient-to-r from-primary-600 via-primary-400 to-accent;
+  transition: width var(--dur-slow) var(--ease-out), opacity var(--dur) var(--ease-out);
+  z-index: var(--z-toast);
+}
+/* Kilau yang terus berjalan selama navigasi berlangsung: menandakan "masih kerja",
+   bukan sekadar bar yang berhenti di 80%. */
+.route-progress::after {
+  content: '';
+  @apply absolute inset-0 -translate-x-full;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.85), transparent);
+  animation: sheen 1s linear infinite;
+}
+
+/* ---------- Tombol kembali ke atas ---------- */
+.back-to-top {
+  @apply fixed bottom-6 right-6 z-fab flex h-10 w-10 items-center justify-center rounded-none border border-line bg-surface text-ink-600 shadow-md transition-[transform,box-shadow,color,border-color] duration-200 ease-spring hover:-translate-y-0.5 hover:border-primary-300 hover:text-primary-700 hover:shadow-lg;
+}
+.back-to-top-enter-active,
+.back-to-top-leave-active {
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-spring);
+}
+.back-to-top-enter-from,
+.back-to-top-leave-to {
+  opacity: 0;
+  transform: translateY(12px) scale(0.8);
+}
+
+/* ---------- Riak klik ---------- */
+/* Host riak harus memotong lingkaran yang melebar; daftar selektornya sama dengan
+   yang dipakai useRipple.ts sebagai target delegasi event. */
+.btn,
+.menu-item,
+.side-link,
+[data-ripple] {
+  position: relative;
+  overflow: hidden;
+}
+.ripple-ink {
+  position: absolute;
+  border-radius: var(--r-full);
+  background: currentColor;
+  opacity: 0.25;
+  transform: scale(0);
+  pointer-events: none;
+  animation: ripple 620ms var(--ease-out) forwards;
+}
+
+/* ---------- Latar hero: satu cahaya diam, bukan kisi bergerak ---------- */
+.hero-glow {
+  background: radial-gradient(
+    58% 58% at 78% 12%,
+    rgb(var(--p-400) / 0.32),
+    rgb(var(--p-400) / 0) 70%
+  );
+}
+
+/* ---------- Indikator tab yang menggeser ---------- */
+.tab-indicator {
+  transition: transform var(--dur-slow) var(--ease-spring),
+    width var(--dur-slow) var(--ease-spring), height var(--dur) var(--ease-out);
 }
 
 @keyframes fade-in {
@@ -191,9 +692,95 @@
   }
 }
 
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes title-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Item sidebar masuk berurutan dari kiri (jeda per indeks ditulis di AppSidebar). */
+@keyframes nav-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes edge-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
 @keyframes shimmer {
   100% {
     transform: translateX(100%);
+  }
+}
+
+@keyframes sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  60%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes ripple {
+  from {
+    transform: scale(0);
+    opacity: 0.28;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
   }
 }
 
@@ -203,7 +790,107 @@
   }
 }
 
-/* Progress bar pindah halaman */
-.route-progress {
-  @apply fixed left-0 top-0 z-[60] h-0.5 bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300;
+@keyframes spin-rev {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--p-500) / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgb(var(--p-500) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--p-500) / 0);
+  }
+}
+
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-4px);
+  }
+  40%,
+  60% {
+    transform: translateX(4px);
+  }
+}
+
+/* Penghubung stepper yang terisi dari kiri ke kanan — memberi arah pada alur. */
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Tanpa `to`: nilai akhirnya diambil dari gaya elemen itu sendiri, jadi kartu yang
+   baru selesai ter-reveal tetap bisa di-hover/ditranslasikan oleh utilitasnya. */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0);
+  }
+}
+@keyframes reveal-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-26px, 0, 0);
+  }
+}
+@keyframes reveal-right {
+  from {
+    opacity: 0;
+    transform: translate3d(26px, 0, 0);
+  }
+}
+@keyframes reveal-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+/* Julie masuk: datang dari sudut kiri-bawah, sedikit overshoot (ease-spring)
+   supaya terasa seperti seseorang yang melangkah ke panggung. */
+@keyframes host-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 18px, 0) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+/* Kursor "sedang bicara". Berhenti sendiri saat kalimat selesai atau bila
+   pengguna memilih reduced-motion (blok global memotong durasinya). */
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
 }

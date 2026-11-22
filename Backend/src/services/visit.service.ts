@@ -5,6 +5,7 @@ import { auditService } from './audit.service';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { readStoredFile, saveBuffer } from '../utils/storage';
+import { resolveScope, scopeUserWhere, andWhere } from './majorScope.service';
 
 /** File foto bukti dari multer (memoryStorage). */
 export interface VisitPhotoFile {
@@ -194,7 +195,7 @@ export class VisitService {
     actorId: string,
     id: string,
     role: string
-  ): Promise<{ buffer: Buffer; filename: string }> {
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const visit = await visitRepository.findById(id);
     if (!visit) throw new NotFoundError(MESSAGES.NOT_FOUND);
 
@@ -205,9 +206,13 @@ export class VisitService {
     }
 
     if (!visit.photoPath) throw new NotFoundError('Foto bukti monitoring belum ada');
-    const buffer = readStoredFile(visit.photoPath);
+    const photoPath = visit.photoPath;
+    const buffer = readStoredFile(photoPath);
     if (!buffer) throw new NotFoundError('File foto tidak ditemukan di storage');
-    return { buffer, filename: visit.photoName || 'bukti-monitoring.jpg' };
+    // Ekstensi ditentukan dari file tersimpan (JPG/PNG divalidasi saat unggah),
+    // jadi header Content-Type tidak lagi memaksa PNG menjadi image/jpeg.
+    const contentType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    return { buffer, filename: visit.photoName || 'bukti-monitoring.jpg', contentType };
   }
 
   /** Kunjungan milik guru. */
@@ -224,12 +229,23 @@ export class VisitService {
     params: { page: number; perPage: number; studentId?: string; supervisorId?: string },
     actor?: { id: string; role: string }
   ) {
-    const where: Prisma.VisitWhereInput = {
+    const baseWhere: Prisma.VisitWhereInput = {
       ...(params.studentId ? { studentId: params.studentId } : {}),
       ...(params.supervisorId ? { supervisorId: params.supervisorId } : {}),
     };
     if (actor && actor.role === 'GURU_PEMBIMBING') {
-      where.supervisorId = actor.id;
+      baseWhere.supervisorId = actor.id;
+    }
+
+    // Scope jurusan: ADMIN hanya kunjungan yang menyangkut siswa dalam jurusan
+    // yang diawasi. Kunjungan tanpa siswa (studentId null) tidak terlihat utk ADMIN.
+    let where: Prisma.VisitWhereInput = baseWhere;
+    if (actor && actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) {
+        where = andWhere(baseWhere as Record<string, unknown>, scoped) as Prisma.VisitWhereInput;
+      }
     }
     return visitRepository.paginate(where, (params.page - 1) * params.perPage, params.perPage);
   }

@@ -6,17 +6,32 @@ import { notificationService } from './notification.service';
 import { studentWorkflowService } from './studentWorkflow.service';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
-import { ApproveGradeDTO, CreateGradeDTO, UpdateGuidanceScoreDTO } from '../validators/phase4.validator';
-
-/** Hitung predicate berdasarkan skor (A/B/C/D). */
-const calcPredicate = (score: number): string => {
-  if (score >= 85) return 'A';
-  if (score >= 70) return 'B';
-  if (score >= 55) return 'C';
-  return 'D';
-};
+import {
+  PENILAIAN_GROUPS,
+  PENILAIAN_ITEMS,
+  PENILAIAN_LEGEND,
+  PENILAIAN_SCALE,
+  PENILAIAN_FOOTNOTE,
+  PENILAIAN_WEIGHTS,
+  PREDICATE_OF,
+  averageAspectScore,
+  computeFinalScore,
+} from '../config/penilaian.config';
+import { ApproveGradeDTO, CreateGradeDTO } from '../validators/phase4.validator';
+import { resolveScope, scopeUserWhere, andWhere } from './majorScope.service';
 
 const ENTITY_GRADE = 'GRADE';
+
+/** Definisi form penilaian — sumber tunggal untuk frontend, PDF, dan validasi. */
+export const PenilaianForm = {
+  groups: PENILAIAN_GROUPS,
+  items: PENILAIAN_ITEMS,
+  /** Ambang predikat numerik — frontend menghitung pratinjau Nilai Akhir dari sini. */
+  scale: PENILAIAN_SCALE.map((s) => ({ ...s })),
+  legend: PENILAIAN_LEGEND,
+  weights: PENILAIAN_WEIGHTS,
+  footnote: PENILAIAN_FOOTNOTE,
+};
 
 export type GradeApprovalInfo = {
   id: string;
@@ -28,14 +43,43 @@ export type GradeApprovalInfo = {
 
 type GradeWithApproval<T extends { id: string }> = T & { approval: GradeApprovalInfo | null };
 
+/** Satu baris siswa pada rekap per kelas — `grade` null bila belum dinilai. */
+export type GradeRecapStudent = {
+  userId: string;
+  username: string;
+  fullName: string;
+  nisn: string | null;
+  companyName: string | null;
+  supervisorName: string | null;
+  approvalStatus: ApprovalStatus | null;
+  grade: GradeWithStudent | null;
+};
+
+export type GradeRecapClass = {
+  className: string;
+  studentCount: number;
+  gradedCount: number;
+  students: GradeRecapStudent[];
+};
+
+export type GradeRecapByClass = {
+  classes: GradeRecapClass[];
+  totalStudents: number;
+  totalGraded: number;
+};
+
 /**
  * Service penilaian PKL (Fase 4).
  *
  * Alur per-orang: siswa menginput nilai DUDI sendiri pada fase Pasca PKL,
- * guru pembimbing yang menaungi siswa tersebut menyetujui/menolak, lalu
- * guru mengisi nilai bimbingan sebagai catatan.
+ * lalu admin menyetujui/menolak lewat halaman Rekap Penilaian.
  */
 export class GradeService {
+  /** Definisi form penilaian (butir, rentang predikat, bobot) — satu sumber utk FE, BE, dan PDF. */
+  getForm() {
+    return PenilaianForm;
+  }
+
   /** Input nilai akhir PKL (mewakili nilai DUDI). Siswa hanya untuk dirinya sendiri; admin dapat membantu. */
   async inputGrade(
     actorId: string,
@@ -60,7 +104,13 @@ export class GradeService {
         id: true,
         role: true,
         phase: true,
-        studentProfile: { select: { fullName: true } },
+        studentProfile: {
+          select: {
+            fullName: true,
+            majorId: true,
+            class: { select: { majorId: true } },
+          },
+        },
       },
     });
     if (!student) throw new NotFoundError('Siswa tidak ditemukan');
@@ -75,17 +125,33 @@ export class GradeService {
       }
     }
 
-    const aspects = dto.aspects ?? [];
-    let finalScore: number;
-    if (dto.scoreDudi !== undefined) {
-      finalScore = dto.scoreDudi;
-    } else if (aspects.length > 0) {
-      finalScore =
-        Math.round((aspects.reduce((sum, a) => sum + a.score, 0) / aspects.length) * 100) / 100;
-    } else {
-      throw new BadRequestError('Isi nilai DUDI atau daftar indikator penilaian');
+    // Nilai yang sudah dikirim TERKUNCI — siswa tidak bisa mengubahnya lagi.
+    // Celah pembuka satu-satunya: admin menolak nilai tersebut.
+    const existing = await gradeRepository.findUnique(studentId, Role.DUDI);
+    if (existing?.submittedAt && actor.role === Role.SISWA) {
+      const latest = await prisma.approval.findFirst({
+        where: { entityType: ENTITY_GRADE, entityId: existing.id },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true },
+      });
+      if (latest?.status !== ApprovalStatus.DITOLAK) {
+        throw new BadRequestError(
+          'Nilai sudah dikirim dan tidak dapat diubah lagi. Hubungi admin bila ada koreksi.'
+        );
+      }
     }
-    const predicate = calcPredicate(finalScore);
+
+    // Label butir selalu diambil dari konfigurasi — bunyi dari klien diabaikan.
+    const aspects = PENILAIAN_ITEMS.map((item) => {
+      const sent = dto.items.find((i) => i.groupCode === item.groupCode && i.code === item.code);
+      if (!sent) throw new BadRequestError(`Butir ${item.groupCode}${item.code} belum diisi`);
+      return { groupCode: item.groupCode, code: item.code, label: item.label, score: sent.score };
+    });
+
+    const aspectsAverage = averageAspectScore(aspects.map((a) => a.score));
+    const finalScore = computeFinalScore(aspectsAverage, dto.scoreReport);
+    const predicate = PREDICATE_OF(finalScore).letter;
+    const submittedAt = new Date();
 
     const grade = await gradeRepository.upsertByStudentAndGiver(
       studentId,
@@ -94,46 +160,71 @@ export class GradeService {
         student: { connect: { id: studentId } },
         giver: { connect: { id: actorId } },
         giverRole: Role.DUDI,
-        scoreDudi: finalScore,
+        scoreDudi: aspectsAverage,
+        scoreReport: dto.scoreReport,
         finalScore,
         predicate,
+        mentorName: dto.mentorName,
         note: dto.note ?? null,
+        submittedAt,
       },
       {
-        scoreDudi: finalScore,
+        scoreDudi: aspectsAverage,
+        scoreReport: dto.scoreReport,
         finalScore,
         predicate,
+        mentorName: dto.mentorName,
         note: dto.note ?? null,
+        submittedAt,
         giver: { connect: { id: actorId } },
       }
     );
 
-    // Simpan rincian aspek/indikator (ganti totalitas bila ada input baru)
-    if (aspects.length > 0) {
-      await prisma.$transaction([
-        prisma.gradeAspect.deleteMany({ where: { gradeId: grade.id } }),
-        prisma.gradeAspect.createMany({
-          data: aspects.map((a) => ({ gradeId: grade.id, label: a.label, score: a.score })),
-        }),
-      ]);
-    }
+    // Simpan rincian butir LEMBARAN PENILAIAN (ganti totalitas saat kirim/revisi).
+    await prisma.$transaction([
+      prisma.gradeAspect.deleteMany({ where: { gradeId: grade.id } }),
+      prisma.gradeAspect.createMany({
+        data: aspects.map((a) => ({
+          gradeId: grade.id,
+          label: a.label,
+          score: a.score,
+          code: a.code,
+          groupCode: a.groupCode,
+        })),
+      }),
+    ]);
 
-    // Input baru = menunggu persetujuan guru pembimbing lagi.
+    // Input baru = menunggu persetujuan admin lagi.
     await this.resetApproval(grade.id);
 
-    // Kabari guru pembimbing yang menaungi siswa ini.
-    const supervision = await prisma.studentSupervisor.findUnique({
-      where: { studentId: studentId },
-      select: { supervisorId: true },
+    // Kabari admin yang mengawasi jurusan siswa ini (SUPER_ADMIN: semua jurusan).
+    const studentMajorId =
+      student.studentProfile?.majorId ?? student.studentProfile?.class?.majorId ?? null;
+    const reviewers = await prisma.user.findMany({
+      where: {
+        role: { in: [Role.ADMIN, Role.SUPER_ADMIN] },
+        deletedAt: null,
+        isActive: true,
+        ...(studentMajorId
+          ? {
+              OR: [
+                { role: Role.SUPER_ADMIN },
+                { supervisedMajors: { some: { id: studentMajorId } } },
+              ],
+            }
+          : { role: Role.SUPER_ADMIN }),
+      },
+      select: { id: true },
     });
-    if (supervision?.supervisorId && supervision.supervisorId !== actorId) {
-      const studentName = student.studentProfile?.fullName ?? 'Seorang siswa';
+    const studentName = student.studentProfile?.fullName ?? 'Seorang siswa';
+    for (const reviewer of reviewers) {
+      if (reviewer.id === actorId) continue;
       await notificationService.create(
-        supervision.supervisorId,
+        reviewer.id,
         'Nilai PKL menunggu persetujuan',
-        `${studentName} menginput nilai PKL. Mohon tinjau di halaman Penilaian.`,
+        `${studentName} mengirim nilai PKL. Mohon tinjau di Rekap Penilaian.`,
         'GRADE',
-        '/guru/penilaian'
+        '/admin/penilaian'
       );
     }
 
@@ -142,15 +233,15 @@ export class GradeService {
       action: AUDIT_ACTIONS.UPDATE_GRADE,
       entityType: ENTITY_TYPES.USER,
       entityId: studentId,
-      metadata: { scoreDudi: finalScore, finalScore, predicate, aspects: aspects.map((a) => a.label) },
+      metadata: { finalScore, predicate, mentorName: dto.mentorName, gradeId: grade.id },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
     });
 
-    return grade;
+    return gradeRepository.findById(grade.id);
   }
 
-  /** Guru: setujui/tolak nilai yang diinput siswa. */
+  /** Admin: setujui/tolak nilai yang diinput siswa. */
   async approveGrade(
     actorId: string,
     gradeId: string,
@@ -162,12 +253,17 @@ export class GradeService {
     const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { role: true } });
     if (!actor) throw new NotFoundError('Pengguna tidak ditemukan');
 
-    if (actor.role === Role.GURU_PEMBIMBING) {
-      const supervision = await prisma.studentSupervisor.findUnique({
-        where: { studentId: grade.studentId },
-        select: { supervisorId: true },
-      });
-      if (supervision?.supervisorId !== actorId) throw new BadRequestError(MESSAGES.SCOPE);
+    // Scope jurusan: ADMIN hanya boleh memutuskan nilai siswa jurusan yang diawasinya.
+    if (actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actorId, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) {
+        const allowed = await prisma.grade.findFirst({
+          where: andWhere({ id: gradeId }, scoped) as Prisma.GradeWhereInput,
+          select: { id: true },
+        });
+        if (!allowed) throw new BadRequestError(MESSAGES.SCOPE);
+      }
     }
 
     const status: ApprovalStatus = dto.approved ? 'DISETUJUI' : 'DITOLAK';
@@ -178,7 +274,7 @@ export class GradeService {
       grade.studentId,
       dto.approved ? 'Nilai PKL disetujui' : 'Nilai PKL ditolak',
       dto.approved
-        ? `Nilai PKL Anda disetujui oleh guru pembimbing.`
+        ? `Nilai PKL Anda disetujui oleh admin.`
         : `Nilai PKL Anda ditolak${dto.note ? `: ${dto.note}` : '. Mohon perbaiki data nilai.'}`,
       'GRADE',
       '/penilaian'
@@ -197,51 +293,13 @@ export class GradeService {
     return { ...grade, approval };
   }
 
-  /** Guru: input nilai bimbingan (catatan) untuk siswa bimbingannya. */
-  async inputGuidanceScore(
-    actorId: string,
-    gradeId: string,
-    dto: UpdateGuidanceScoreDTO,
-    ctx: { ipAddress?: string; userAgent?: string }
-  ) {
-    const grade = await gradeRepository.findById(gradeId);
-    if (!grade) throw new NotFoundError(MESSAGES.NOT_FOUND);
-
-    const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { role: true } });
-    if (!actor) throw new NotFoundError('Penginput nilai tidak ditemukan');
-    if (actor.role === Role.GURU_PEMBIMBING) {
-      const supervision = await prisma.studentSupervisor.findUnique({
-        where: { studentId: grade.studentId },
-        select: { supervisorId: true },
-      });
-      if (supervision?.supervisorId !== actorId) throw new BadRequestError(MESSAGES.SCOPE);
-    }
-
-    const updated = await gradeRepository.update(gradeId, {
-      scoreGuidance: dto.scoreGuidance,
-      note: dto.note ?? grade.note,
-    });
-
-    await auditService.record({
-      actorId,
-      action: AUDIT_ACTIONS.UPDATE_GRADE,
-      entityType: ENTITY_TYPES.USER,
-      entityId: grade.studentId,
-      metadata: { scoreGuidance: dto.scoreGuidance, gradeId },
-      ipAddress: ctx.ipAddress,
-      userAgent: ctx.userAgent,
-    });
-
-    return updated;
-  }
-
   /** Siswa: lihat rekap nilai sendiri (termasuk status persetujuan). */
   async getMyGrades(studentId: string): Promise<Array<GradeWithApproval<GradeWithStudent>>> {
     const items = await gradeRepository.findMany({ studentId });
     return this.attachApprovals(items);
   }
 
-  /** Admin/Guru: daftar nilai. Guru dibatasi ke siswa bimbingannya. */
+  /** Admin: daftar nilai (dibatasi jurusan yang diawasi utk ADMIN). */
   async list(
     params: { page: number; perPage: number; studentId?: string },
     actor: { id: string; role: string }
@@ -250,20 +308,12 @@ export class GradeService {
       ...(params.studentId ? { studentId: params.studentId } : {}),
     };
 
-    if (actor.role === Role.GURU_PEMBIMBING) {
-      if (params.studentId) {
-        const supervision = await prisma.studentSupervisor.findUnique({
-          where: { studentId: params.studentId },
-          select: { supervisorId: true },
-        });
-        if (supervision?.supervisorId !== actor.id) throw new BadRequestError(MESSAGES.SCOPE);
-      } else {
-        const links = await prisma.studentSupervisor.findMany({
-          where: { supervisorId: actor.id },
-          select: { studentId: true },
-        });
-        if (links.length === 0) return { items: [], total: 0 };
-        where = { ...where, studentId: { in: links.map((l) => l.studentId) } };
+    // Scope jurusan: ADMIN hanya nilai milik siswa dalam jurusan yang diawasi.
+    if (actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) {
+        where = andWhere(where as Record<string, unknown>, scoped) as Prisma.GradeWhereInput;
       }
     }
 
@@ -275,9 +325,17 @@ export class GradeService {
     return { items: await this.attachApprovals(items), total };
   }
 
-  /** Admin: rekap semua nilai. */
-  async getRecap(): Promise<Array<GradeWithApproval<GradeWithStudent>>> {
-    const items = await gradeRepository.findMany({});
+  /** Admin: rekap semua nilai (dibatasi jurusan yang diawasi utk ADMIN). */
+  async getRecap(actor?: { id: string; role: string }): Promise<Array<GradeWithApproval<GradeWithStudent>>> {
+    let where: Prisma.GradeWhereInput = {};
+    if (actor && actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) {
+        where = andWhere(where as Record<string, unknown>, scoped) as Prisma.GradeWhereInput;
+      }
+    }
+    const items = await gradeRepository.findMany(where);
     return this.attachApprovals(items);
   }
 
@@ -286,30 +344,31 @@ export class GradeService {
    * Sumber = seluruh siswa aktif cohort, termasuk yang belum dinilai (`grade: null`),
    * lengkap dengan perusahaan tujuan dan guru pembimbing.
    */
-  async getRecapByClass(params?: { cohortId?: string }): Promise<{
-    classes: Array<{
-      className: string;
-      studentCount: number;
-      gradedCount: number;
-      students: Array<{
-        userId: string;
-        username: string;
-        fullName: string;
-        nisn: string | null;
-        companyName: string | null;
-        supervisorName: string | null;
-        approvalStatus: ApprovalStatus | null;
-        grade: GradeWithStudent | null;
-      }>;
-    }>;
-    totalStudents: number;
-    totalGraded: number;
-  }> {
+  async getRecapByClass(
+    params?: { cohortId?: string },
+    actor?: { id: string; role: string }
+  ): Promise<GradeRecapByClass> {
+    // Scope jurusan: ADMIN hanya siswa dalam jurusan yang diawasi.
+    let userScopeWhere: Prisma.UserWhereInput = {};
+    if (actor && actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      if (!('all' in scope)) {
+        const majorIds = scope.majorIds;
+        userScopeWhere = {
+          studentProfile:
+            majorIds.length === 0
+              ? { id: { in: [] } }
+              : { OR: [{ majorId: { in: majorIds } }, { class: { majorId: { in: majorIds } } }] },
+        };
+      }
+    }
+
     const students = await prisma.user.findMany({
       where: {
         role: Role.SISWA,
         deletedAt: null,
         ...(params?.cohortId ? { cohortId: params.cohortId } : {}),
+        ...userScopeWhere,
       },
       select: {
         id: true,

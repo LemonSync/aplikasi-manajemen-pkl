@@ -6,6 +6,7 @@ import {
   type DocumentRecord,
   type DocumentPlacement,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { useCohortStore } from '@/stores/cohort.store';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
@@ -16,8 +17,6 @@ import StatusBadge from '@/components/StatusBadge.vue';
 const docs = ref<DocumentRecord[]>([]);
 const cohortStore = useCohortStore();
 const loading = ref(true);
-const error = ref('');
-const success = ref('');
 const filterStatus = ref('MENUNGGU_VERIFIKASI');
 const filterType = ref('');
 const search = ref('');
@@ -26,7 +25,6 @@ const noteInput = ref('');
 const busy = ref(false);
 const detail = ref<(DocumentRecord & { placement: DocumentPlacement | null }) | null>(null);
 const loadingDetail = ref(false);
-const detailError = ref('');
 
 const TYPE_LABELS: Record<string, string> = {
   SURAT_PENERIMAAN: 'Surat Penerimaan',
@@ -51,7 +49,7 @@ const filteredDocs = computed(() => {
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const result = await documentService.list(
       filterStatus.value || undefined,
@@ -60,7 +58,7 @@ const load = async (): Promise<void> => {
     );
     docs.value = result.items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -70,12 +68,11 @@ const open = async (d: DocumentRecord): Promise<void> => {
   activeId.value = d.id;
   noteInput.value = '';
   detail.value = null;
-  detailError.value = '';
   loadingDetail.value = true;
   try {
     detail.value = await documentService.getDetail(d.id);
   } catch (e) {
-    detailError.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loadingDetail.value = false;
   }
@@ -84,28 +81,30 @@ const open = async (d: DocumentRecord): Promise<void> => {
 const verify = async (action: 'APPROVE' | 'REJECT'): Promise<void> => {
   if (!activeId.value) return;
   if (action === 'REJECT' && !noteInput.value.trim()) {
-    error.value = 'Alasan penolakan wajib diisi.';
+    notify.error('Alasan penolakan wajib diisi.');
     return;
   }
   busy.value = true;
-  error.value = '';
+  notify.clear();
   try {
     await documentService.verify(activeId.value, action, noteInput.value.trim());
-    success.value = action === 'APPROVE' ? 'Disetujui.' : 'Ditolak.';
+    notify.success(action === 'APPROVE' ? 'Disetujui.' : 'Ditolak.');
     activeId.value = null;
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     busy.value = false;
   }
 };
 
+// Tanpa nama default .pdf — nama asli file (png/docx/dll) diambil dari
+// header Content-Disposition backend agar ekstensi tetap sesuai aslinya.
 const download = async (id: string, filename?: string): Promise<void> => {
   try {
-    await downloadFile(`/documents/${id}/download`, filename ?? 'document.pdf');
+    await downloadFile(`/documents/${id}/download`, filename);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -122,8 +121,6 @@ watch(
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <div class="mb-4">
@@ -157,6 +154,7 @@ watch(
             <option value="MENUNGGU_VERIFIKASI">Menunggu</option>
             <option value="DISETUJUI">Disetujui</option>
             <option value="DITOLAK">Ditolak</option>
+            <option value="TIDAK_BERLAKU">Tidak berlaku (ganti perusahaan)</option>
           </select>
         </div>
       </div>
@@ -174,10 +172,15 @@ watch(
         <tbody>
           <tr v-for="d in filteredDocs" :key="d.id" class="cursor-pointer hover:bg-gray-50" @click="open(d)">
             <td>{{ TYPE_LABELS[d.type] ?? d.type }}</td>
-            <td>{{ d.title ?? '-' }}</td>
+            <td>
+              {{ d.title ?? '-' }}
+              <p v-if="d.files?.[0]?.originalName" class="font-mono text-xs text-gray-400">
+                {{ d.files[0].originalName }}
+              </p>
+            </td>
             <td>
               <StatusBadge :status="d.status" />
-              <p v-if="d.status === 'DITOLAK' && d.note" class="mt-1 max-w-xs text-xs text-red-500">
+              <p v-if="(d.status === 'DITOLAK' || d.status === 'TIDAK_BERLAKU') && d.note" class="mt-1 max-w-xs text-xs text-red-500">
                 {{ d.note }}
               </p>
             </td>
@@ -205,6 +208,10 @@ watch(
             <span class="text-gray-500">Versi</span>
             <span>v{{ active.files?.[0]?.version ?? '-' }}</span>
           </div>
+          <div class="flex justify-between gap-4">
+            <span class="shrink-0 text-gray-500">File</span>
+            <span class="break-all text-right font-mono">{{ active.files?.[0]?.originalName ?? '-' }}</span>
+          </div>
           <div class="flex justify-between">
             <span class="text-gray-500">Tanggal</span>
             <span>{{ new Date(active.createdAt).toLocaleDateString('id-ID') }}</span>
@@ -227,7 +234,6 @@ watch(
         <div class="mt-4 border-t border-gray-100 pt-4">
           <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Penempatan Dokumen</div>
           <LoadingSpinner v-if="loadingDetail" />
-          <div v-else-if="detailError" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ detailError }}</div>
           <template v-else-if="detail">
             <div v-if="detail.placement" class="space-y-3">
               <!-- Siswa pemilik dokumen -->

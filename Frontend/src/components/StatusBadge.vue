@@ -3,27 +3,28 @@ import { computed } from 'vue';
 
 /**
  * Badge status generik (warna otomatis berdasarkan status).
+ * Enum Indonesia dibiarkan apa adanya — yang berubah hanya pemetaan warnanya.
  */
 const props = defineProps<{ status: string }>();
 
-const colorClass = computed<string>(() => {
+const tone = computed<string>(() => {
   const s = props.status.toUpperCase();
-  if (['DISETUJUI', 'SELESAI', 'AKTIF', 'APPROVED'].includes(s)) {
-    return 'bg-emerald-100 text-emerald-700';
+  if (['DISETUJUI', 'SELESAI', 'AKTIF', 'APPROVED', 'DIVERIFIKASI', 'VALID'].includes(s)) {
+    return 'bg-ok-soft text-ok';
   }
-  if (['DITOLAK', 'REJECTED', 'GAGAL'].includes(s)) {
-    return 'bg-red-100 text-red-700';
+  if (['DITOLAK', 'REJECTED', 'GAGAL', 'KADALUWARSA'].includes(s)) {
+    return 'bg-no-soft text-no';
   }
-  if (['MENUNGGU_VERIFIKASI', 'DIAJUKAN', 'MENUNGGU'].includes(s)) {
-    return 'bg-amber-100 text-amber-700';
+  if (['MENUNGGU_VERIFIKASI', 'MENUNGGU_APPROVAL', 'DIAJUKAN', 'MENUNGGU', 'PROSES', 'BERLANGSUNG'].includes(s)) {
+    return 'bg-warn-soft text-warn';
   }
-  if (['DRAFT', 'DIBATALKAN'].includes(s)) {
-    return 'bg-gray-100 text-gray-600';
+  if (['DRAFT', 'DIBATALKAN', 'TIDAK_BERLAKU', 'NONAKTIF', 'BELUM'].includes(s)) {
+    return 'bg-raise text-ink-600';
   }
-  return 'bg-primary-100 text-primary-700';
+  return 'bg-primary-50 text-primary-700';
 });
 </script>
 
 <template>
-  <span class="badge" :class="colorClass">{{ status }}</span>
+  <span class="badge" :class="tone">{{ status }}</span>
 </template>

@@ -24,6 +24,7 @@ export class SupervisionController {
       supervisorId: query.supervisorId,
       unassignedOnly: query.unassigned === 'true',
       ...(isGuru ? { supervisorSelf: req.user!.sub } : {}),
+      actor: { id: req.user!.sub, role: req.user!.role },
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });

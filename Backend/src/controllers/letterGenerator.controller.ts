@@ -23,6 +23,7 @@ export class LetterGeneratorController {
       companyId: dto.companyId,
       number: dto.number ?? null,
       actorId: actor.sub,
+      actorRole: actor.role,
     });
 
     await auditService.record({

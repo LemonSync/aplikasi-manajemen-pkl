@@ -16,6 +16,7 @@ import { registryClassByNisn } from '../services/classResolver.service';
 import { CompletePhaseDTO, GenerateBulkLetterDTO } from '../validators/phase4.validator';
 import { DocumentType, Prisma, Role, StudentPhase } from '@prisma/client';
 import { LETTER_TEXT } from '../config/letter.config';
+import { resolveScope, scopeUserWhere } from '../services/majorScope.service';
 
 type LetterScopePayload = {
   supervisorId?: string;
@@ -111,8 +112,17 @@ export class Phase4Controller {
     });
     if (!supervisor) throw new NotFoundError('Guru pembimbing tidak ditemukan atau tidak aktif');
 
+    // Scope jurusan: ADMIN hanya menerbitkan surat utk siswa dalam jurusan
+    // yang diawasi. (Guru/super & kepala tidak discoping di sini.)
+    let scopeFilter: Prisma.StudentSupervisorWhereInput = {};
+    if (actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.sub, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) scopeFilter = scoped as Prisma.StudentSupervisorWhereInput;
+    }
+
     const links = await prisma.studentSupervisor.findMany({
-      where: { supervisorId },
+      where: { supervisorId, ...scopeFilter },
       include: {
         student: {
           select: {
@@ -177,16 +187,15 @@ export class Phase4Controller {
     // Surat bulk (Pengantar/Monitoring/Penjemputan) memuat daftar siswa yang bisa
     // berada di perusahaan berbeda — baris "Kepada Yth" ditujukan generik ke
     // pimpinan perusahaan (bukan menamai satu perusahaan tertentu).
-    const recipientLines = [LETTER_TEXT.recipient.salutation, LETTER_TEXT.recipient.place];
-    const recipientCity = '';
+    const recipientLines = [LETTER_TEXT.recipient.salutation];
+    const recipientCity = LETTER_TEXT.recipient.place;
 
     // Tabel seragam 6 kolom: NISN + kelas + perusahaan/alamat per siswa
     // (siswa bimbingan bisa berada di perusahaan berbeda-beda).
     const table = {
+      preset: 'bulk' as const,
       columns: ['NO', 'NISN', 'NAMA SISWA', 'KELAS', 'PERUSAHAAN', 'ALAMAT'],
       rows: rows.map((r) => [r.no, r.nisn ?? '-', r.name, r.className ?? '-', r.company, r.address ?? '-']),
-      widths: [26, 56, 88, 52, 90, 87] as number[],
-      aligns: ['center', 'center', 'left', 'center', 'left', 'left'] as Array<'left' | 'center' | 'right'>,
     };
 
     const result = await letterService.generateLetter({
@@ -201,7 +210,7 @@ export class Phase4Controller {
         ? {
             nama: teacherName,
             nip: supervisor.teacherProfile?.nip ?? null,
-            alamat: '-',
+            alamat: null,
             telp: supervisor.teacherProfile?.phone ?? null,
           }
         : null,

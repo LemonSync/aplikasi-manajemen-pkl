@@ -2,16 +2,28 @@ import PDFDocument from 'pdfkit';
 import path from 'path';
 import { formatDate } from '../utils/date';
 import { readStoredFile } from '../utils/storage';
-import { LETTER_LAYOUT, LETTER_TEXT } from '../config/letter.config';
+import { LETTER_LAYOUT, LETTER_TEXT, LetterTablePreset } from '../config/letter.config';
+import { createPdfLayout, PDFDocType, Align } from './pdf-layout';
 
-type PDFDocType = InstanceType<typeof PDFDocument>;
+const L = LETTER_LAYOUT;
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo-sumut.png');
 
 /**
- * Template surat resmi SMKN 9 Medan — reproduksi persis surat contoh resmi:
- * kop (logo Pemprov Sumut + blok instansi + garis double), font Times,
- * blok Nomor/Lampiran/Hal, tabel berkepala abu-abu, blok tanda tangan,
- * footer nomor halaman.
+ * Surat dinas memakai Times (metric surat asli); ascender reguler & bold sama
+ * sehingga bold inline tidak menggeser baseline.
  */
+const { measure, putLine, putUnderline, ensureRoom, typeset, putParagraph } = createPdfLayout({
+  fonts: { regular: 'Times-Roman', bold: 'Times-Bold' },
+  ascender: L.metrics.ascender,
+  defaultX: L.page.margin,
+  defaultPitch: L.body.pitch,
+  contentBottom: L.page.contentBottom,
+  continuationTop: L.page.continuationTop,
+});
+
+/* ------------------------------------------------------------------ *
+ * Tipe publik — dipakai letter.service.ts
+ * ------------------------------------------------------------------ */
 
 export interface SchoolHeader {
   government: string;
@@ -34,10 +46,14 @@ export interface SignerBlock {
 export interface LetterTable {
   columns: string[];
   rows: string[][];
-  /** Lebar kolom opsional (dalam pt). Bila diisi sebagian, sisa dibagi rata. */
+  /** Preset terukur; x/widths/aligns tetap boleh mengoverridenya. */
+  preset?: LetterTablePreset;
+  x?: number;
   widths?: number[];
-  /** Rata kolom (default: kolom pertama center, sisanya left). */
-  aligns?: Array<'left' | 'center' | 'right'>;
+  aligns?: Align[];
+  size?: number;
+  headerHeight?: number;
+  rowHeight?: number;
 }
 
 export interface PembimbingBlock {
@@ -81,318 +97,369 @@ export interface PenugasanLetterInput {
   signer: SignerBlock;
 }
 
-const MARGIN = LETTER_LAYOUT.page.margin;
-const FONT = 'Times-Roman';
-const FONT_BOLD = 'Times-Bold';
-const PAGE_BOTTOM = LETTER_LAYOUT.page.contentBottom; // batas konten sebelum footer
-const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo-sumut.png');
+/* ------------------------------------------------------------------ *
+ * Kop surat
+ * ------------------------------------------------------------------ */
 
-const pageWidth = (doc: PDFDocType): number => doc.page.width - MARGIN;
-
-/** Gambar teks dengan dukungan **bold** inline. Mengembalikan y setelahnya. */
-const drawRich = (
-  doc: PDFDocType,
-  text: string,
-  x: number,
-  y: number,
-  opts: { width: number; align?: 'left' | 'center' | 'right' | 'justify'; size?: number; lineGap?: number } = {
-    width: 100,
-  }
-): number => {
-  const parts = text.split('**');
-  const size = opts.size ?? LETTER_LAYOUT.fonts.body;
-  const lineGap = opts.lineGap ?? 2.5;
-  parts.forEach((part, i) => {
-    const bold = i % 2 === 1;
-    doc.font(bold ? FONT_BOLD : FONT).fontSize(size);
-    const isLast = i === parts.length - 1;
-    const textOpts: Parameters<PDFDocType['text']>[1] = {
-      width: opts.width,
-      lineGap,
-      ...(opts.align && opts.align !== 'left' ? { align: opts.align } : {}),
-      ...(!isLast ? { continued: true } : {}),
-    };
-    if (i === 0) doc.text(part, x, y, textOpts);
-    else doc.text(part, textOpts);
-  });
-  return doc.y;
-};
-
-/** Kop surat persis surat contoh: logo + 4 baris instansi + garis double. */
 const drawKop = (doc: PDFDocType, header: SchoolHeader): void => {
-  const right = pageWidth(doc);
-  const logoW = 72;
-  const textX = MARGIN + 82;
-  const textW = right - textX;
-
+  const k = L.kop;
   try {
-    doc.image(LOGO_PATH, MARGIN + 4, 30, { width: logoW });
+    doc.image(LOGO_PATH, k.logo.x, k.logo.top, { width: k.logo.width, height: k.logo.height });
   } catch {
-    // logo opsional — bila gagal dimuat, kop tetap digambar
+    // logo opsional — kop tetap digambar bila file tidak ada
   }
 
-  const y = 36;
-  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.government).text(header.government.toUpperCase(), textX, y, {
-    width: textW,
-    align: 'center',
-    lineGap: 1,
-  });
-  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.department).text(header.dinas.toUpperCase(), textX, doc.y, {
-    width: textW,
-    align: 'center',
-    lineGap: 1,
-  });
-  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.schoolName).text(header.schoolName.toUpperCase(), textX, doc.y + 1, {
-    width: textW,
-    align: 'center',
-    lineGap: 2,
-  });
-  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.header.program).text(header.programKeahlian, textX, doc.y + 1, {
-    width: textW,
-    align: 'center',
-    lineGap: 1.5,
-  });
-  doc.font(FONT).fontSize(8).text(header.address, textX, doc.y, { width: textW, align: 'center', lineGap: 1 });
-
-  // Baris website + email (biru + underline, persis contoh) + NPSN di kanan
-  const npsnText = `NPSN : ${header.npsn}`;
-  doc.font(FONT_BOLD).fontSize(8);
-  const npsnW = doc.widthOfString(npsnText);
-  const webY = doc.y + 1;
-  const webW = textW - npsnW - 18;
-  doc.fillColor('black').font(FONT).fontSize(8).text('Website:', textX, webY, { width: webW, continued: true });
-  doc.text(`${header.website} `, { continued: true });
-  doc.fillColor('#1155cc').text('Email: ', { continued: true, link: `mailto:${header.email}`, underline: false });
-  doc.text(header.email, { link: `mailto:${header.email}`, underline: true });
-  doc.fillColor('black').font(FONT_BOLD).fontSize(8).text(npsnText, right - npsnW, webY, { width: npsnW + 2 });
-  doc.x = MARGIN;
-
-  // Garis double pemisah kop
-  const ruleY = Math.max(doc.y, webY + 12) + 6;
-  doc
-    .moveTo(MARGIN - 8, ruleY)
-    .lineTo(right + 8, ruleY)
-    .lineWidth(2.2)
-    .strokeColor('black')
-    .stroke();
-  doc.moveTo(MARGIN - 8, ruleY + 3.2).lineTo(right + 8, ruleY + 3.2).lineWidth(0.8).stroke();
-  doc.y = ruleY + 16;
-  doc.x = MARGIN;
-};
-
-/** Tabel resmi: kepala abu-abu tebal center, border tipis, header ulang saat pindah halaman. */
-const drawTable = (
-  doc: PDFDocType,
-  table: LetterTable,
-  x: number,
-  right: number,
-  fontSize = 10
-): void => {
-  const padX = 5;
-  const padY = 4;
-  const total = right - x;
-  const cols = table.columns.length;
-  const widths = (() => {
-    if (table.widths && table.widths.length === cols) {
-      const given = table.widths.reduce((a, b) => a + b, 0);
-      if (given <= total) {
-        const rest = total - given;
-        return table.widths.map((w) => w + rest / cols);
-      }
-    }
-    return Array.from({ length: cols }, () => total / cols);
-  })();
-  const aligns = table.aligns ?? table.columns.map((_, i) => (i === 0 ? 'center' : ('left' as const)));
-
-  const drawRow = (cells: string[], isHeader: boolean): void => {
-    doc.font(isHeader ? FONT_BOLD : FONT).fontSize(fontSize);
-    const heights = cells.map((cell, i) =>
-      doc.heightOfString(String(cell ?? ''), { width: widths[i] - padX * 2, lineGap: 1 })
-    );
-    const rowH = Math.max(...heights, fontSize + 4) + padY * 2;
-
-    if (doc.y + rowH > PAGE_BOTTOM) {
-      doc.addPage();
-      if (!isHeader) drawRow(table.columns, true);
-    }
-
-    const y0 = doc.y;
-    let cx = x;
-    cells.forEach((cell, i) => {
-      if (isHeader) doc.fillColor('#e8e8e8').rect(cx, y0, widths[i], rowH).fill();
-      doc.lineWidth(0.6).strokeColor('black').rect(cx, y0, widths[i], rowH).stroke();
-      doc.font(isHeader ? FONT_BOLD : FONT).fontSize(fontSize).fillColor('black');
-      doc.text(String(cell ?? ''), cx + padX, y0 + padY, {
-        width: widths[i] - padX * 2,
-        align: isHeader ? 'center' : aligns[i],
-        lineGap: 1,
-      });
-      cx += widths[i];
-    });
-    doc.y = y0 + rowH;
-    doc.x = x;
+  const centered = (
+    text: string,
+    line: { baseline: number; size: number; bold: boolean }
+  ): void => {
+    putLine(doc, text, line.baseline, { center: k.centerX }, { size: line.size, bold: line.bold });
   };
+  centered(header.government.toUpperCase(), k.lines.government);
+  centered(header.dinas.toUpperCase(), k.lines.department);
+  centered(header.schoolName.toUpperCase(), k.lines.schoolName);
+  centered(header.programKeahlian, k.lines.program);
+  centered(header.address, k.lines.address);
 
-  drawRow(table.columns, true);
-  for (const row of table.rows) drawRow(row, false);
+  // Website + Email (email biru bergaris bawah); NPSN sebaris, di-anchor kanan.
+  const size = k.lines.contact.size;
+  const lead = `Website:${header.website} Email: `;
+  const leadW = measure(doc, lead, { size });
+  const emailW = measure(doc, header.email, { size });
+  const startX = k.centerX - (leadW + emailW) / 2;
+  const baseline = k.lines.contact.baseline;
+  putLine(doc, lead, baseline, { x: startX }, { size });
+  putLine(doc, header.email, baseline, { x: startX + leadW }, {
+    size,
+    color: k.contact.emailColor,
+    link: `mailto:${header.email}`,
+  });
+  putUnderline(doc, header.email, baseline, startX + leadW, { size, color: k.contact.emailColor });
+  putLine(doc, `NPSN : ${header.npsn}`, baseline, { right: k.contact.npsnRight }, {
+    size,
+    bold: true,
+  });
+
+  doc.lineWidth(k.rule.upperWidth).strokeColor('black');
+  doc.moveTo(k.rule.x1, k.rule.upperY).lineTo(k.rule.x2, k.rule.upperY).stroke();
+  doc.lineWidth(k.rule.lowerWidth);
+  doc.moveTo(k.rule.x1, k.rule.lowerY).lineTo(k.rule.x2, k.rule.lowerY).stroke();
 };
 
-/** Blok "Dengan Pembimbing Sekolah" (surat pengantar). */
-const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, x: number, right: number): void => {
-  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body);
-  doc.text('Dengan Pembimbing Sekolah :', x, doc.y, { width: right - x });
-  doc.moveDown(0.3);
-  const fields: Array<[string, string]> = [
-    ['N a m a', block.nama],
-    ['N I P', block.nip ?? ''],
-    ['Alamat', block.alamat ?? ''],
-    ['No. Telp', block.telp ?? ''],
+/* ------------------------------------------------------------------ *
+ * Blok label : nilai
+ * ------------------------------------------------------------------ */
+
+const putLabelRow = (
+  doc: PDFDocType,
+  label: string,
+  value: string | null | undefined,
+  baseline: number,
+  geometry: { x: number; colonX: number; valueX: number; size: number }
+): void => {
+  const style = { size: geometry.size };
+  putLine(doc, label, baseline, { x: geometry.x }, style);
+  putLine(doc, ':', baseline, { x: geometry.colonX }, style);
+  putLine(doc, value, baseline, { x: geometry.valueX }, style);
+};
+
+/* ------------------------------------------------------------------ *
+ * Tabel
+ * ------------------------------------------------------------------ */
+
+const resolveColumns = (
+  table: LetterTable,
+  preset: (typeof L.table.presets)[LetterTablePreset] | undefined,
+  x: number
+): { widths: number[]; right: number } => {
+  const given = table.widths ?? preset?.widths;
+  if (given && given.length === table.columns.length) {
+    return { widths: given.map((w) => w), right: x + given.reduce((a, b) => a + b, 0) };
+  }
+  const width = (L.page.contentRight - x) / table.columns.length;
+  return {
+    widths: Array.from({ length: table.columns.length }, () => width),
+    right: L.page.contentRight,
+  };
+};
+
+interface TableModel {
+  x: number;
+  right: number;
+  widths: number[];
+  aligns: Align[];
+  size: number;
+  padX: number;
+  rows: Array<{
+    header: boolean;
+    height: number;
+    cells: Array<Array<{ text: string; width: number }>>;
+  }>;
+}
+
+/**
+ * Model tabel: tiap sel dibungkus sendiri; tinggi baris = tinggi baris dasar
+ * + pitch untuk setiap baris tambahan (persis perilaku surat asli).
+ */
+const buildTable = (doc: PDFDocType, table: LetterTable): TableModel => {
+  const preset = table.preset ? L.table.presets[table.preset] : undefined;
+  const x = table.x ?? preset?.x ?? L.body.x;
+  const { widths, right } = resolveColumns(table, preset, x);
+  const size = table.size ?? L.table.size;
+  const padX = preset?.padX ?? L.table.padX;
+  const headerHeight = table.headerHeight ?? preset?.headerHeight ?? 27.75;
+  const baseHeight = table.rowHeight ?? preset?.rowHeight ?? 27;
+  const aligns: Align[] =
+    table.aligns ??
+    preset?.aligns ??
+    Array.from({ length: table.columns.length }, (_, i) => (i === 0 ? 'center' : 'left'));
+
+  const source = [
+    { cells: table.columns, header: true },
+    ...table.rows.map((cells) => ({ cells, header: false })),
   ];
-  for (const [label, value] of fields) {
-    const y0 = doc.y;
-      doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(label, x, y0, { width: 60 });
-    doc.text(':', x + 60, y0, { width: 10 });
-    doc.text(value, x + 74, y0, { width: right - x - 74 });
-    doc.y = Math.max(doc.y, y0 + 14);
-  }
-  doc.x = MARGIN;
-};
 
-/** Blok tanda tangan surat formal: jabatan center, jeda, nama tebal + NIP (tanpa baris tanggal). */
-const drawSignFormal = (doc: PDFDocType, signer: SignerBlock): void => {
-  // Blok tanda tangan tidak boleh terpotong antar halaman (butuh ~95pt).
-  if (doc.y > 700) doc.addPage();
-  const blockW = LETTER_LAYOUT.signature.formal.blockWidth;
-  const x = pageWidth(doc) - blockW;
-  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(signer.position, x, doc.y, { width: blockW, align: 'center' });
-  doc.moveDown(0.5);
-  // Jarak tanda tangan dibuat lebih rapat agar blok tidak terlalu turun.
-  const nameY = doc.y + LETTER_LAYOUT.signature.formal.nameOffsetY;
-  const signature = signer.signaturePath ? readStoredFile(signer.signaturePath) : null;
-  if (signature) {
-    // PNG canvas biasanya memiliki ruang kosong di sekeliling tinta; ukuran
-    // diperbesar dan dinaikkan agar tanda tangan tampak jelas di atas nama.
-  try {
-    const image = LETTER_LAYOUT.signature.formal.image;
-    doc.image(signature, x + image.offsetX, nameY + image.offsetY, { width: image.width, height: image.height });
-  } catch { /* tanda tangan opsional */ }
-  }
-  doc.font(FONT_BOLD).fontSize(LETTER_LAYOUT.fonts.body).text(signer.name, x, nameY, { width: blockW, align: 'center' });
-  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body);
-  if (signer.nip) doc.text(`NIP. ${signer.nip}`, x, doc.y, { width: blockW, align: 'center' });
-  doc.x = MARGIN;
-};
+  const rows = source.map(({ cells, header }) => {
+    let lines = 1;
+    const sel = widths.map((width, i) => {
+      const text = cells[i] == null ? '' : String(cells[i]);
+      const wrapped = text ? typeset(doc, text, size, width - padX * 2).lines : [];
+      lines = Math.max(lines, wrapped.length);
+      return wrapped.map((words) => ({
+        text: words.map((w) => w.text).join(' '),
+        width: measure(doc, words.map((w) => w.text).join(' '), { size, bold: header }),
+      }));
+    });
+    const base = header ? headerHeight : baseHeight;
+    return { header, cells: sel, height: Math.max(base, base + (lines - 1) * L.table.pitch) };
+  });
 
-/** Footer nomor halaman "-- n of m --" (dipanggil setelah semua halaman terbentuk). */
-const drawFooters = (doc: PDFDocType): void => {
-  const range = doc.bufferedPageRange();
-  for (let i = 0; i < range.count; i++) {
-    doc.switchToPage(range.start + i);
-    doc
-      .font(FONT)
-    .fontSize(LETTER_LAYOUT.fonts.footer)
-      .fillColor('black')
-      .text(`-- ${i + 1} of ${range.count} --`, 0, doc.page.height - 52, {
-        width: doc.page.width,
-        align: 'center',
-        lineBreak: false,
-      });
-  }
+  return { x, right, widths, aligns, size, padX, rows };
 };
 
 /**
- * Render surat formal (permohonan/pengantar/monitoring/penjemputan).
- * Body mengikuti contoh resmi: blok Nomor kiri + tanggal kanan, recipient,
- * paragraf justify (di-indent ke kolom nilai), tabel, closing, tanda tangan.
+ * Gambar tabel: kepala abu-abu bold center, border digambar SEKALI per segmen
+ * (satu garis tiap batas baris + tiap batas kolom), header berulang saat tabel
+ * lanjut ke halaman berikutnya. `top` = tepi atas header → tepi bawah tabel.
  */
+const drawTable = (doc: PDFDocType, table: LetterTable, top: number): number => {
+  const model = buildTable(doc, table);
+  const { x, right, widths, aligns, size, padX, rows } = model;
+  const firstBaseline = (rowTop: number): number =>
+    rowTop + L.metrics.ascender * size + L.table.textPad;
+
+  const drawRow = (row: TableModel['rows'][number], rowTop: number): void => {
+    if (row.header) {
+      doc.rect(x, rowTop, right - x, row.height).fill(L.table.headerFill);
+      doc.fillColor('black');
+    }
+    const start = firstBaseline(rowTop);
+    row.cells.forEach((cell, i) => {
+      const left = x + widths.slice(0, i).reduce((a, b) => a + b, 0);
+      cell.forEach((line, li) => {
+        let tx = left + padX;
+        if (row.header || aligns[i] === 'center') tx = left + (widths[i] - line.width) / 2;
+        else if (aligns[i] === 'right') tx = left + widths[i] - padX - line.width;
+        putLine(doc, line.text, start + li * L.table.pitch, { x: tx }, {
+          size,
+          bold: row.header,
+        });
+      });
+    });
+  };
+
+  let y = top;
+  let bounds: number[] = [y];
+  const strokeGrid = (bottom: number): void => {
+    doc.lineWidth(L.table.borderWidth).strokeColor('black');
+    for (const yy of bounds) doc.moveTo(x, yy).lineTo(right, yy);
+    doc.moveTo(x, bottom).lineTo(right, bottom);
+    let cx = x;
+    for (let i = 0; i <= widths.length; i++) {
+      doc.moveTo(cx, bounds[0]).lineTo(cx, bottom);
+      cx += widths[i] ?? 0;
+    }
+    doc.stroke();
+  };
+
+  for (const row of rows) {
+    if (y + row.height > L.page.contentBottom) {
+      strokeGrid(y);
+      doc.addPage();
+      y = L.page.continuationTop;
+      bounds = [y];
+      if (!row.header) {
+        drawRow(rows[0], y);
+        y += rows[0].height;
+        bounds.push(y);
+      }
+    }
+    drawRow(row, y);
+    y += row.height;
+    bounds.push(y);
+  }
+  strokeGrid(y);
+  return y;
+};
+
+/* ------------------------------------------------------------------ *
+ * Blok "Dengan Pembimbing Sekolah" (surat pengantar)
+ * ------------------------------------------------------------------ */
+
+const drawPembimbing = (doc: PDFDocType, block: PembimbingBlock, baseline: number): number => {
+  const p = L.pembimbing;
+  const size = L.body.size;
+  putLine(doc, 'Dengan Pembimbing Sekolah :', baseline, { x: p.x }, { size });
+  const rows: Array<[string, string | null | undefined]> = [
+    ['N a m a', block.nama],
+    ['N I P', block.nip],
+    ['Alamat', block.alamat],
+    ['No. Telp', block.telp],
+  ];
+  let b = baseline + p.pitch;
+  for (const [label, value] of rows) {
+    putLine(doc, label, b, { x: p.x }, { size });
+    putLine(doc, ':', b, { x: p.colonX }, { size });
+    putLine(doc, value, b, { x: p.colonX + 14 }, { size });
+    b += p.pitch;
+  }
+  return b - p.pitch;
+};
+
+/* ------------------------------------------------------------------ *
+ * Blok tanda tangan — rata kiri di x=344.7 pada ketiga surat asli
+ * ------------------------------------------------------------------ */
+
+const drawSignature = (doc: PDFDocType, signer: SignerBlock, positionBaseline: number): void => {
+  const s = L.signature;
+  putLine(doc, signer.position, positionBaseline, { x: s.x }, { size: s.size });
+  const nameBaseline = positionBaseline + s.nameGap;
+
+  const buffer = signer.signaturePath ? readStoredFile(signer.signaturePath) : null;
+  if (buffer) {
+    try {
+      // openImage tidak ada di @types/pdfkit, tapi tersedia saat runtime.
+      const image = (
+        doc as unknown as { openImage(src: Buffer): { width: number; height: number } }
+      ).openImage(buffer);
+      const scale = Math.min(s.image.maxWidth / image.width, (s.nameGap - 14) / image.height);
+      doc.image(buffer, s.x + s.image.offsetX, positionBaseline + s.image.offsetY, {
+        width: image.width * scale,
+      });
+    } catch {
+      // tanda tangan opsional
+    }
+  }
+
+  putLine(doc, signer.name, nameBaseline, { x: s.x }, { size: s.size, bold: true });
+  if (signer.nip) {
+    putLine(doc, `${LETTER_TEXT.labels.nipPrefix} ${signer.nip}`, nameBaseline + s.nipPitch, {
+      x: s.x,
+    }, { size: s.size });
+  }
+};
+
+const newLetterDoc = (): PDFDocType =>
+  new PDFDocument({
+    size: 'A4',
+    margins: {
+      top: L.page.margin,
+      bottom: L.page.margin,
+      left: L.page.margin,
+      right: L.page.width - L.page.contentRight,
+    },
+  });
+
+/* ------------------------------------------------------------------ *
+ * Surat formal (permohonan / pengantar / monitoring / penjemputan)
+ * ------------------------------------------------------------------ */
+
 export const renderFormalLetterPdf = (
   header: SchoolHeader,
   input: FormalLetterInput
 ): Promise<Buffer> => {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({
-        size: 'A4',
-        margins: { top: MARGIN, bottom: 40, left: MARGIN, right: MARGIN },
-        bufferPages: true,
-      });
+      const doc = newLetterDoc();
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-       drawKop(doc, header);
+      drawKop(doc, header);
 
-      const right = pageWidth(doc);
-      const valueX = MARGIN + 84;
-      const valueW = right - valueX;
       const city = input.city ?? 'Medan';
-      const dateText = `${city}, ${formatDate(input.date ?? new Date())}`;
+      let b: number = L.kop.firstBaseline;
 
-      // Blok Nomor / Lampiran / Hal + tanggal di kanan baris pertama
-      doc.font(FONT).fontSize(11);
-      const nomorY = doc.y;
-    doc.text(LETTER_TEXT.labels.number, MARGIN, nomorY, { width: 64 });
-      doc.text(':', MARGIN + 64, nomorY, { width: 12 });
-      doc.text(input.number ?? '', valueX, nomorY, { width: valueW - 170 });
-      doc.text(dateText, right - 170, nomorY, { width: 170, align: 'right' });
-      let y = nomorY + 16;
-    doc.text(LETTER_TEXT.labels.attachment, MARGIN, y, { width: 64 });
-      doc.text(':', MARGIN + 64, y, { width: 12 });
-      doc.text(input.lampiran ?? '-', valueX, y, { width: valueW });
-      y += 16;
-    doc.text(LETTER_TEXT.labels.subject, MARGIN, y, { width: 64 });
-      doc.text(':', MARGIN + 64, y, { width: 12 });
-      doc.text(input.hal ?? '', valueX, y, { width: valueW });
-      doc.y = y + 24;
+      // Nomor / Lampiran / Hal — tanggal rata kanan pada baris pertama.
+      putLabelRow(doc, LETTER_TEXT.labels.number, input.number, b, L.label);
+      putLine(doc, `${city}, ${formatDate(input.date ?? new Date())}`, b, {
+        right: L.label.dateRight,
+      }, { size: L.label.size });
+      b += L.label.pitch;
+      putLabelRow(doc, LETTER_TEXT.labels.attachment, input.lampiran ?? '-', b, L.label);
+      b += L.label.pitch;
+      putLabelRow(doc, LETTER_TEXT.labels.subject, input.hal, b, L.label);
 
-      // Kepada Yth + Di- (kota)
+      // Kepada Yth, lalu "Di-" pada baris sendiri dan kotanya satu baris di bawah
+      // (persis surat asli — keduanya memang tidak sebaris).
       if (input.recipientLines?.length) {
-        doc.font(FONT).fontSize(11);
-        const kY = doc.y;
-    doc.text(LETTER_TEXT.labels.recipient, MARGIN, kY, { width: 64 });
-        doc.text(':', MARGIN + 64, kY, { width: 12 });
-        let ry = kY;
-        input.recipientLines.forEach((line) => {
-          if (!line) return;
-          doc.text(line, valueX, ry, { width: valueW });
-          ry = doc.y;
+        b += L.label.gapToRecipient;
+        putLine(doc, LETTER_TEXT.labels.recipient, b, { x: L.label.x }, { size: L.label.size });
+        putLine(doc, ':', b, { x: L.label.colonX }, { size: L.label.size });
+        let row = b;
+        for (const line of input.recipientLines) {
+          if (!line) continue;
+          putLine(doc, line, row, { x: L.label.valueX }, { size: L.label.size });
+          row += L.label.pitch;
+        }
+        b = row;
+        putLine(doc, LETTER_TEXT.labels.place, b, { x: L.recipient.placeX }, {
+          size: L.label.size,
         });
-        doc.y = ry + 6;
-    doc.text(LETTER_TEXT.labels.place, MARGIN, doc.y, { width: 64 });
-        doc.text(input.recipientCity ?? city, valueX + 12, doc.y, { width: valueW });
-        doc.y += 20;
+        const place = input.recipientCity ?? city;
+        if (place) {
+          b += L.recipient.cityPitch;
+          putLine(doc, place, b, { x: L.recipient.cityX }, { size: L.label.size });
+        }
       }
 
-      // Paragraf isi (justify, indent kolom nilai)
+      // Paragraf isi
+      b += L.body.afterRecipient;
+      let lastBody = b;
       for (const paragraph of input.paragraphs) {
-         drawRich(doc, paragraph, valueX, doc.y, { width: valueW, align: 'justify', size: LETTER_LAYOUT.fonts.body, lineGap: 3 });
-        doc.y += 8;
+        lastBody = putParagraph(doc, paragraph, L.body.x, b, {
+          width: L.body.right - L.body.x,
+          size: L.body.size,
+        });
+        b = lastBody + L.body.pitch + L.body.paragraphGap;
       }
 
       // Tabel daftar siswa
       if (input.table && input.table.rows.length > 0) {
-        doc.y += 2;
-        drawTable(doc, input.table, valueX, right);
-        doc.y += 10;
+        const bottom = drawTable(doc, input.table, lastBody + L.body.beforeTable);
+        b = bottom + L.body.afterTable;
       }
 
       // Blok pembimbing (surat pengantar)
       if (input.pembimbing) {
-        drawPembimbing(doc, input.pembimbing, valueX, right);
-        doc.y += 12;
+        b = drawPembimbing(doc, input.pembimbing, b) + L.pembimbing.after;
       }
 
+      // Penutup + tanda tangan
+      let lastClosing = b;
       if (input.closing) {
-         drawRich(doc, input.closing, valueX, doc.y, { width: valueW, align: 'justify', size: LETTER_LAYOUT.fonts.body, lineGap: 3 });
-        doc.y += 10;
+        lastClosing = putParagraph(doc, input.closing, L.body.x, b, {
+          width: L.body.right - L.body.x,
+          size: L.body.size,
+        });
       }
+      drawSignature(
+        doc,
+        input.signer,
+        ensureRoom(doc, lastClosing + L.body.beforeClosingSign, L.signature.blockHeight)
+      );
 
-      // Tanda tangan
-      doc.y += 16;
-       drawSignFormal(doc, input.signer);
-
-      drawFooters(doc);
       doc.end();
     } catch (err) {
       reject(err);
@@ -400,141 +467,102 @@ export const renderFormalLetterPdf = (
   });
 };
 
-/** Render surat penugasan pembimbing — layout persis contoh resmi. */
+/* ------------------------------------------------------------------ *
+ * Surat penugasan pembimbing
+ * ------------------------------------------------------------------ */
+
 export const renderPenugasanLetterPdf = (
   header: SchoolHeader,
   input: PenugasanLetterInput
 ): Promise<Buffer> => {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({
-        size: 'A4',
-        margins: { top: MARGIN, bottom: 40, left: MARGIN, right: MARGIN },
-        bufferPages: true,
-      });
+      const doc = newLetterDoc();
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-       drawKop(doc, header);
+      drawKop(doc, header);
 
-      const right = pageWidth(doc);
+      const p = L.penugasan;
+      const style = { size: p.label.size };
+      const width = L.page.contentRight - p.label.valueX;
 
-      // Judul + nomor (center)
-      doc.y += 6;
-      doc.font(FONT_BOLD).fontSize(14).text('SURAT PENUGASAN', MARGIN, doc.y, {
-        width: right - MARGIN,
-        align: 'center',
-        underline: true,
-      });
-      doc.y += 6;
-  doc.font(FONT).fontSize(LETTER_LAYOUT.fonts.body).text(`Nomor : ${input.number ?? ''}`, MARGIN, doc.y, {
-        width: right - MARGIN,
-        align: 'center',
-      });
-      doc.y += 22;
+      // Judul & nomor: rata tengah pada sumbu blok 304.7 (bukan tengah halaman)
+      const title = LETTER_TEXT.assignment.title;
+      const titleStyle = { size: p.title.size, bold: true };
+      const titleWidth = measure(doc, title, titleStyle);
+      putLine(doc, title, p.title.baseline, { center: p.title.centerX }, titleStyle);
+      putUnderline(doc, title, p.title.baseline, p.title.centerX - titleWidth / 2, titleStyle);
+      putLine(doc, `${LETTER_TEXT.labels.number} : ${input.number ?? ''}`, p.nomor.baseline, {
+        center: p.title.centerX,
+      }, style);
 
-      // Blok info: label kolom lebar + nilai
-      const labelX = MARGIN;
-      const colonX = MARGIN + 110;
-      const valX = MARGIN + 122;
-      const valW = right - valX;
+      let b = p.nomor.baseline + p.blockGap;
+      putLabelRow(doc, LETTER_TEXT.labels.from, input.dari, b, p.label);
 
-      doc.font(FONT).fontSize(11);
-      let y0 = doc.y;
-      doc.text(LETTER_TEXT.labels.from, labelX, y0, { width: 100 });
-      doc.text(':', colonX, y0, { width: 12 });
-      doc.text(input.dari, valX, y0, { width: valW });
-      doc.y = Math.max(doc.y, y0 + 14);
-
-      y0 = doc.y;
-      doc.text(LETTER_TEXT.labels.to, labelX, y0, { width: 100 });
-      doc.text(':', colonX, y0, { width: 12 });
-      const nestedX = MARGIN + 168;
-      let ny = y0;
-      const nested: Array<[string, string]> = [
+      // Kepada → blok nested Nama/NIP/Jabatan/Unit Kerja
+      b += p.blockGap;
+      putLine(doc, LETTER_TEXT.labels.to, b, { x: p.label.x }, style);
+      putLine(doc, ':', b, { x: p.label.colonX }, style);
+      const nested: Array<[string, string | null | undefined]> = [
         ['N a m a', input.kepada.nama],
-        ['N I P', input.kepada.nip ?? ''],
+        ['N I P', input.kepada.nip],
         ['Jabatan', input.kepada.jabatan],
         ['Unit Kerja', input.kepada.unitKerja],
       ];
-      for (const [label, value] of nested) {
-        doc.font(FONT).fontSize(11).text(label, nestedX, ny, { width: 76 });
-        doc.text(':', nestedX + 76, ny, { width: 12 });
-        doc.text(value, nestedX + 92, ny, { width: right - nestedX - 92 });
-        ny = doc.y;
-      }
-      doc.y = ny + 14;
+      nested.forEach(([label, value], i) => {
+        const y = b + i * p.nested.pitch;
+        putLine(doc, label, y, { x: p.nested.x }, style);
+        putLine(doc, ':', y, { x: p.nested.colonX }, style);
+        putLine(doc, value, y, { x: p.nested.colonX + 14 }, style);
+      });
+      b += (nested.length - 1) * p.nested.pitch;
 
-      doc.font(FONT).fontSize(11);
-      y0 = doc.y;
-      doc.text(LETTER_TEXT.labels.basis, labelX, y0, { width: 100 });
-      doc.text(':', colonX, y0, { width: 12 });
-      doc.y = drawRich(doc, input.dasar, valX, y0, { width: valW, align: 'justify', size: 11, lineGap: 2.5 });
-      doc.y += 14;
+      // Dasar & Isi — titik dua hanya di baris pertama, nilai indent rata kiri
+      b += p.blockGap;
+      putLine(doc, LETTER_TEXT.labels.basis, b, { x: p.label.x }, style);
+      putLine(doc, ':', b, { x: p.label.colonX }, style);
+      b = putParagraph(doc, input.dasar, p.label.valueX, b, { width, size: p.label.size });
 
-      doc.font(FONT).fontSize(11);
-      y0 = doc.y;
-      doc.text(LETTER_TEXT.labels.content, labelX, y0, { width: 100 });
-      doc.text(':', colonX, y0, { width: 12 });
-      doc.y = drawRich(doc, input.isi, valX, y0, { width: valW, align: 'justify', size: 11, lineGap: 2.5 });
-      doc.y += 14;
+      b += p.blockGap;
+      putLine(doc, LETTER_TEXT.labels.content, b, { x: p.label.x }, style);
+      putLine(doc, ':', b, { x: p.label.colonX }, style);
+      b = putParagraph(doc, input.isi, p.label.valueX, b, { width, size: p.label.size });
 
-      // Tabel tujuan (full width)
-      if (input.tujuan.length > 0) {
-        drawTable(
-          doc,
-          {
-            columns: ['No.', 'Tujuan', 'Alamat'],
-            rows: input.tujuan.map((t, i) => [`${i + 1}.`, t.name, t.address]),
-            widths: [40, 190],
-            aligns: ['center', 'left', 'left'],
-          },
-          MARGIN,
-          right
-        );
-        doc.y += 14;
-      }
+      // Tabel tujuan pembimbing
+      const bottom = drawTable(
+        doc,
+        {
+          preset: 'penugasan',
+          columns: ['No.', 'Tujuan', 'Alamat'],
+          rows: input.tujuan.map((t, i) => [`${i + 1}.`, t.name, t.address]),
+        },
+        b + p.beforeTable
+      );
+      b = bottom + p.afterTable;
 
-      doc.font(FONT).fontSize(11);
-      y0 = doc.y;
-      doc.text(LETTER_TEXT.labels.otherTerms, labelX, y0, { width: 100 });
-      doc.text(':', colonX, y0, { width: 12 });
-      doc.y = drawRich(doc, input.ketentuan, valX, y0, { width: valW, size: 11, lineGap: 2.5 });
-      doc.y += 20;
+      putLine(doc, LETTER_TEXT.labels.otherTerms, b, { x: p.label.x }, style);
+      putLine(doc, ':', b, { x: p.label.colonX }, style);
+      b = putParagraph(doc, input.ketentuan, p.label.valueX, b, {
+        width,
+        size: p.label.size,
+        align: 'left',
+      });
 
-      // Blok keluar + tanda tangan (kanan) — jangan sampai terpotong halaman (butuh ~130pt)
-      if (doc.y > 650) doc.addPage();
-       const signX = right - LETTER_LAYOUT.signature.penugasan.rightOffset;
-       const signW = LETTER_LAYOUT.signature.penugasan.blockWidth;
-      doc.font(FONT).fontSize(11);
-      const kota = input.kota ?? 'Medan';
-      const tgl = formatDate(input.date ?? new Date());
-      let sy = doc.y;
-       doc.text(LETTER_TEXT.labels.issuedAt, signX, sy, { width: 100 });
-      doc.text(':', signX + 100, sy, { width: 12 });
-      doc.text(kota, signX + 116, sy, { width: signW - 116 });
-      sy = Math.max(doc.y, sy + 14);
-       doc.text(LETTER_TEXT.labels.date, signX, sy, { width: 100 });
-      doc.text(':', signX + 100, sy, { width: 12 });
-      doc.text(tgl, signX + 116, sy, { width: signW - 116 });
-      sy = Math.max(doc.y, sy + 14);
-       const positionOffsetX = LETTER_LAYOUT.signature.penugasan.positionOffsetX;
-       doc.text(input.signer.position, signX + positionOffsetX, sy, { width: signW - positionOffsetX, align: 'center' });
-       const signature = input.signer.signaturePath ? readStoredFile(input.signer.signaturePath) : null;
-       if (signature) {
-         try {
-           const image = LETTER_LAYOUT.signature.penugasan.image;
-           doc.image(signature, signX + image.offsetX, sy + image.offsetY, { width: image.width, height: image.height });
-       } catch { /* tanda tangan opsional */ }
-       }
-       doc.y = sy + (signature ? LETTER_LAYOUT.signature.penugasan.afterImageSpacing : LETTER_LAYOUT.signature.penugasan.withoutImageSpacing);
-      doc.font(FONT_BOLD).text(input.signer.name, signX, doc.y, { width: signW, align: 'center' });
-      doc.font(FONT);
-      if (input.signer.nip) doc.text(`NIP. ${input.signer.nip}`, signX, doc.y, { width: signW, align: 'center' });
+      // Blok keluar + tanda tangan
+      const issued = ensureRoom(doc, b + p.beforeSign, L.signature.blockHeight + 2 * p.issued.pitch);
+      putLine(doc, LETTER_TEXT.labels.issuedAt, issued, { x: L.signature.x }, style);
+      putLine(doc, ':', issued, { x: p.issued.colonX }, style);
+      putLine(doc, input.kota ?? 'Medan', issued, { x: p.issued.valueX }, style);
+      const dateY = issued + p.issued.pitch;
+      putLine(doc, LETTER_TEXT.labels.date, dateY, { x: L.signature.x }, style);
+      putLine(doc, ':', dateY, { x: p.issued.colonX }, style);
+      putLine(doc, formatDate(input.date ?? new Date()), dateY, { x: p.issued.valueX }, style);
 
-      drawFooters(doc);
+      drawSignature(doc, input.signer, dateY + p.issued.pitch);
+
       doc.end();
     } catch (err) {
       reject(err);

@@ -1,9 +1,10 @@
-import { DocumentType, Role } from '@prisma/client';
+import { DocumentType, Prisma, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { letterService, GeneratedLetterResult } from './letter.service';
 import { settingService } from './setting.service';
 import { LETTER_TEXT } from '../config/letter.config';
 import { BadRequestError, NotFoundError } from '../errors/AppError';
+import { resolveScope, scopeUserWhere } from './majorScope.service';
 
 /**
  * Service generator surat manual admin:
@@ -19,8 +20,9 @@ export class LetterGeneratorService {
     companyId: string;
     number?: string | null;
     actorId: string;
+    actorRole?: Role;
   }): Promise<GeneratedLetterResult & { studentCount: number }> {
-    const { cohortId, companyId, number, actorId } = params;
+    const { cohortId, companyId, number, actorId, actorRole } = params;
 
     const [cohort, company] = await Promise.all([
       prisma.cohort.findFirst({ where: { id: cohortId, deletedAt: null } }),
@@ -29,12 +31,21 @@ export class LetterGeneratorService {
     if (!cohort) throw new NotFoundError('Gelombang tidak ditemukan');
     if (!company) throw new NotFoundError('Perusahaan tidak ditemukan');
 
+    // Scope jurusan: ADMIN hanya memasukkan siswa dalam jurusan yang diawasi.
+    let scopeFilter: Prisma.RegistrationWhereInput = {};
+    if (actorRole === Role.ADMIN) {
+      const scope = await resolveScope({ id: actorId, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'student');
+      if (scoped) scopeFilter = scoped as Prisma.RegistrationWhereInput;
+    }
+
     const registrations = await prisma.registration.findMany({
       where: {
         cohortId,
         companyId,
         deletedAt: null,
         status: { in: ['DIAJUKAN', 'DISETUJUI'] },
+        ...scopeFilter,
       },
       orderBy: { createdAt: 'asc' },
       select: {
@@ -68,22 +79,20 @@ export class LetterGeneratorService {
     const result = await letterService.generateLetter({
       type: DocumentType.SURAT_PERMOHONAN,
       number: number ?? null,
-      hal: 'Permohonan PKL',
-      recipientLines: ['Bapak / Ibu Pimpinan', company.name, company.address ?? ''],
+      hal: LETTER_TEXT.application.subject,
+      recipientLines: ['Bapak / Ibu Pimpinan', company.name],
       recipientCity: company.city ?? school.city,
       paragraphs: [
-        'Dengan Hormat,',
-        `Sesuai dengan Permendikbud Ristek RI Nomor 12 Tahun 2024 Tentang Kurikulum Merdeka dan Program Kerja ${school.schoolName}${academicYear ? ` Tahun Pelajaran ${academicYear}` : ''} tentang Praktek Kerja Lapangan (PKL), melalui surat ini kami mohon kepada Bapak/Ibu pimpinan ${company.name}, berkenan menerima siswa/siswi ${school.schoolName} untuk ${dateClause}`,
-        'Bersama ini kami kirimkan nama – nama siswa/i yang akan melaksanakan Praktek Kerja Lapangan (PKL) di Institusi / Lembaga yang Bapak / Ibu pimpin sebagai berikut:',
+        LETTER_TEXT.application.opener +
+          LETTER_TEXT.application.body(school.schoolName, academicYear, company.name, dateClause),
+        LETTER_TEXT.application.studentIntro,
       ],
       table: {
-        columns: ['NO', 'NAMA SISWA', 'PROGRAM KEAHLIAN'],
+        preset: 'siswa',
+        columns: [...LETTER_TEXT.application.tableHeaders],
         rows,
-        widths: [36],
-        aligns: ['center', 'left', 'left'],
       },
-      closing:
-        'Demikian surat permohonan ini kami sampaikan, atas perhatian, dukungan serta kesediaannya disampaikan terima kasih.',
+      closing: LETTER_TEXT.application.closing,
       cohortId,
       createdById: actorId,
       payload: {

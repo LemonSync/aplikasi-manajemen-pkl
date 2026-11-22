@@ -4,6 +4,7 @@ import { BadRequestError, NotFoundError } from '../errors/AppError';
 import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { auditService } from './audit.service';
 import { settingService } from './setting.service';
+import { waRuntime } from './wa/waRuntime';
 import { CreateCohortDTO, UpdateCohortDTO } from '../validators/cohort.validator';
 
 /** Status yang dianggap gelombang selesai (ditutup/diarsipkan). */
@@ -23,7 +24,7 @@ const CLEANUP_ROLES: Role[] = [Role.SISWA, Role.KETUA, Role.DUDI];
  */
 export class CohortService {
   async create(dto: CreateCohortDTO) {
-    return prisma.cohort.create({
+    const cohort = await prisma.cohort.create({
       data: {
         name: dto.name,
         academicYear: dto.academicYear ?? null,
@@ -32,6 +33,12 @@ export class CohortService {
         description: dto.description ?? null,
       },
     });
+
+    // Grup WhatsApp pengingat dibuat di latar belakang: status koneksi bot
+    // tidak boleh membuat (atau menggagalkan) pembuatan gelombang.
+    void waRuntime.maybeCreateGroupForCohort(cohort.id);
+
+    return cohort;
   }
 
   async update(

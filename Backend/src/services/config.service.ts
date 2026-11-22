@@ -83,7 +83,10 @@ export class ConfigService {
   async deleteIndustry(id: string) {
     const existing = await prisma.industry.findUnique({ where: { id } });
     if (!existing) throw new NotFoundError('Bidang industri tidak ditemukan');
-    const used = await prisma.company.count({ where: { industryId: id, deletedAt: null } });
+    // Hitung SEMUA perusahaan (termasuk yang di-soft-delete): relasi industri
+    // memakai onDelete: SetNull, jadi baris yang masih menunjuk industri ini
+    // akan yatim bila baris industrinya dihapus.
+    const used = await prisma.company.count({ where: { industryId: id } });
     if (used > 0) throw new ConflictError('Bidang industri masih dipakai perusahaan dan tidak dapat dihapus');
     return prisma.industry.delete({ where: { id } });
   }

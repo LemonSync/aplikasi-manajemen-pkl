@@ -7,11 +7,13 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { parsePagination } from '../utils/pagination';
 import { BadRequestError } from '../errors/AppError';
 import {
+  CheckOutBodyDTO,
   GeoBodyDTO,
   ListAttendanceQueryDTO,
   ListByClassQueryDTO,
   SummaryQueryDTO,
   SubmitAttendanceDTO,
+  UpdateActivityDTO,
   VerifyAttendanceDTO,
 } from '../validators/phase3.validator';
 
@@ -44,10 +46,22 @@ export class AttendanceController {
 
   /** POST /api/attendances/check-out */
   checkOut = asyncHandler(async (req: Request, res: Response) => {
-    const dto = req.body as GeoBodyDTO;
+    const dto = req.body as CheckOutBodyDTO;
     const ctx = getRequestContext(req);
-    const result = await attendanceService.checkOut(req.user!.sub, dto, ctx);
+    const result = await attendanceService.checkOut(
+      req.user!.sub,
+      { geo: { lat: dto.lat, long: dto.long, note: dto.note, accuracy: dto.accuracy }, activity: dto.activity ?? undefined },
+      ctx
+    );
     return sendSuccess(res, result, 'Absen keluar berhasil');
+  });
+
+  /** POST /api/attendances/activity — susulan kegiatan hari yang ditutup otomatis */
+  saveActivity = asyncHandler(async (req: Request, res: Response) => {
+    const dto = req.body as UpdateActivityDTO;
+    const ctx = getRequestContext(req);
+    const result = await attendanceService.saveActivity(req.user!.sub, dto.activity, ctx);
+    return sendSuccess(res, result, 'Pelaksanaan kegiatan tersimpan');
   });
 
   /** POST /api/attendances/submit - kirim absensi harian (menyesuaikan status; opsional bukti sakit) */

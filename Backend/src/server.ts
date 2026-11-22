@@ -4,6 +4,8 @@ import { logger } from './config/logger';
 import { prisma } from './config/prisma';
 import { initStorage } from './utils/storage';
 import { runAllJobs } from './jobs';
+import { waClient } from './services/wa/waClient';
+import { waRuntime } from './services/wa/waRuntime';
 
 /**
  * Entry point server.
@@ -20,11 +22,14 @@ const start = async (): Promise<void> => {
 
     // Jalankan cron jobs (setiap jam 17:30 WIB)
     const CRON_INTERVAL = 60 * 60 * 1000; // 1 jam
-    setInterval(() => {
+    const cronTimer = setInterval(() => {
       void runAllJobs();
     }, CRON_INTERVAL);
     void runAllJobs(); // jalankan sekali saat startup
     logger.info('Cron jobs diaktifkan (interval: 1 jam)');
+
+    // Bot WhatsApp (tidak berbuat apa-apa bila WA_ENABLED=false)
+    await waRuntime.bootstrap();
 
     const app = createApp();
     const server = app.listen(env.PORT, () => {
@@ -34,6 +39,10 @@ const start = async (): Promise<void> => {
     // Graceful shutdown
     const shutdown = async (signal: string): Promise<void> => {
       logger.info(`Menerima ${signal}, mematikan server...`);
+      clearInterval(cronTimer);
+      // Putus socket Baileys dulu: sesi yang menggantung membuat HP logout
+      // saling menimpa saat proses berikutnya (tsx watch) menyambung ulang.
+      await waClient.destroy();
       server.close(async () => {
         await prisma.$disconnect();
         logger.info('Server dihentikan dengan aman');

@@ -6,6 +6,7 @@ import {
   type DocumentRecord,
   type DocumentPlacement,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
 import Modal from '@/components/Modal.vue';
@@ -15,8 +16,6 @@ type DocumentDetail = DocumentRecord & { placement: DocumentPlacement | null };
 const docs = ref<DocumentRecord[]>([]);
 const loading = ref(true);
 const uploading = ref(false);
-const error = ref('');
-const success = ref('');
 
 const uploadType = ref('LAINNYA');
 const uploadTitle = ref('');
@@ -40,7 +39,7 @@ const load = async (): Promise<void> => {
   try {
     docs.value = await documentService.listMine();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -54,26 +53,26 @@ const onFileChange = (event: Event): void => {
 const upload = async (): Promise<void> => {
   if (!selectedFile.value) return;
   uploading.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await documentService.upload(uploadType.value, selectedFile.value, uploadTitle.value || undefined);
-    success.value = 'Dokumen berhasil diunggah dan menunggu verifikasi admin.';
+    notify.success('Dokumen berhasil diunggah dan menunggu verifikasi admin.');
     selectedFile.value = null;
     uploadTitle.value = '';
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     uploading.value = false;
   }
 };
 
-const download = async (id: string, title?: string | null, type?: string): Promise<void> => {
+// Nama file asli (bisa png/docx/dll) diambil dari header Content-Disposition backend.
+const download = async (id: string): Promise<void> => {
   try {
-    await downloadFile(`/documents/${id}/download`, title ?? `${type ?? 'dokumen'}.pdf`);
+    await downloadFile(`/documents/${id}/download`);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -85,7 +84,7 @@ const openDetail = async (id: string): Promise<void> => {
   try {
     detail.value = await documentService.getDetail(id);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
     showDetail.value = false;
   } finally {
     detailLoading.value = false;
@@ -105,8 +104,6 @@ onMounted(load);
           diurus otomatis lewat <b>Alur PKL</b>, dan laporan akhir lewat menu <b>Laporan Akhir</b>.
         </p>
       </div>
-      <div v-if="error" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-      <div v-if="success" class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
@@ -147,7 +144,7 @@ onMounted(load);
             <td class="text-gray-500">{{ d.note ?? '-' }}</td>
             <td class="text-right">
               <button class="mr-3 text-primary-600 hover:underline" @click="openDetail(d.id)">Detail</button>
-              <button class="text-primary-600 hover:underline" @click="download(d.id, d.title, d.type)">Unduh</button>
+              <button class="text-primary-600 hover:underline" @click="download(d.id)">Unduh</button>
             </td>
           </tr>
           <tr v-if="docs.length === 0">

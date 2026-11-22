@@ -40,7 +40,13 @@ export class StudentRegistryRepository {
     });
   }
 
-  async findByCohort(cohortId: string, skip: number, take: number, search?: string) {
+  async findByCohort(
+    cohortId: string,
+    skip: number,
+    take: number,
+    search?: string,
+    scopeWhere?: Record<string, unknown>
+  ) {
     const where: Record<string, unknown> = { cohortId, isActive: true };
     if (search) {
       where.OR = [
@@ -49,15 +55,17 @@ export class StudentRegistryRepository {
         { className: { contains: search } },
       ];
     }
+    // Scope jurusan (ADMIN): hanya baris yang majorId-nya dalam cakupan.
+    const finalWhere = scopeWhere ? { AND: [where, scopeWhere] } : where;
     const [items, total] = await Promise.all([
       prisma.studentRegistry.findMany({
-        where,
+        where: finalWhere,
         skip,
         take,
         orderBy: { nisn: 'asc' },
         include: { major: true },
       }),
-      prisma.studentRegistry.count({ where }),
+      prisma.studentRegistry.count({ where: finalWhere }),
     ]);
     return { items, total };
   }

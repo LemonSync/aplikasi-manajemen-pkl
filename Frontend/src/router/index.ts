@@ -44,10 +44,16 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['SISWA'] as Role[], phase: ['PRA_PKL'] as StudentPhase[], workflowTask: true, title: 'Pendaftaran PKL' },
       },
       {
+        path: 'pendaftaran/usulkan-tempat',
+        name: 'company-request',
+        component: () => import('@/views/siswa/CompanyRequestView.vue'),
+        meta: { roles: ['SISWA'] as Role[], phase: ['PRA_PKL'] as StudentPhase[], workflowTask: true, title: 'Usulkan Tempat PKL' },
+      },
+      {
         path: 'dokumen',
         name: 'my-documents',
         component: () => import('@/views/siswa/MyDocumentsView.vue'),
-        meta: { roles: ['SISWA'] as Role[], workflowTask: true, title: 'Dokumen Saya' },
+        meta: { roles: ['SISWA'] as Role[], notInPhase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Dokumen Saya' },
       },
       {
         path: 'surat-pernyataan',
@@ -59,13 +65,13 @@ const routes: RouteRecordRaw[] = [
         path: 'absensi',
         name: 'my-attendance',
         component: () => import('@/views/siswa/AttendanceView.vue'),
-        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_AKTIF'] as StudentPhase[], workflowTask: true, title: 'Absensi Harian' },
+        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_AKTIF', 'PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Absensi Harian' },
       },
       {
         path: 'pengaduan',
         name: 'my-complaints',
         component: () => import('@/views/siswa/ComplaintView.vue'),
-        meta: { roles: ['SISWA'] as Role[], workflowTask: true, title: 'Pengaduan' },
+        meta: { roles: ['SISWA'] as Role[], notInPhase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Pengaduan' },
       },
       {
         path: 'laporan-akhir',
@@ -77,7 +83,13 @@ const routes: RouteRecordRaw[] = [
         path: 'penilaian',
         name: 'grade-input',
         component: () => import('@/views/siswa/GradeInputView.vue'),
-        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Input Nilai PKL' },
+        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Penilaian PKL' },
+      },
+      {
+        path: 'sertifikat',
+        name: 'my-sertifikat',
+        component: () => import('@/views/siswa/SertifikatView.vue'),
+        meta: { roles: ['SISWA'] as Role[], phase: ['PKL_SELESAI'] as StudentPhase[], workflowTask: true, title: 'Sertifikat PKL' },
       },
       // --- Guru Pembimbing ---
       {
@@ -105,12 +117,6 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Kunjungan Monitoring' },
       },
       {
-        path: 'guru/penilaian',
-        name: 'guru-grade-approval',
-        component: () => import('@/views/guru/GradeApprovalView.vue'),
-        meta: { roles: ['GURU_PEMBIMBING'] as Role[], title: 'Penilaian & Approval Laporan' },
-      },
-      {
         // Path unik — sebelumnya bentrok dengan 'pengaduan' (siswa) sehingga
         // reload URL di sini selalu kena route siswa → 403.
         path: 'monitor-pengaduan',
@@ -122,6 +128,12 @@ const routes: RouteRecordRaw[] = [
         },
       },
       // --- Admin ---
+      {
+        path: 'admin/inbox',
+        name: 'admin-inbox',
+        component: () => import('@/views/admin/InboxView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Inbox Verifikasi' },
+      },
       {
         path: 'admin/absensi',
         name: 'admin-attendance',
@@ -180,6 +192,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-grade-recap',
         component: () => import('@/views/admin/GradeRecapView.vue'),
         meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Rekap Penilaian' },
+      },
+      {
+        path: 'admin/sertifikat',
+        name: 'admin-sertifikat',
+        component: () => import('@/views/admin/CertificatesView.vue'),
+        meta: { roles: ['ADMIN', 'SUPER_ADMIN'] as Role[], title: 'Sertifikat PKL' },
       },
       // --- Siswa tambahan ---
       {
@@ -327,7 +345,8 @@ router.beforeEach((to) => {
 });
 
 /**
- * Layer 3 — phaseGuard: batasi akses siswa berdasarkan fase dari meta.phase.
+ * Layer 3 — phaseGuard: batasi akses siswa berdasarkan fase dari meta.phase,
+ * dan tutup halaman fase 3 untuk siswa fase 4 lewat meta.notInPhase.
  * Role non-siswa dilewatkan (hanya relevan untuk siswa).
  */
 router.beforeEach((to) => {
@@ -336,6 +355,13 @@ router.beforeEach((to) => {
 
   if (phases && phases.length > 0 && auth.role === 'SISWA') {
     if (!auth.phase || !phases.includes(auth.phase)) {
+      return { name: 'forbidden' };
+    }
+  }
+
+  const blocked = to.meta.notInPhase as StudentPhase[] | undefined;
+  if (blocked && blocked.length > 0 && auth.role === 'SISWA' && auth.phase) {
+    if (blocked.includes(auth.phase)) {
       return { name: 'forbidden' };
     }
   }

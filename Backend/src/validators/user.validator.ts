@@ -5,7 +5,9 @@ export const createUserSchema = z.object({
   username: z.string().min(3).max(50),
   identifier: z.string().max(40).optional().nullable(),
   email: z.string().email().optional().nullable(),
-  password: z.string().min(1).max(100).optional(),
+  // Password sengaja TIDAK ada di sini: sistem yang membangkitkannya.
+  // Kunci apa pun dari klien tetap dibuang Zod, jadi pembuat akun tidak bisa
+  // menentukan password sendiri.
   role: z.nativeEnum(Role),
   cohortId: z.string().cuid().optional().nullable(),
   companyId: z.string().cuid().optional().nullable(),
@@ -14,6 +16,8 @@ export const createUserSchema = z.object({
   nip: z.string().max(20).optional(),
   classId: z.string().cuid().optional().nullable(),
   majorId: z.string().cuid().optional().nullable(),
+  // Jurusan yang diawasi (hanya relevan utk role ADMIN; hanya SUPER_ADMIN yang boleh mengisi)
+  majorIds: z.array(z.string().cuid()).optional(),
 });
 
 export const updateUserSchema = z.object({
@@ -21,6 +25,8 @@ export const updateUserSchema = z.object({
   email: z.string().email().optional().nullable(),
   isActive: z.boolean().optional(),
   role: z.nativeEnum(Role).optional(),
+  // Ubah jurusan yang diawasi (hanya SUPER_ADMIN & target role ADMIN)
+  majorIds: z.array(z.string().cuid()).optional(),
 });
 
 export const resetPasswordSchema = z.object({

@@ -29,7 +29,7 @@ export interface Registration {
     city: string | null;
     website: string | null;
     industry?: { name: string } | null;
-  };
+  } | null;
   cohort?: { id: string; name: string; academicYear: string | null } | null;
   major?: { id: string; name: string; code: string } | null;
   document?: { id: string; type: string; status: string; files?: Array<{ id: string; isActive: boolean }> } | null;
@@ -41,7 +41,10 @@ export interface SaveRegistrationPayload {
   majorId?: string | null;
 }
 
-/** Opsi perusahaan untuk dropdown pendaftaran (sisa kuota > 0). */
+/**
+ * Opsi perusahaan untuk pendaftaran siswa. `sisa` bisa 0 bila diminta
+ * `includeFull` — lihat `companyService.options`.
+ */
 export interface CompanyOption {
   id: string;
   name: string;
@@ -129,23 +132,40 @@ export const registrationService = {
     return data.data;
   },
 
+  /**
+   * Daftar pendaftaran (admin). Diurutkan backend dari yang paling awal mendaftar.
+   * `perPage` perlu dinaikkan bila daftar dipakai untuk pencarian sisi klien:
+   * default server hanya 10 baris.
+   */
   async list(
     status?: string,
-    cohortId?: string
+    cohortId?: string,
+    perPage?: number
   ): Promise<{ items: Registration[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<Registration[]>>('/registrations', {
       params: {
         ...(status ? { status } : {}),
         ...(cohortId ? { cohortId } : {}),
+        ...(perPage ? { perPage } : {}),
       },
     });
     return { items: data.data, meta: data.meta };
   },
 
-  async review(id: string, action: 'APPROVE' | 'REJECT', note?: string): Promise<Registration> {
+  /**
+   * Setujui/tolak pendaftaran. `number` = nomor Surat Permohonan yang diketik admin
+   * saat menyetujui; kirim null/undefined bila dibiarkan kosong.
+   */
+  async review(
+    id: string,
+    action: 'APPROVE' | 'REJECT',
+    note?: string,
+    number?: string | null
+  ): Promise<Registration> {
     const { data } = await http.post<ApiResponse<Registration>>(`/registrations/${id}/review`, {
       action,
       note,
+      number,
     });
     return data.data;
   },
@@ -262,6 +282,194 @@ export const configService = {
 };
 
 /**
+ * Bot WhatsApp (Baileys) — koneksi, grup gelombang, pengingat fase,
+ * dan pohon panduan customer service. Semua endpoint SUPER_ADMIN.
+ */
+export interface WaSpamSettings {
+  /** Jendela hitung pesan, detik. */
+  windowSec: number;
+  /** Jumlah pesan yang boleh dijawab dalam satu jendela. */
+  maxPerWindow: number;
+  /** Lama penahanan setelah jendela terlampaui, detik. */
+  cooldownSec: number;
+}
+
+export interface WaSettings {
+  enabled: boolean;
+  botNumber: string | null;
+  welcomeText: string;
+  csContact: string;
+  groupEnabled: boolean;
+  groupAdmins: string[];
+  reminderEnabled: boolean;
+  retentionDays: number;
+  spam: WaSpamSettings;
+}
+
+export interface WaConnection {
+  state: 'idle' | 'connecting' | 'qr' | 'connected';
+  botJid: string | null;
+  botName: string | null;
+  qr: string | null;
+  lastError: string | null;
+  since: string | null;
+}
+
+export interface WaStatus {
+  serverEnabled: boolean;
+  connection: WaConnection;
+  settings: WaSettings;
+  guideCount: number;
+}
+
+export interface WaGroup {
+  id: string;
+  cohortId: string;
+  jid: string;
+  subject: string;
+  invite: string | null;
+  createdAt: string;
+  cohortName: string | null;
+  cohortStatus: string | null;
+}
+
+export interface WaGuide {
+  id: string;
+  parentId: string | null;
+  role: string;
+  rowId: string;
+  label: string;
+  body: string | null;
+  imagePath: string | null;
+  order: number;
+  depth: number;
+  isActive: boolean;
+  childCount: number;
+}
+
+export interface WaGroupResult {
+  group: WaGroup;
+  isNew: boolean;
+  addedAdmins: string[];
+  skippedAdmins: string[];
+}
+
+export interface WaSyncResult {
+  created: string[];
+  failed: Array<{ cohortId: string; error: string }>;
+  deferred: string[];
+  skippedAdmins: string[];
+  existing: number;
+}
+
+export interface WaMessage {
+  id: string;
+  direction: 'IN' | 'OUT';
+  chatJid: string;
+  senderJid: string | null;
+  kind: string | null;
+  body: string | null;
+  createdAt: string;
+}
+
+export interface WaGuidePayload {
+  parentId?: string | null;
+  rowId: string;
+  label: string;
+  body?: string | null;
+  role?: 'SISWA' | 'GURU' | 'ADMIN';
+  order?: number;
+  isActive?: boolean;
+}
+
+export const waBotService = {
+  async status(): Promise<WaStatus> {
+    const { data } = await http.get<ApiResponse<WaStatus>>('/config/wa/status');
+    return data.data;
+  },
+  async saveSettings(payload: Partial<WaSettings>): Promise<{ settings: WaSettings; connection: WaConnection }> {
+    const { data } = await http.patch<ApiResponse<{ settings: WaSettings; connection: WaConnection }>>('/config/wa/settings', payload);
+    return data.data;
+  },
+  async start(): Promise<WaConnection> {
+    const { data } = await http.post<ApiResponse<WaConnection>>('/config/wa/start');
+    return data.data;
+  },
+  async stop(): Promise<WaConnection> {
+    const { data } = await http.post<ApiResponse<WaConnection>>('/config/wa/stop');
+    return data.data;
+  },
+  async logout(): Promise<WaConnection> {
+    const { data } = await http.post<ApiResponse<WaConnection>>('/config/wa/logout');
+    return data.data;
+  },
+  async qr(): Promise<{ qr: string | null; state: string }> {
+    const { data } = await http.get<ApiResponse<{ qr: string | null; state: string }>>('/config/wa/qr');
+    return data.data;
+  },
+  async pairing(number: string): Promise<string> {
+    const { data } = await http.post<ApiResponse<{ code: string }>>('/config/wa/pairing', { number });
+    return data.data.code;
+  },
+  async groups(): Promise<WaGroup[]> {
+    const { data } = await http.get<ApiResponse<WaGroup[]>>('/config/wa/groups');
+    return data.data;
+  },
+  async createGroup(cohortId: string): Promise<WaGroupResult> {
+    const { data } = await http.post<ApiResponse<WaGroupResult>>('/config/wa/groups', { cohortId });
+    return data.data;
+  },
+  async adoptGroup(cohortId: string, invite: string): Promise<WaGroup> {
+    const { data } = await http.post<ApiResponse<WaGroup>>('/config/wa/groups/adopt', { cohortId, invite });
+    return data.data;
+  },
+  async syncGroups(): Promise<WaSyncResult> {
+    const { data } = await http.post<ApiResponse<WaSyncResult>>('/config/wa/groups/sync');
+    return data.data;
+  },
+  async refreshInvite(cohortId: string): Promise<WaGroup> {
+    const { data } = await http.post<ApiResponse<WaGroup>>(`/config/wa/groups/${cohortId}/invite`);
+    return data.data;
+  },
+  async testReminder(cohortId: string): Promise<{ jid: string; text: string }> {
+    const { data } = await http.post<ApiResponse<{ jid: string; text: string }>>('/config/wa/test-reminder', { cohortId });
+    return data.data;
+  },
+  async runReminders(): Promise<{ sent: number; skipped: number; failed: number; reason?: string }> {
+    const { data } = await http.post<ApiResponse<{ sent: number; skipped: number; failed: number; reason?: string }>>('/config/wa/reminders/run');
+    return data.data;
+  },
+  async guides(): Promise<WaGuide[]> {
+    const { data } = await http.get<ApiResponse<WaGuide[]>>('/config/wa/guides');
+    return data.data;
+  },
+  async createGuide(payload: WaGuidePayload): Promise<WaGuide> {
+    const { data } = await http.post<ApiResponse<WaGuide>>('/config/wa/guides', payload);
+    return data.data;
+  },
+  async updateGuide(id: string, payload: Partial<WaGuidePayload>): Promise<WaGuide> {
+    const { data } = await http.patch<ApiResponse<WaGuide>>(`/config/wa/guides/${id}`, payload);
+    return data.data;
+  },
+  async removeGuide(id: string): Promise<{ id: string; removed: number }> {
+    const { data } = await http.delete<ApiResponse<{ id: string; removed: number }>>(`/config/wa/guides/${id}`);
+    return data.data;
+  },
+  async saveGuideImage(id: string, image: string): Promise<WaGuide> {
+    const { data } = await http.post<ApiResponse<WaGuide>>(`/config/wa/guides/${id}/image`, { image });
+    return data.data;
+  },
+  async removeGuideImage(id: string): Promise<WaGuide> {
+    const { data } = await http.delete<ApiResponse<WaGuide>>(`/config/wa/guides/${id}/image`);
+    return data.data;
+  },
+  async messages(limit = 50): Promise<WaMessage[]> {
+    const { data } = await http.get<ApiResponse<WaMessage[]>>(`/config/wa/messages?limit=${limit}`);
+    return data.data;
+  },
+};
+
+/**
  * Service pembimbingan per siswa (1 siswa = 1 guru).
  */
 export interface SupervisionRow {
@@ -335,8 +543,16 @@ export const companyService = {
     const { data } = await http.get<ApiResponse<unknown[]>>('/companies', { params: params ?? {} });
     return { items: data.data, meta: data.meta };
   },
-  async options(): Promise<CompanyOption[]> {
-    const { data } = await http.get<ApiResponse<CompanyOption[]>>('/companies/options');
+  /**
+   * Daftar perusahaan untuk form pendaftaran. Default hanya yang masih bersisa
+   * kuota (perilaku lama); kirim `includeFull` untuk seluruh perusahaan aktif
+   * termasuk yang penuh — dipakai list kartu bergaya kuis.
+   */
+  async options(includeFull = false): Promise<CompanyOption[]> {
+    const { data } = await http.get<ApiResponse<CompanyOption[]>>(
+      '/companies/options',
+      includeFull ? { params: { includeFull: '1' } } : undefined
+    );
     return data.data;
   },
   async create(payload: unknown): Promise<unknown> {
@@ -353,6 +569,66 @@ export const companyService = {
 };
 
 // ============================================================================
+// USULAN TEMPAT PKL (fase 1 — siswa mengusulkan perusahaan baru)
+// ============================================================================
+
+export interface CompanyRequestRecord {
+  id: string;
+  name: string;
+  address: string;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  status: 'MENUNGGU' | 'DISETUJUI' | 'DITOLAK';
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  companyId: string | null;
+  createdAt: string;
+  industry?: { name: string } | null;
+  company?: { id: string; name: string } | null;
+  student?: {
+    id: string;
+    username: string;
+    studentProfile: { fullName: string; nisn: string | null } | null;
+  } | null;
+  reviewedBy?: { username: string } | null;
+}
+
+export interface CreateCompanyRequestPayload {
+  name: string;
+  address: string;
+  industryId?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+}
+
+/** Service usulan tempat PKL. */
+export const companyRequestService = {
+  async create(payload: CreateCompanyRequestPayload): Promise<CompanyRequestRecord> {
+    const { data } = await http.post<ApiResponse<CompanyRequestRecord>>('/company-requests', payload);
+    return data.data;
+  },
+  async mine(): Promise<CompanyRequestRecord[]> {
+    const { data } = await http.get<ApiResponse<CompanyRequestRecord[]>>('/company-requests/mine', {
+      params: { perPage: 50 },
+    });
+    return data.data;
+  },
+  async list(params?: { search?: string; status?: string; page?: number; perPage?: number }): Promise<{ items: CompanyRequestRecord[]; meta?: PaginationMeta }> {
+    const { data } = await http.get<ApiResponse<CompanyRequestRecord[]>>('/company-requests', { params: params ?? {} });
+    return { items: data.data, meta: data.meta };
+  },
+  async review(id: string, action: 'APPROVE' | 'REJECT', note?: string): Promise<{ request: CompanyRequestRecord; company: { id: string; name: string } | null }> {
+    const { data } = await http.post<ApiResponse<{ request: CompanyRequestRecord; company: { id: string; name: string } | null }>>(
+      `/company-requests/${id}/review`,
+      { action, note }
+    );
+    return data.data;
+  },
+};
+
+// ============================================================================
 // FASE 3 — Masa PKL Aktif (absensi, pengaduan, kunjungan)
 // ============================================================================
 
@@ -365,10 +641,12 @@ export interface AttendanceRecord {
   checkInLat: string | null;
   checkInLong: string | null;
   checkInNote: string | null;
+  checkInAccuracy: number | null;
   checkOutAt: string | null;
   checkOutLat: string | null;
   checkOutLong: string | null;
   checkOutNote: string | null;
+  checkOutAccuracy: number | null;
   isAnomaly: boolean;
   anomalyNote: string | null;
   sickProofPath: string | null;
@@ -425,6 +703,8 @@ export interface GeoPayload {
   lat: number;
   long: number;
   note?: string | null;
+  /** Radius kesalahan GPS (meter) yang dilaporkan browser. */
+  accuracy?: number | null;
 }
 
 /** Service absensi harian. */
@@ -456,8 +736,13 @@ export const attendanceService = {
     const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/check-in', geo);
     return data.data;
   },
-  async checkOut(geo: GeoPayload): Promise<AttendanceRecord> {
-    const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/check-out', geo);
+  async checkOut(payload: GeoPayload & { activity?: string }): Promise<AttendanceRecord> {
+    const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/check-out', payload);
+    return data.data;
+  },
+  /** Susulan pelaksanaan kegiatan — hanya untuk hari yang ditutup otomatis oleh sistem. */
+  async saveActivity(activity: string): Promise<AttendanceRecord> {
+    const { data } = await http.post<ApiResponse<AttendanceRecord>>('/attendances/activity', { activity });
     return data.data;
   },
   async listMine(params?: { from?: string; to?: string; page?: number; perPage?: number }): Promise<AttendanceRecord[]> {
@@ -559,20 +844,65 @@ export interface GradeApprovalInfo {
   actedAt: string | null;
 }
 
+/** Butir LEMBARAN PENILAIAN — label dari sekolah, siswa hanya mengisi skor. */
+export interface GradeAspectRecord {
+  id?: string;
+  groupCode: string;
+  code: string;
+  label: string;
+  score: number | string;
+}
+
 export interface GradeRecord {
   id: string;
   studentId: string;
   giverId: string | null;
   giverRole: string;
   scoreDudi: number | string | null;
-  scoreGuidance: number | string | null;
+  /** Nilai Laporan PKL — pembobot 20% pada Nilai Akhir. */
+  scoreReport?: number | string | null;
   finalScore: number | string | null;
   predicate: string | null;
+  /** Pendamping/mentor PKL dari perusahaan. */
+  mentorName?: string | null;
   note: string | null;
+  /** Terisi saat nilai dikirim; selama terisi, form terkunci untuk siswa. */
+  submittedAt?: string | null;
   approval?: GradeApprovalInfo | null;
-  aspects?: Array<{ id?: string; label: string; score: number | string }>;
+  aspects?: GradeAspectRecord[];
   createdAt: string;
   student?: { id: string; username: string; studentProfile?: { fullName: string | null } | null };
+}
+
+/** Definisi form penilaian dari server (sumber tunggal: config sekolah). */
+export interface PenilaianItemDef {
+  code: string;
+  label: string;
+  groupCode: string;
+}
+
+export interface PenilaianGroupDef {
+  no: string;
+  title: string;
+  items: Array<{ code: string; label: string }>;
+}
+
+export interface PenilaianFormDef {
+  groups: PenilaianGroupDef[];
+  items: PenilaianItemDef[];
+  scale: Array<{ letter: string; label: string; min: number; range: string }>;
+  legend: string[];
+  weights: { aspek: number; laporan: number };
+  footnote: string;
+}
+
+export interface InputGradePayload {
+  studentId?: string;
+  items: Array<{ groupCode: string; code: string; score: number }>;
+  scoreReport: number;
+  mentorName: string;
+  note?: string | null;
+  confirmed: true;
 }
 
 export interface GradeRecapStudent {
@@ -616,16 +946,17 @@ export interface PhaseTransitionResult {
 
 /** Service penilaian PKL (input siswa/admin, approval guru). */
 export const gradeService = {
-  async inputGrade(payload: { studentId?: string; scoreDudi?: number; aspects?: Array<{ label: string; score: number }>; note?: string | null }): Promise<GradeRecord> {
+  /** Definisi butir + skala predikat — selalu ambil dari server. */
+  async form(): Promise<PenilaianFormDef> {
+    const { data } = await http.get<ApiResponse<PenilaianFormDef>>('/grades/form');
+    return data.data;
+  },
+  async inputGrade(payload: InputGradePayload): Promise<GradeRecord> {
     const { data } = await http.post<ApiResponse<GradeRecord>>('/grades', payload);
     return data.data;
   },
   async approve(gradeId: string, payload: { approved: boolean; note?: string | null }): Promise<unknown> {
     const { data } = await http.post<ApiResponse<unknown>>(`/grades/${gradeId}/approve`, payload);
-    return data.data;
-  },
-  async inputGuidance(gradeId: string, payload: { scoreGuidance: number; note?: string | null }): Promise<GradeRecord> {
-    const { data } = await http.post<ApiResponse<GradeRecord>>(`/grades/${gradeId}/guidance`, payload);
     return data.data;
   },
   async myGrades(): Promise<GradeRecord[]> {
@@ -643,6 +974,100 @@ export const gradeService = {
   /** Rekap admin: penilaian per kelas → siswa (termasuk yang belum dinilai). */
   async recapByClass(params?: { cohortId?: string }): Promise<GradeRecapByClass> {
     const { data } = await http.get<ApiResponse<GradeRecapByClass>>('/grades/recap-by-class', { params: params ?? {} });
+    return data.data;
+  },
+  /** Unduh rekap per kelas sebagai .xlsx — satu worksheet per kelas, kosong bila belum dinilai. */
+  async exportRecapByClass(cohortId?: string): Promise<void> {
+    await downloadFile('/grades/recap-by-class/export', undefined, cohortId ? { cohortId } : {});
+  },
+};
+
+/**
+ * Status kesiapan sertifikat satu siswa — dipakai checklist halaman siswa
+ * dan tabel admin.
+ */
+export interface SertifikatStatus {
+  studentId: string;
+  studentName: string;
+  nisn: string | null;
+  companyName: string | null;
+  gradeSubmitted: boolean;
+  gradeSubmittedAt: string | null;
+  approvalStatus: string | null;
+  approvalNote: string | null;
+  finalScore: number | null;
+  predicate: string | null;
+  hasLogo: boolean;
+  logoName: string | null;
+  /** Nama penandatangan kanan halaman 1 — diisi siswa, boleh kosong. */
+  kepalaBagianName: string | null;
+  number: string | null;
+  numberSource: string | null;
+  issuedAt: string | null;
+  /** PDF sudah terbit (snapshot tersimpan di storage). */
+  ready: boolean;
+}
+
+export interface CertificateRow {
+  id: string;
+  studentId: string;
+  username: string;
+  fullName: string;
+  nisn: string | null;
+  className: string | null;
+  number: string;
+  numberSource: string;
+  hasLogo: boolean;
+  issuedAt: string | null;
+  ready: boolean;
+}
+
+/** Service sertifikat PKL (fase 4): logo perusahaan, terbit PDF, nomor manual admin. */
+export const certificateService = {
+  async status(): Promise<SertifikatStatus> {
+    const { data } = await http.get<ApiResponse<SertifikatStatus>>('/sertifikat/saya');
+    return data.data;
+  },
+
+  /** Unggah/ganti logo perusahaan tempat PKL — wajib sebelum sertifikat dibuat. */
+  async uploadLogo(file: File): Promise<SertifikatStatus> {
+    const form = new FormData();
+    form.append('file', file);
+    const { data } = await http.post<ApiResponse<SertifikatStatus>>('/sertifikat/saya/logo', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data.data;
+  },
+
+  /** Simpan nama "Kepala Bagian Teknik dan Pengelolaan" (penandatangan kanan). */
+  async setPenandatangan(kepalaBagianName: string): Promise<SertifikatStatus> {
+    const { data } = await http.put<ApiResponse<SertifikatStatus>>('/sertifikat/saya/penandatangan', {
+      kepalaBagianName,
+    });
+    return data.data;
+  },
+
+  /** Terbitkan (atau ambil snapshot) sertifikat lalu unduh. */
+  async downloadMine(): Promise<void> {
+    await downloadFile('/sertifikat/saya/pdf', 'Sertifikat-PKL.pdf');
+  },
+
+  async downloadForStudent(studentId: string): Promise<void> {
+    await downloadFile(`/sertifikat/siswa/${studentId}/pdf`, 'Sertifikat-PKL.pdf');
+  },
+
+  async list(params?: {
+    page?: number;
+    perPage?: number;
+    cohortId?: string;
+  }): Promise<{ items: CertificateRow[]; meta?: PaginationMeta }> {
+    const { data } = await http.get<ApiResponse<CertificateRow[]>>('/sertifikat', { params: params ?? {} });
+    return { items: data.data, meta: data.meta };
+  },
+
+  /** Admin: timpa nomor otomatis dengan nomor surat resmi. */
+  async setNumber(id: string, number: string): Promise<CertificateRow> {
+    const { data } = await http.patch<ApiResponse<CertificateRow>>(`/sertifikat/${id}/nomor`, { number });
     return data.data;
   },
 };
@@ -868,14 +1293,14 @@ export const studentRegistryService = {
 };
 
 // ============================================================================
-// MASTER GURU (TeacherRegistry) — akun login (username = NIP) dibuat otomatis
+// MASTER GURU (TeacherRegistry) — akun login (username = NIP) dibuat otomatis.
+// Datanya GLOBAL: satu daftar guru berlaku untuk semua gelombang.
 // ============================================================================
 
 export interface TeacherRegistryRecord {
   id: string;
   nip: string;
   fullName: string;
-  cohortId: string;
   majorId: string | null;
   major?: { name: string; code: string } | null;
   isActive: boolean;
@@ -915,16 +1340,16 @@ export interface TeacherRegistryHeaderMapping {
   majorCode?: string;
 }
 
-/** Service Master Guru. */
+/** Service Master Guru — tanpa filter gelombang, satu daftar untuk semua angkatan. */
 export const teacherRegistryService = {
-  async list(cohortId: string, params?: { page?: number; perPage?: number; search?: string }): Promise<{ items: TeacherRegistryRecord[]; meta?: PaginationMeta }> {
+  async list(params?: { page?: number; perPage?: number; search?: string }): Promise<{ items: TeacherRegistryRecord[]; meta?: PaginationMeta }> {
     const { data } = await http.get<ApiResponse<TeacherRegistryRecord[]>>('/teacher-registry', {
-      params: { cohortId, ...params },
+      params,
     });
     return { items: data.data, meta: data.meta };
   },
   /** Tambah guru manual — akun (username = NIP) dibuat otomatis, password dikembalikan sekali. */
-  async create(input: { cohortId: string; nip: string; fullName: string; majorCode?: string }): Promise<{ record: TeacherRegistryRecord; account: TeacherProvisionedAccount | null; restored: boolean }> {
+  async create(input: { nip: string; fullName: string; majorCode?: string }): Promise<{ record: TeacherRegistryRecord; account: TeacherProvisionedAccount | null; restored: boolean }> {
     const { data } = await http.post<ApiResponse<{ record: TeacherRegistryRecord; account: TeacherProvisionedAccount | null; restored: boolean }>>('/teacher-registry', input);
     return data.data;
   },
@@ -938,9 +1363,8 @@ export const teacherRegistryService = {
     );
     return data.data;
   },
-  async importExcel(cohortId: string, file: File, mapping?: TeacherRegistryHeaderMapping): Promise<TeacherRegistryImportResult> {
+  async importExcel(file: File, mapping?: TeacherRegistryHeaderMapping): Promise<TeacherRegistryImportResult> {
     const form = new FormData();
-    form.append('cohortId', cohortId);
     form.append('file', file);
     if (mapping) {
       form.append('mapNip', mapping.nip);
@@ -1001,6 +1425,8 @@ export interface UserRecord {
   cohortId: string | null;
   studentProfile?: { fullName: string; nisn: string; class?: { name: string } | null } | null;
   teacherProfile?: { fullName: string; nip: string } | null;
+  /** Khusus akun ADMIN: daftar jurusan yang diawasi. */
+  supervisedMajors?: { id: string; code: string; name: string }[];
 }
 
 export interface StudentPklData {
@@ -1119,16 +1545,24 @@ export const cohortService = {
  * (gelombang aktif), fallback ke gelombang pertama. Data gelombang lama tidak
  * tampil kecuali admin memilihnya secara manual.
  */
-export const pickActiveCohortId = (cohorts: Array<{ id: string; status?: string }>): string =>
-  cohorts.find((c) => c.status === 'OPEN')?.id ?? cohorts[0]?.id ?? '';
+export const pickActiveCohortId = (
+  cohorts: Array<{ id: string; status?: string; isActive?: boolean }>
+): string =>
+  cohorts.find((c) => c.isActive)?.id ??
+  cohorts.find((c) => c.status === 'OPEN')?.id ??
+  cohorts[0]?.id ?? '';
 
 /** Service manajemen user. */
 export const userManageService = {
-  async create(payload: { username: string; password: string; role: string; identifier?: string; fullName?: string; nisn?: string; nip?: string; cohortId?: string | null; majorId?: string | null }): Promise<UserRecord & { password?: string }> {
+  /**
+   * Buat akun. Password tidak dikirim — backend yang membangkitkan dan
+   * mengembalikannya sekali di field `password`.
+   */
+  async create(payload: { username: string; role: string; identifier?: string; fullName?: string; nisn?: string; nip?: string; cohortId?: string | null; majorId?: string | null; majorIds?: string[] }): Promise<UserRecord & { password?: string }> {
     const { data } = await http.post<ApiResponse<UserRecord & { password?: string }>>('/users', payload);
     return data.data;
   },
-  async update(id: string, payload: Partial<UserRecord>): Promise<UserRecord> {
+  async update(id: string, payload: Partial<UserRecord> & { majorIds?: string[] }): Promise<UserRecord> {
     const { data } = await http.patch<ApiResponse<UserRecord>>(`/users/${id}`, payload);
     return data.data;
   },
@@ -1194,6 +1628,50 @@ export const auditLogService = {
 };
 
 // ============================================================================
+// INBOX VERIFIKASI ADMIN — semua antrean keputusan dalam satu daftar
+// ============================================================================
+
+export type InboxKind = 'REGISTRASI' | 'DOKUMEN' | 'USULAN_PERUSAHAAN' | 'NILAI';
+
+export interface InboxStudent {
+  id: string;
+  fullName: string | null;
+  username: string;
+  nisn: string | null;
+  className: string | null;
+  majorName: string | null;
+}
+
+export interface InboxItem {
+  kind: InboxKind;
+  /** id entitas asli — dipakai untuk memanggil endpoint review/verify/approve. */
+  id: string;
+  label: string;
+  status: string;
+  queuedAt: string;
+  student: InboxStudent | null;
+  cohortName: string | null;
+  company: string | null;
+  detail: string | null;
+}
+
+export interface InboxResult {
+  items: InboxItem[];
+  counts: Record<InboxKind | 'TOTAL', number>;
+}
+
+/**
+ * Inbox admin. Backend sudah membatasi isinya per jurusan yang diawasi (ADMIN),
+ * dan tidak berwenang memutuskan — keputusan tetap lewat service masing-masing sumber.
+ */
+export const inboxService = {
+  async list(params: { cohortId?: string; order?: 'OLDEST' | 'NEWEST' } = {}): Promise<InboxResult> {
+    const { data } = await http.get<ApiResponse<InboxResult>>('/admin/inbox', { params });
+    return data.data;
+  },
+};
+
+// ============================================================================
 // STUDENT WORKFLOW — Fase Efektif Berdasarkan Jadwal
 // ============================================================================
 
@@ -1205,10 +1683,18 @@ export interface WorkflowPhaseInfo {
 
 export interface StudentWorkflowStatus {
   effectivePhase: string | null;
+  /** Nama lengkap siswa untuk sapaan UI pemandu; null bila profil belum ada. */
+  studentName: string | null;
   hasCompleted: boolean;
   currentSchedule: WorkflowPhaseInfo | null;
   nextSchedule: WorkflowPhaseInfo | null;
   registrationStatus: string | null;
+  /** ISO string kapan pendaftaran diajukan — MC pakai untuk "baru saja" vs "sudah lama". */
+  registrationSubmittedAt: string | null;
+  /** ISO string keputusan admin terakhir atas pendaftaran. */
+  registrationReviewedAt: string | null;
+  /** ISO string kapan Surat Penerimaan diunggah (versi yang sekarang diperiksa/ditolak). */
+  suratPenerimaanSubmittedAt: string | null;
   registrationDocumentId: string | null;
   /** Gerbang Fase 1 → Fase 2: siswa sudah mengunduh Surat Permohonan? */
   permohonanDownloaded: boolean;
@@ -1319,13 +1805,33 @@ export const phaseScheduleService = {
   },
 };
 
-/** Helper: download file via Axios (membawa token auth). */
-export const downloadFile = async (url: string, filename: string, params?: Record<string, string>): Promise<void> => {
-  const { data } = await http.get(url, { responseType: 'blob', params: params ?? {} });
+/** Ambil nama file asli dari header Content-Disposition (dikirim backend). */
+const filenameFromDisposition = (header: unknown): string | null => {
+  if (typeof header !== 'string' || !header) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+    } catch {
+      /* lanjut ke filename biasa */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1]?.trim() ?? null;
+};
+
+/**
+ * Helper: download file via Axios (membawa token auth).
+ * `filename` opsional — jika tidak diberikan, nama file asli diambil dari
+ * header Content-Disposition backend, jadi tipe file apapun (pdf/png/docx)
+ * tersimpan dengan nama & ekstensi aslinya.
+ */
+export const downloadFile = async (url: string, filename?: string, params?: Record<string, string>): Promise<void> => {
+  const { data, headers } = await http.get(url, { responseType: 'blob', params: params ?? {} });
   const blob = new Blob([data]);
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = filename;
+  link.download = filename ?? filenameFromDisposition(headers['content-disposition']) ?? 'document.pdf';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -1334,8 +1840,11 @@ export const downloadFile = async (url: string, filename: string, params?: Recor
 
 /** Buka file terproteksi (otomatis ikut auth) di tab baru — pratinjau foto bukti. */
 export const openFileInTab = async (url: string): Promise<void> => {
-  const { data } = await http.get(url, { responseType: 'blob' });
-  const objectUrl = URL.createObjectURL(new Blob([data]));
+  // Blob dari responseType:'blob' sudah membawa Content-Type dari server.
+  // Jangan dibungkus ke Blob baru tanpa tipe: blob tanpa MIME membuat browser
+  // menampilkan byte gambar sebagai teks acak, bukan sebagai foto.
+  const { data } = await http.get<Blob>(url, { responseType: 'blob' });
+  const objectUrl = URL.createObjectURL(data);
   window.open(objectUrl, '_blank');
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 };

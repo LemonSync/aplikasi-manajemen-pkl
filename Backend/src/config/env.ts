@@ -28,6 +28,11 @@ const envSchema = z.object({
   STORAGE_ROOT: z.string().default('./storage'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(10),
 
+  // Bot WhatsApp (Baileys). WA_ENABLED adalah kill-switch level proses:
+  // bila false, socket tidak pernah dibuat walau setting wa.enabled true.
+  WA_ENABLED: z.enum(['true', 'false']).default('false'),
+  WA_AUTH_DIR: z.string().default('./storage/wa-auth'),
+
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
@@ -71,6 +76,9 @@ export const env = {
   corsOrigins: raw.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
   storageRoot: path.resolve(process.cwd(), raw.STORAGE_ROOT),
   maxUploadSizeBytes: raw.MAX_UPLOAD_SIZE_MB * 1024 * 1024,
+  waEnabled: raw.WA_ENABLED === 'true',
+  // Wajib absolut: useMultiFileAuthState menulis kredensial ke folder ini.
+  waAuthDir: path.resolve(process.cwd(), raw.WA_AUTH_DIR),
 };
 
 export type Env = typeof env;

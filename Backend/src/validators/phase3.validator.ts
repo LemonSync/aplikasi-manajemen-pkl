@@ -10,10 +10,20 @@ export const geoBodySchema = z.object({
   lat: z.number().min(-90).max(90),
   long: z.number().min(-180).max(180),
   note: z.string().max(500).optional().nullable(),
+  /** Radius kesalahan pembacaan GPS (meter) dari Geolocation API browser. */
+  accuracy: z.number().int().min(0).max(100000).optional().nullable(),
 });
 
 export const checkInSchema = geoBodySchema;
-export const checkOutSchema = geoBodySchema;
+/** Kegiatan harian dicatat saat siswa pulang, jadi ikut dalam body check-out. */
+export const checkOutSchema = geoBodySchema.extend({
+  activity: z.string().max(2000).optional().nullable(),
+});
+
+/** Susulan kegiatan untuk hari yang ditutup otomatis oleh cron (jam check-out tidak berubah). */
+export const updateActivitySchema = z.object({
+  activity: z.string().trim().min(3, 'Pelaksanaan kegiatan minimal 3 karakter').max(2000),
+});
 
 export const listAttendanceQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
@@ -41,6 +51,8 @@ export const listByClassQuerySchema = z.object({
 export type ListByClassQueryDTO = z.infer<typeof listByClassQuerySchema>;
 
 export type GeoBodyDTO = z.infer<typeof geoBodySchema>;
+export type CheckOutBodyDTO = z.infer<typeof checkOutSchema>;
+export type UpdateActivityDTO = z.infer<typeof updateActivitySchema>;
 export type ListAttendanceQueryDTO = z.infer<typeof listAttendanceQuerySchema>;
 export type SummaryQueryDTO = z.infer<typeof summaryQuerySchema>;
 

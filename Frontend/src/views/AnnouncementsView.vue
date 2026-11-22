@@ -4,12 +4,11 @@ import { announcementService, type AnnouncementRecord } from '@/services/api.ser
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
+import { notify } from '@/composables/useNotify';
 
 const announcements = ref<AnnouncementRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 const showForm = ref(false);
 const form = ref({ title: '', body: '' });
 
@@ -19,7 +18,7 @@ const load = async (): Promise<void> => {
     const { items } = await announcementService.list();
     announcements.value = items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -28,16 +27,15 @@ const load = async (): Promise<void> => {
 const submit = async (): Promise<void> => {
   if (!form.value.title || !form.value.body) return;
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await announcementService.create(form.value);
-    success.value = 'Pengumuman dibuat.';
+    notify.success('Pengumuman dibuat.');
     showForm.value = false;
     form.value = { title: '', body: '' };
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -48,8 +46,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <div class="flex items-center justify-between">

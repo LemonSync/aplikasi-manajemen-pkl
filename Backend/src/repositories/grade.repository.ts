@@ -5,6 +5,13 @@ export type GradeWithStudent = Prisma.GradeGetPayload<{
   include: { student: { include: { studentProfile: true } }; aspects: true };
 }>;
 
+/** Urutan butir = urutan LEMBARAN PENILAIAN (kelompok 1→3, lalu huruf butir). */
+const ASPECT_ORDER: Prisma.GradeAspectOrderByWithRelationInput[] = [
+  { groupCode: 'asc' },
+  { code: 'asc' },
+  { createdAt: 'asc' },
+];
+
 /**
  * Repository penilaian PKL.
  */
@@ -12,7 +19,7 @@ export class GradeRepository {
   async findById(id: string): Promise<GradeWithStudent | null> {
     return prisma.grade.findUnique({
       where: { id },
-      include: { student: { include: { studentProfile: true } }, aspects: { orderBy: { createdAt: 'asc' } } },
+      include: { student: { include: { studentProfile: true } }, aspects: { orderBy: ASPECT_ORDER } },
     });
   }
 
@@ -25,17 +32,13 @@ export class GradeRepository {
   async findMany(where: Prisma.GradeWhereInput): Promise<GradeWithStudent[]> {
     return prisma.grade.findMany({
       where,
-      include: { student: { include: { studentProfile: true } }, aspects: { orderBy: { createdAt: 'asc' } } },
+      include: { student: { include: { studentProfile: true } }, aspects: { orderBy: ASPECT_ORDER } },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async create(data: Prisma.GradeCreateInput): Promise<Grade> {
     return prisma.grade.create({ data });
-  }
-
-  async update(id: string, data: Prisma.GradeUpdateInput): Promise<Grade> {
-    return prisma.grade.update({ where: { id }, data });
   }
 
   async upsertByStudentAndGiver(
@@ -62,7 +65,7 @@ export class GradeRepository {
         skip,
         take,
         orderBy: { createdAt: 'desc' },
-        include: { student: { include: { studentProfile: true } }, aspects: { orderBy: { createdAt: 'asc' } } },
+        include: { student: { include: { studentProfile: true } }, aspects: { orderBy: ASPECT_ORDER } },
       }),
       prisma.grade.count({ where }),
     ]);

@@ -59,6 +59,7 @@ export class RegistrationController {
       perPage,
       status: query.status,
       cohortId: query.cohortId,
+      actor: { id: req.user!.sub, role: req.user!.role },
     });
     return sendSuccess(res, items, 'OK', 200, buildPaginationMeta(page, perPage, total));
   });
@@ -70,8 +71,10 @@ export class RegistrationController {
     const result = await registrationService.review(
       req.params.id as string,
       req.user!.sub,
+      req.user!.role,
       dto.action,
       dto.note,
+      dto.number,
       ctx
     );
     return sendSuccess(res, result, dto.action === 'APPROVE' ? 'Pendaftaran disetujui' : 'Pendaftaran ditolak');

@@ -84,12 +84,12 @@ export class VisitController {
 
   /** GET /api/visits/:id/photo — bukti foto monitoring */
   photo = asyncHandler(async (req: Request, res: Response) => {
-    const { buffer, filename } = await visitService.getPhoto(
+    const { buffer, filename, contentType } = await visitService.getPhoto(
       req.user!.sub,
       req.params.id as string,
       req.user!.role
     );
-    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `inline; filename="${filename.replace(/[^\w.-]+/g, '_')}"`);
     return res.send(buffer);
   });

@@ -136,7 +136,10 @@ async function main() {
   const dupIn = await request('POST', '/api/attendances/check-in', coords, tSiswa);
   log('Tolak check-in dobel', dupIn.status === 409, { status: dupIn.status, msg: dupIn.json?.message });
 
-  const checkOut = await request('POST', '/api/attendances/check-out', { ...coords, note: 'Selesai' }, tSiswa);
+  const outNoActivity = await request('POST', '/api/attendances/check-out', coords, tSiswa);
+  log('Tolak check-out tanpa kegiatan (400)', outNoActivity.status === 400, { status: outNoActivity.status, msg: outNoActivity.json?.message });
+
+  const checkOut = await request('POST', '/api/attendances/check-out', { ...coords, note: 'Selesai', activity: 'Membantu konfigurasi jaringan kantor' }, tSiswa);
   log('POST /attendances/check-out', checkOut.status === 200 && Boolean(checkOut.json?.data?.checkOutAt), { status: checkOut.status });
 
   const dupOut = await request('POST', '/api/attendances/check-out', coords, tSiswa);

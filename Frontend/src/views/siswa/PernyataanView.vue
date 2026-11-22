@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import {
   pernyataanService,
   documentService,
@@ -8,8 +9,13 @@ import {
   type PernyataanPrefill,
   type StudentWorkflowStatus,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { extractErrorMessage } from '@/services/http';
 import StatusBadge from '@/components/StatusBadge.vue';
+import HostStrip from '@/components/host/HostStrip.vue';
+import type { HostAction, HostVars } from '@/config/hostDialogs';
+
+const router = useRouter();
 
 const prefill = ref<PernyataanPrefill>({
   namaSiswa: '',
@@ -25,12 +31,21 @@ const prefill = ref<PernyataanPrefill>({
 const loading = ref(true);
 const generating = ref(false);
 const uploading = ref(false);
-const error = ref('');
-const success = ref('');
 const generatedDocId = ref<string | null>(null);
 const docs = ref<Array<{ id: string; type: string; status: string; title: string | null; note: string | null }>>([]);
 const signedFile = ref<File | null>(null);
 const workflow = ref<StudentWorkflowStatus | null>(null);
+
+/** Aksi terakhir yang ditanggapi MC — null berarti masih kalimat pembuka halaman. */
+const reaksi = ref<HostAction | null>(null);
+/** Nama file yang dipilih, sengaja disimpan sendiri: `signedFile` dikosongkan
+ *  setelah unggah berhasil, sementara kalimat MC sudah terlanjur menyebutnya. */
+const namaFile = ref('');
+const hostVars = computed<HostVars>(() => ({
+  nama: prefill.value.namaSiswa || 'kamu',
+  perusahaan: prefill.value.tempatPkl || 'perusahaan tujuanmu',
+  namaFile: namaFile.value || 'filenya',
+}));
 
 // Form hanya boleh diisi saat siswa berada di Fase 2 (NON_PKL).
 // Setelah fase berpindah (Fase 3+), tugas Fase 2 dianggap selesai dan terkunci.
@@ -40,9 +55,29 @@ const isBeforePhase2 = computed(() => {
   return p === null || p === undefined || p === 'PRA_PKL';
 });
 
+/** Surat yang diunggah admin sudah DISETUJUI — tidak ada PR tersisa di halaman ini. */
+const disahkan = computed(() => docs.value.some((d) => d.status === 'DISETUJUI'));
+
+/**
+ * Julie mengantar pulang: begitu pengesahan terbaca di status dokumen, siswa
+ * dibawa kembali ke `/alur-pkl` — di sana tahap berikutnya (atau kartu tunggu
+ * Fase 3) yang bicara. Jeda cukup untuk membaca satu kalimatnya; link manual
+ * di kartu tetap ada supaya tidak ada navigasi yang memaksa.
+ */
+const sedangDiantar = ref(false);
+watch(disahkan, (sah) => {
+  // Hanya selama siswa masih tercatat di Fase 2. Setelah fase berpindah, kartu
+  // terkunci yang berlaku dan tujuannya dashboard, bukan panggung kuis.
+  if (!sah || phaseLocked.value || sedangDiantar.value) return;
+  sedangDiantar.value = true;
+  setTimeout(() => {
+    void router.push({ name: 'student-workflow' });
+  }, 2400);
+});
+
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const [p, d, w] = await Promise.all([
       pernyataanService.prefill(),
@@ -54,7 +89,7 @@ const load = async (): Promise<void> => {
     if (docs.value.length > 0) generatedDocId.value = docs.value[0].id;
     workflow.value = w;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -64,24 +99,23 @@ const generate = async (): Promise<void> => {
   if (phaseLocked.value) return;
   // Semua data yang dicetak ke surat wajib terisi (sinkron dengan backend).
   if (!prefill.value?.namaOrtu?.trim()) {
-    error.value = 'Nama orang tua/wali wajib diisi.';
+    notify.error('Nama orang tua/wali wajib diisi.');
     return;
   }
   if (!prefill.value?.alamatSiswa?.trim()) {
-    error.value = 'Alamat siswa wajib diisi.';
+    notify.error('Alamat siswa wajib diisi.');
     return;
   }
   if (!prefill.value?.hpOrtu?.trim()) {
-    error.value = 'No. HP orang tua/wali wajib diisi.';
+    notify.error('No. HP orang tua/wali wajib diisi.');
     return;
   }
   if (!prefill.value?.hpSiswa?.trim()) {
-    error.value = 'No. HP siswa wajib diisi.';
+    notify.error('No. HP siswa wajib diisi.');
     return;
   }
   generating.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const result = await pernyataanService.generate({
       namaOrtu: prefill.value?.namaOrtu,
@@ -90,10 +124,11 @@ const generate = async (): Promise<void> => {
       hpSiswa: prefill.value?.hpSiswa,
     });
     generatedDocId.value = result.documentId;
-    success.value = 'Surat Pernyataan PDF berhasil dibuat. Silakan unduh, print, tanda tangan di atas materai, lalu unggah kembali.';
+    reaksi.value = 'buatSurat';
+    notify.success('Surat Pernyataan PDF berhasil dibuat. Silakan unduh, print, tanda tangan di atas materai, lalu unggah kembali.');
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     generating.value = false;
   }
@@ -104,27 +139,31 @@ const downloadPdf = async (): Promise<void> => {
   try {
     await downloadFile(`/documents/${generatedDocId.value}/download`, 'surat-pernyataan-pkl.pdf');
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
 const onFileChange = (event: Event): void => {
   const input = event.target as HTMLInputElement;
   signedFile.value = input.files?.[0] ?? null;
+  if (signedFile.value) {
+    namaFile.value = signedFile.value.name;
+    reaksi.value = 'pilihFile';
+  }
 };
 
 const uploadSigned = async (): Promise<void> => {
   if (!signedFile.value || phaseLocked.value) return;
   uploading.value = true;
-  error.value = '';
-  success.value = '';
+  reaksi.value = 'unggah';
+  notify.clear();
   try {
     await documentService.upload('SURAT_PERNYATAAN', signedFile.value, 'Surat Pernyataan bermaterai (foto/scan)');
-    success.value = 'Surat Pernyataan bermaterai berhasil diunggah dan menunggu verifikasi admin.';
+    notify.success('Surat Pernyataan bermaterai berhasil diunggah dan menunggu verifikasi admin.');
     signedFile.value = null;
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     uploading.value = false;
   }
@@ -135,8 +174,12 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
+    <HostStrip
+      v-if="!loading && !phaseLocked"
+      :action="disahkan ? 'sahkan' : reaksi ?? undefined"
+      :step-key="disahkan || reaksi ? undefined : 'surat-pernyataan'"
+      :vars="hostVars"
+    />
 
     <!-- Penguncian form di luar Fase 2 -->
     <div v-if="!loading && phaseLocked" class="rounded-lg border-l-4 border-l-blue-500 bg-blue-50 p-4">
@@ -223,7 +266,7 @@ onMounted(load);
         </div>
 
         <div class="mt-5 flex flex-wrap gap-2">
-          <button v-if="!phaseLocked" class="btn-primary" :disabled="generating" @click="generate">
+          <button v-if="!phaseLocked && !disahkan" class="btn-primary" :disabled="generating" @click="generate">
             {{ generating ? 'Membuat surat...' : 'Buat Surat Pernyataan (PDF)' }}
           </button>
           <button v-if="generatedDocId" class="btn-secondary" @click="downloadPdf">
@@ -233,7 +276,18 @@ onMounted(load);
       </template>
     </div>
 
-    <div v-if="!loading && !phaseLocked" class="card">
+    <!-- Tugas selesai: Julie antar balik ke panggung, link manual tetap tersedia -->
+    <div v-if="!loading && !phaseLocked && disahkan" class="card border-l-4 border-l-ok bg-ok-soft p-4">
+      <p class="text-sm font-medium text-ok-800">Surat Pernyataan kamu sudah disahkan admin.</p>
+      <p class="mt-1 text-sm text-ok-700">
+        Tidak ada lagi yang perlu diunggah di halaman ini — sedang aku antarkan kembali ke Alur PKL.
+      </p>
+      <RouterLink :to="{ name: 'student-workflow' }" class="btn-primary mt-3 inline-flex">
+        Kembali ke Alur PKL
+      </RouterLink>
+    </div>
+
+    <div v-if="!loading && !phaseLocked && !disahkan" class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Unggah Surat yang Sudah Ditandatangani</h2>
       <p class="mb-3 text-sm text-gray-500">
         Setelah print, tanda tangan, dan tempel materai, foto/scan surat lalu unggah di sini.

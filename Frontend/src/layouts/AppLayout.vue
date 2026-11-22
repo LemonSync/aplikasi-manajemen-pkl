@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth.store';
 import { useCohortStore } from '@/stores/cohort.store';
@@ -8,122 +8,77 @@ import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import AppIcon from '@/components/AppIcon.vue';
-import { ROLE_LABELS, type Role, type StudentPhase } from '@/types';
-
-interface NavItem {
-  label: string;
-  routeName: string;
-  icon: string;
-  section: string;
-  roles: Role[];
-  phases?: StudentPhase[];
-}
-
-const navItems: NavItem[] = [
-  // Beranda
-  { label: 'Dashboard', routeName: 'dashboard', icon: 'grid', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
-  { label: 'Pengumuman', routeName: 'announcements', icon: 'megaphone', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
-  { label: 'Notifikasi', routeName: 'notifications', icon: 'bell', section: 'Beranda', roles: ['SISWA', 'GURU_PEMBIMBING', 'ADMIN', 'KEPALA_SEKOLAH', 'SUPER_ADMIN'] },
-  // Siswa
-  { label: 'Absensi Harian', routeName: 'my-attendance', icon: 'calendar', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
-  { label: 'Pengaduan', routeName: 'my-complaints', icon: 'alert', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF'] },
-  { label: 'Dokumen Saya', routeName: 'my-documents', icon: 'file', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
-  { label: 'Laporan Akhir', routeName: 'my-report', icon: 'clipboard', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_AKTIF', 'PKL_SELESAI'] },
-  { label: 'Input Nilai PKL', routeName: 'grade-input', icon: 'award', section: 'Siswa', roles: ['SISWA'], phases: ['PKL_SELESAI'] },
-  // Guru
-  { label: 'Siswa Bimbingan', routeName: 'guru-bimbingan', icon: 'users', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Surat Pengantar dkk.', routeName: 'guru-bulk-letter', icon: 'fileCheck', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Verifikasi Absensi', routeName: 'guru-attendance-verify', icon: 'checkSquare', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Kunjungan', routeName: 'guru-visits', icon: 'pin', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Penilaian & Approval', routeName: 'guru-grade-approval', icon: 'checkCircle', section: 'Guru', roles: ['GURU_PEMBIMBING'] },
-  { label: 'Monitor Pengaduan', routeName: 'complaint-monitor', icon: 'message', section: 'Guru', roles: ['GURU_PEMBIMBING', 'ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
-  // Admin — Monitoring
-  { label: 'Absensi', routeName: 'admin-attendance', icon: 'activity', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
-  { label: 'Pendaftaran', routeName: 'admin-registrations', icon: 'clipboard', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Verifikasi Dokumen', routeName: 'admin-documents', icon: 'folder', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
-  { label: 'Surat', routeName: 'admin-letters', icon: 'fileCheck', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Generator Surat', routeName: 'admin-letter-generator', icon: 'file', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Rekap Penilaian', routeName: 'admin-grade-recap', icon: 'chart', section: 'Verifikasi', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  // Admin — Data
-  { label: 'Pembimbingan', routeName: 'admin-supervisions', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Manajemen User', routeName: 'admin-users', icon: 'user', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Master Siswa', routeName: 'admin-student-registry', icon: 'clipboard', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Master Guru', routeName: 'admin-teacher-registry', icon: 'users', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  { label: 'Perusahaan', routeName: 'admin-companies', icon: 'briefcase', section: 'Data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-  // Admin — Sistem
-  { label: 'Gelombang', routeName: 'admin-cohorts', icon: 'layers', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
-  { label: 'Jadwal Fase', routeName: 'admin-phase-schedule', icon: 'calendar', section: 'Sistem', roles: ['SUPER_ADMIN', 'KEPALA_SEKOLAH'] },
-  { label: 'Audit Log', routeName: 'admin-audit-log', icon: 'shield', section: 'Sistem', roles: ['SUPER_ADMIN'] },
-  { label: 'Config', routeName: 'admin-config', icon: 'settings', section: 'Sistem', roles: ['SUPER_ADMIN'] },
-];
+import AppSidebar from '@/components/AppSidebar.vue';
+import DropdownMenu from '@/components/DropdownMenu.vue';
+import UserAvatar from '@/components/UserAvatar.vue';
+import { useFocusTrap } from '@/composables/useFocusTrap';
+import { useReducedMotion } from '@/composables/useReducedMotion';
+import { useRouteProgress } from '@/composables/useRouteProgress';
+import { useRouteTransition } from '@/composables/useRouteTransition';
+import { useScrollProgress } from '@/composables/useScrollProgress';
+import { COHORT_SWITCH_ROLES, groupNavBySection, visibleNavItems } from '@/config/nav';
+import { ROLE_LABELS } from '@/types';
 
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
 
-// Progress bar ringkas saat pindah halaman
-const routeLoading = ref(false);
-let routeTimer: ReturnType<typeof setTimeout> | null = null;
-watch(
-  () => route.path,
-  () => {
-    routeLoading.value = true;
-    if (routeTimer) clearTimeout(routeTimer);
-    routeTimer = setTimeout(() => {
-      routeLoading.value = false;
-    }, 500);
-  }
-);
+const { active: progressActive, width: progressWidth } = useRouteProgress();
+const pageTransition = useRouteTransition();
+const { ratio: scrollRatio, scrolled: headerLifted, y: scrollY } = useScrollProgress();
+const reducedMotion = useReducedMotion();
+
+const showBackToTop = computed(() => scrollY.value > 420);
+
+const scrollToTop = (): void => {
+  window.scrollTo({ top: 0, behavior: reducedMotion.value ? 'auto' : 'smooth' });
+};
 
 const hasSidebar = computed(() => {
   if (auth.role !== 'SISWA') return true;
   return auth.phase === 'PKL_AKTIF' || auth.phase === 'PKL_SELESAI';
 });
 
-const visibleNav = computed(() =>
-  navItems.filter((item) => {
-    if (auth.role === null) return false;
-    if (!item.roles.includes(auth.role)) return false;
-    if (auth.role === 'SISWA' && item.phases && auth.phase) {
-      return item.phases.includes(auth.phase);
-    }
-    if (auth.role === 'SISWA' && item.phases && !auth.phase) {
-      return false;
-    }
-    return true;
-  })
-);
+const visibleNav = computed(() => visibleNavItems(auth.role, auth.phase));
 
 /** Kelompokkan nav berdasarkan section, pertahankan urutan. */
-const navSections = computed<Array<{ section: string; items: typeof navItems }>>(() => {
-  const out: Array<{ section: string; items: typeof navItems }> = [];
-  for (const item of visibleNav.value) {
-    const last = out[out.length - 1];
-    if (last && last.section === item.section) last.items.push(item);
-    else out.push({ section: item.section, items: [item] });
-  }
-  return out;
-});
+const navSections = computed(() => groupNavBySection(visibleNav.value));
 
 const isStudentGuided = computed(() => auth.role === 'SISWA' && !hasSidebar.value);
 
 const roleLabel = computed(() => (auth.role ? ROLE_LABELS[auth.role] : ''));
-
-const initials = computed(() => {
-  const u = auth.user?.username ?? '';
-  return u.slice(0, 2).toUpperCase();
-});
 
 const handleLogout = async (): Promise<void> => {
   await auth.logout();
   void router.push({ name: 'login' });
 };
 
+// --- Drawer mobile ---
+const drawerOpen = ref(false);
+const drawerEl = ref<HTMLElement | null>(null);
+useFocusTrap(drawerEl, drawerOpen);
+
+const closeDrawer = (): void => {
+  drawerOpen.value = false;
+};
+
+watch(() => route.path, closeDrawer);
+watch(hasSidebar, (v) => {
+  if (!v) closeDrawer();
+});
+
+const onDrawerKey = (e: KeyboardEvent): void => {
+  if (e.key !== 'Escape' || !drawerOpen.value) return;
+  // Jangan tutup drawer kalau yang ditekan sebenarnya ditujukan ke modal di atasnya.
+  if (document.querySelector('.modal-overlay')) return;
+  closeDrawer();
+};
+window.addEventListener('keydown', onDrawerKey);
+onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKey));
+
 // --- Konteks gelombang global ---
 const cohortStore = useCohortStore();
-const showCohortSwitch = computed(() =>
-  ['ADMIN', 'SUPER_ADMIN', 'KEPALA_SEKOLAH'].includes(auth.role ?? '')
-);
+const showCohortSwitch = computed(() => !!auth.role && COHORT_SWITCH_ROLES.includes(auth.role));
 watch(
   showCohortSwitch,
   (v) => {
@@ -141,6 +96,8 @@ const cpSaving = ref(false);
 const cpError = ref('');
 const cpSuccess = ref('');
 
+const mustChangePassword = computed(() => auth.user?.mustChangePassword === true);
+
 const openChangePassword = (): void => {
   cpCurrent.value = '';
   cpNew.value = '';
@@ -148,15 +105,12 @@ const openChangePassword = (): void => {
   cpError.value = '';
   cpSuccess.value = '';
   showChangePassword.value = true;
+  closeDrawer();
 };
 
-watch(
-  () => auth.user?.mustChangePassword,
-  (must) => {
-    if (must) openChangePassword();
-  },
-  { immediate: true }
-);
+watch(mustChangePassword, (must) => {
+  if (must) openChangePassword();
+}, { immediate: true });
 
 const submitChangePassword = async (): Promise<void> => {
   cpError.value = '';
@@ -182,108 +136,164 @@ const submitChangePassword = async (): Promise<void> => {
 </script>
 
 <template>
-  <div class="min-h-screen">
-    <div v-if="routeLoading" class="route-progress w-full" />
+  <div class="min-h-screen bg-canvas">
+    <!-- Progres baca dokumen: tipis, tepat di atas header buram -->
+    <div
+      class="scroll-progress"
+      :style="{ transform: `scaleX(${scrollRatio})` }"
+      aria-hidden="true"
+    />
 
-    <!-- ===== Sidebar ===== -->
+    <div
+      v-if="progressActive"
+      class="route-progress"
+      :style="{ width: progressWidth }"
+      role="progressbar"
+      aria-label="Memuat halaman"
+    />
+
+    <!-- ===== Sidebar desktop ===== -->
     <aside
       v-if="hasSidebar"
-      class="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-ink-900 text-white"
+      class="fixed inset-y-0 left-0 z-sidebar hidden w-64 flex-col bg-primary-900 text-white lg:flex"
     >
-      <!-- Brand -->
-      <div class="flex h-16 shrink-0 items-center gap-3 border-b border-white/5 px-5">
-        <div class="flex h-8 w-8 items-center justify-center bg-primary-600 text-sm font-bold text-white">
-          P
-        </div>
-        <div class="leading-tight">
-          <p class="text-sm font-bold tracking-tight text-white">Manajemen PKL</p>
-          <p class="text-[11px] text-ink-400">SMKN 9 Medan</p>
-        </div>
-      </div>
-
-      <!-- Nav -->
-      <nav class="flex-1 overflow-y-auto pb-6">
-        <template v-for="group in navSections" :key="group.section">
-          <p class="side-section">{{ group.section }}</p>
-          <RouterLink
-            v-for="item in group.items"
-            :key="item.routeName"
-            :to="{ name: item.routeName }"
-            class="side-link"
-            :class="{ 'side-link-active': $route.name === item.routeName }"
-          >
-            <AppIcon :name="item.icon" :size="17" class="shrink-0" />
-            <span class="truncate">{{ item.label }}</span>
-          </RouterLink>
-        </template>
-      </nav>
-
-      <!-- Sidebar footer -->
-      <div class="shrink-0 border-t border-white/5 px-5 py-4">
-        <div class="flex items-center gap-2 text-xs text-ink-500">
-          <AppIcon name="shield" :size="14" />
-          <span>Sistem PKL · v1.0</span>
-        </div>
-      </div>
+      <AppSidebar :sections="navSections" />
     </aside>
 
-    <!-- ===== Konten ===== -->
-    <div :class="hasSidebar ? 'pl-64' : ''">
-      <header
-        class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-ink-200 bg-white/80 px-6 backdrop-blur"
+    <!-- ===== Drawer mobile ===== -->
+    <template v-if="hasSidebar">
+      <Transition name="fade">
+        <div v-if="drawerOpen" class="drawer-overlay lg:hidden" @click="closeDrawer" />
+      </Transition>
+      <aside
+        ref="drawerEl"
+        class="fixed inset-y-0 left-0 z-drawer flex w-[17rem] max-w-[85vw] flex-col bg-primary-900 text-white shadow-xl transition-transform duration-300 ease-spring lg:hidden"
+        :class="drawerOpen ? 'translate-x-0' : '-translate-x-full'"
+        :inert="drawerOpen ? undefined : 'true'"
+        :aria-hidden="!drawerOpen"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigasi utama"
       >
-        <h1 class="text-[15px] font-bold tracking-tight text-ink-900">
-          {{ isStudentGuided ? 'Alur PKL Saya' : ($route.meta.title ?? 'Dashboard') }}
-        </h1>
+        <button
+          class="absolute right-3 top-4 flex h-9 w-9 items-center justify-center rounded-none text-ink-400 transition hover:bg-white/10 hover:text-white"
+          aria-label="Tutup navigasi"
+          @click="closeDrawer"
+        >
+          <AppIcon name="close" :size="18" />
+        </button>
+        <AppSidebar :sections="navSections" cohort-in-footer @navigate="closeDrawer" />
+      </aside>
+    </template>
 
-        <div class="flex items-center gap-3">
+    <!-- ===== Konten ===== -->
+    <div :class="hasSidebar ? 'lg:pl-64' : ''">
+      <header
+        class="frosted sticky top-0 z-header flex h-16 items-center justify-between gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)] transition-shadow duration-300 ease-out sm:px-6"
+        :class="headerLifted ? 'header-elevated' : ''"
+      >
+        <div class="flex min-w-0 items-center gap-2">
+          <button
+            v-if="hasSidebar"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-none text-ink-600 transition hover:bg-ink-100 hover:text-ink-900 lg:hidden"
+            aria-label="Buka navigasi"
+            :aria-expanded="drawerOpen"
+            @click="drawerOpen = true"
+          >
+            <AppIcon name="menu" :size="20" />
+          </button>
+          <h1
+            :key="String(route.name)"
+            class="animate-title flex min-w-0 items-center gap-2 text-[15px] font-bold tracking-tight text-ink-900"
+          >
+            <span class="h-4 w-[3px] shrink-0 bg-accent" aria-hidden="true" />
+            <span class="truncate">{{ isStudentGuided ? 'Alur PKL Saya' : (route.meta.title ?? 'Dashboard') }}</span>
+          </h1>
+        </div>
+
+        <div class="flex shrink-0 items-center gap-1.5 sm:gap-3">
           <select
             v-if="showCohortSwitch && cohortStore.loaded"
             v-model="cohortStore.activeCohortId"
-            class="input max-w-[200px] py-1.5 text-[13px]"
+            class="input hidden h-9 max-w-[190px] py-1.5 text-[13px] sm:block"
+            aria-label="Gelombang aktif"
           >
             <option v-for="c in cohortStore.cohorts" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
 
-          <button class="btn-secondary !px-3 !py-1.5 !text-[13px]" @click="openChangePassword">
-            <AppIcon name="lock" :size="15" />
-            Ganti Password
-          </button>
-
           <RouterLink
-            v-if="isStudentGuided && $route.name !== 'student-workflow'"
+            v-if="isStudentGuided && route.name !== 'student-workflow'"
             :to="{ name: 'student-workflow' }"
-            class="text-[13px] font-semibold text-primary-700 hover:underline"
+            class="rounded-md px-2 py-1 text-[13px] font-semibold text-primary-700 transition hover:bg-primary-50"
           >
             Alur
           </RouterLink>
 
-          <!-- User chip -->
-          <div class="flex items-center gap-2.5 border-l border-ink-200 pl-3">
-            <div class="flex h-8 w-8 items-center justify-center bg-primary-600 text-[11px] font-bold text-white">
-              {{ initials }}
-            </div>
-            <div class="leading-tight">
-              <p class="max-w-[140px] truncate text-[13px] font-semibold text-ink-900">
-                {{ auth.user?.username }}
-              </p>
-              <p class="text-[11px] font-medium text-ink-500">{{ roleLabel }}</p>
-            </div>
-            <button
-              class="ml-1 flex h-8 w-8 items-center justify-center text-ink-400 transition hover:bg-ink-100 hover:text-red-600"
-              title="Keluar"
-              @click="handleLogout"
-            >
-              <AppIcon name="logout" :size="16" />
-            </button>
-          </div>
+          <RouterLink
+            :to="{ name: 'notifications' }"
+            class="flex h-10 w-10 items-center justify-center rounded-none text-ink-500 transition duration-200 ease-spring hover:bg-ink-100 hover:text-ink-800 active:scale-95"
+            aria-label="Notifikasi"
+            title="Notifikasi"
+          >
+            <AppIcon name="bell" :size="19" class="transition-transform duration-300 ease-spring hover:rotate-12" />
+          </RouterLink>
+
+          <!-- Menu user: sebelumnya hanya chip statis + tombol logout terpisah -->
+          <DropdownMenu align="end" panel-class="w-56">
+            <template #trigger>
+              <span
+                class="flex items-center gap-2 rounded-none border border-line bg-surface py-1 pl-1 pr-2 transition-[box-shadow,border-color] duration-200 ease-out hover:border-primary-300 hover:shadow-sm sm:pr-3"
+              >
+                <UserAvatar :seed="auth.user?.username" class="h-8 w-8 ring-1 ring-primary-200" />
+                <span class="hidden leading-tight sm:block">
+                  <span class="block max-w-[140px] truncate text-[13px] font-semibold text-ink-900">
+                    {{ auth.user?.username }}
+                  </span>
+                  <span class="block text-[11px] font-medium text-ink-500">{{ roleLabel }}</span>
+                </span>
+                <AppIcon name="chevronDown" :size="14" class="text-ink-400" />
+              </span>
+            </template>
+            <template #default="{ close }">
+              <button class="menu-item" @click="close(), openChangePassword()">
+                <AppIcon name="lock" :size="16" />
+                Ganti Password
+              </button>
+              <div class="menu-sep" />
+              <button class="menu-item menu-item-danger" @click="close(), handleLogout()">
+                <AppIcon name="logout" :size="16" />
+                Keluar
+              </button>
+            </template>
+          </DropdownMenu>
         </div>
       </header>
 
-      <main class="p-6">
-        <RouterView />
+      <main class="px-4 py-4 sm:px-6 sm:py-6">
+        <!-- Pembungkus relativ: halaman lama yang keluar di-posisikan absolute di
+             sini, bukan di main, agar tidak bergeser keluar padding konten. -->
+        <div class="relative">
+          <RouterView v-slot="{ Component }">
+            <Transition :name="pageTransition" appear>
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
+        </div>
       </main>
     </div>
+
+    <!-- ===== Kembali ke atas ===== -->
+    <Transition name="back-to-top">
+      <button
+        v-if="showBackToTop"
+        type="button"
+        class="back-to-top"
+        aria-label="Kembali ke atas halaman"
+        @click="scrollToTop"
+      >
+        <AppIcon name="chevronDown" :size="18" class="rotate-180" />
+      </button>
+    </Transition>
 
     <!-- ===== Modal Ganti Password ===== -->
     <Modal
@@ -291,22 +301,31 @@ const submitChangePassword = async (): Promise<void> => {
       title="Ganti Password"
       size="sm"
       :busy="cpSaving"
+      :dismissible="!mustChangePassword"
       @close="showChangePassword = false"
     >
-      <div v-if="auth.user?.mustChangePassword" class="mb-4 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-        Password sementara. Wajib diganti.
+      <div
+        v-if="mustChangePassword"
+        class="mb-4 rounded-md bg-warn-soft px-3 py-2 text-sm font-medium text-amber-700"
+      >
+        Password sementara. Wajib diganti sebelum melanjutkan.
       </div>
-      <div v-if="cpError" class="mb-3 bg-red-50 px-3 py-2 text-sm text-red-700">{{ cpError }}</div>
-      <div v-if="cpSuccess" class="mb-3 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ cpSuccess }}</div>
+      <div v-if="cpError" class="mb-3 rounded-md bg-no-soft px-3 py-2 text-sm text-red-700">
+        {{ cpError }}
+      </div>
+      <div v-if="cpSuccess" class="mb-3 rounded-md bg-ok-soft px-3 py-2 text-sm text-emerald-700">
+        {{ cpSuccess }}
+      </div>
 
       <div class="space-y-3">
         <div>
-          <label class="label">Password Lama</label>
-          <input v-model="cpCurrent" type="password" class="input" autocomplete="current-password" />
+          <label class="label" for="cp-current">Password Lama</label>
+          <input id="cp-current" v-model="cpCurrent" type="password" class="input" autocomplete="current-password" />
         </div>
         <div>
-          <label class="label">Password Baru</label>
+          <label class="label" for="cp-new">Password Baru</label>
           <input
+            id="cp-new"
             v-model="cpNew"
             type="password"
             class="input"
@@ -315,13 +334,13 @@ const submitChangePassword = async (): Promise<void> => {
           />
         </div>
         <div>
-          <label class="label">Ulangi</label>
-          <input v-model="cpConfirm" type="password" class="input" autocomplete="new-password" />
+          <label class="label" for="cp-confirm">Ulangi</label>
+          <input id="cp-confirm" v-model="cpConfirm" type="password" class="input" autocomplete="new-password" />
         </div>
       </div>
 
       <template #footer>
-        <button v-if="!auth.user?.mustChangePassword" class="btn-secondary" @click="showChangePassword = false">
+        <button v-if="!mustChangePassword" class="btn-secondary" @click="showChangePassword = false">
           Batal
         </button>
         <button
@@ -336,3 +355,14 @@ const submitChangePassword = async (): Promise<void> => {
     </Modal>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--dur) var(--ease-out);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { authenticate, authorizeRoles } from '../middlewares/auth';
 import { validate } from '../middlewares/validate';
 import { configController } from '../controllers/config.controller';
+import { waBotRoutes } from './waBot.routes';
 import { createIndustryConfigSchema, createMajorConfigSchema, signatoryConfigSchema, updateIndustryConfigSchema, updateMajorConfigSchema } from '../validators/config.validator';
 
 const router = Router();
@@ -19,5 +20,8 @@ router.get('/industries', configController.industries);
 router.post('/industries', validate({ body: createIndustryConfigSchema }), configController.createIndustry);
 router.patch('/industries/:id', validate({ body: updateIndustryConfigSchema }), configController.updateIndustry);
 router.delete('/industries/:id', configController.deleteIndustry);
+
+// Bot WhatsApp — ikut guard SUPER_ADMIN di atas, tidak perlu authorize ulang.
+router.use('/wa', waBotRoutes);
 
 export default router;

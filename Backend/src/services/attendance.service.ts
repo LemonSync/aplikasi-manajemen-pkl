@@ -6,11 +6,14 @@ import { AUDIT_ACTIONS, ENTITY_TYPES, MESSAGES } from '../config/constants';
 import { startOfToday } from '../utils/date';
 import { saveBuffer } from '../utils/storage';
 import { prisma } from '../config/prisma';
+import { resolveScope, scopeUserWhere, andWhere } from './majorScope.service';
 
 export interface GeoInput {
   lat: number;
   long: number;
   note?: string | null;
+  /** Radius kesalahan (meter) yang dilaporkan browser; kosong bila perangkat tidak memberikannya. */
+  accuracy?: number | null;
 }
 
 /** File bukti sakit dari multer (memoryStorage). */
@@ -27,14 +30,24 @@ export interface SubmitAttendanceInput {
   sickProof?: SickProofFile;
 }
 
+export interface CheckOutInput {
+  geo: GeoInput;
+  /** Pelaksanaan kegiatan hari itu — wajib untuk status Hadir. */
+  activity?: string;
+}
+
 /** MIME bukti sakit yang diizinkan. */
 const SICK_PROOF_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'application/pdf']);
+
+/** Bulatkan radius akurasi ke meter; null bila perangkat tidak melaporkannya. */
+const toAccuracyMeters = (accuracy?: number | null): number | null =>
+  typeof accuracy === 'number' && Number.isFinite(accuracy) ? Math.round(accuracy) : null;
 
 /**
  * Service absensi harian (Fase 3).
  *
  * Model alur resmi sekolah (input menyesuaikan status):
- *  - HADIR : pelaksanaan kegiatan wajib + lokasi GPS wajib.
+ *  - HADIR : lokasi GPS wajib saat masuk; pelaksanaan kegiatan wajib saat check-out.
  *  - IZIN  : keterangan izin wajib; GPS opsional.
  *  - SAKIT : keterangan & bukti (foto/PDF) opsional.
  *  - ALPHA : langsung tercatat otomatis — tanpa kegiatan/GPS & tanpa verifikasi guru.
@@ -93,8 +106,8 @@ export class AttendanceService {
   }
 
   /**
-   * Kirim absensi harian. Aturan wajib mengikuti status:
-   *  - HADIR : activity wajib + geo wajib
+   * Kirim absensi harian (merangkap absen masuk). Aturan wajib mengikuti status:
+   *  - HADIR : geo wajib; kegiatan TIDAK diambil di sini — diisi saat check-out.
    *  - IZIN  : activity (keterangan) wajib; geo opsional
    *  - SAKIT : semua opsional (activity + bukti foto/PDF opsional); geo opsional
    *  - ALPHA : tanpa activity/geo; langsung tercatat (verifiedAt terisi otomatis)
@@ -105,13 +118,11 @@ export class AttendanceService {
     input: SubmitAttendanceInput,
     ctx: { ipAddress?: string; userAgent?: string }
   ): Promise<Attendance> {
-    const activity = input.activity?.trim() || undefined;
+    // Saat datang siswa belum mengerjakan apa pun, jadi uraian Hadir sengaja dibuang.
+    const activity = input.status === AttendanceStatus.HADIR ? undefined : input.activity?.trim() || undefined;
     const geo = input.geo;
 
     if (input.status === AttendanceStatus.HADIR) {
-      if (!activity || activity.length < 3) {
-        throw new BadRequestError('Pelaksanaan kegiatan wajib diisi saat status Hadir');
-      }
       if (!geo) throw new BadRequestError(MESSAGES.ATTENDANCE.INVALID_LOCATION);
       this.validateGeo(geo);
     } else if (input.status === AttendanceStatus.IZIN) {
@@ -146,6 +157,7 @@ export class AttendanceService {
             checkInLat: new Prisma.Decimal(geo.lat),
             checkInLong: new Prisma.Decimal(geo.long),
             checkInNote: geo.note ?? null,
+            checkInAccuracy: toAccuracyMeters(geo.accuracy),
           }
         : {}),
       isAnomaly: anomaly.isAnomaly,
@@ -177,7 +189,7 @@ export class AttendanceService {
       metadata: {
         status: input.status,
         activity: activity ? activity.slice(0, 200) : null,
-        ...(geo ? { lat: geo.lat, long: geo.long, isAnomaly: anomaly.isAnomaly } : {}),
+        ...(geo ? { lat: geo.lat, long: geo.long, accuracy: toAccuracyMeters(geo.accuracy), isAnomaly: anomaly.isAnomaly } : {}),
         ...(record.sickProofPath ? { sickProof: true } : {}),
       },
       ipAddress: ctx.ipAddress,
@@ -267,6 +279,7 @@ export class AttendanceService {
           checkInLat: new Prisma.Decimal(geo.lat),
           checkInLong: new Prisma.Decimal(geo.long),
           checkInNote: geo.note ?? null,
+          checkInAccuracy: toAccuracyMeters(geo.accuracy),
           isAnomaly: anomaly.isAnomaly,
           anomalyNote: anomaly.note,
         })
@@ -278,6 +291,7 @@ export class AttendanceService {
           checkInLat: new Prisma.Decimal(geo.lat),
           checkInLong: new Prisma.Decimal(geo.long),
           checkInNote: geo.note ?? null,
+          checkInAccuracy: toAccuracyMeters(geo.accuracy),
           isAnomaly: anomaly.isAnomaly,
           anomalyNote: anomaly.note,
         });
@@ -290,7 +304,7 @@ export class AttendanceService {
       action: AUDIT_ACTIONS.CHECK_IN,
       entityType: ENTITY_TYPES.ATTENDANCE,
       entityId: record.id,
-      metadata: { lat: geo.lat, long: geo.long, isAnomaly: anomaly.isAnomaly },
+      metadata: { lat: geo.lat, long: geo.long, accuracy: toAccuracyMeters(geo.accuracy), isAnomaly: anomaly.isAnomaly },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
     });
@@ -298,9 +312,13 @@ export class AttendanceService {
     return record;
   }
 
-  /** Check-out hari ini. */
-  async checkOut(userId: string, geo: GeoInput, ctx: { ipAddress?: string; userAgent?: string }): Promise<Attendance> {
-    this.validateGeo(geo);
+  /** Check-out hari ini: lokasi pulang + pelaksanaan kegiatan (wajib untuk status Hadir). */
+  async checkOut(
+    userId: string,
+    input: CheckOutInput,
+    ctx: { ipAddress?: string; userAgent?: string }
+  ): Promise<Attendance> {
+    this.validateGeo(input.geo);
     const date = startOfToday();
     const existing = await attendanceRepository.findByUserAndDate(userId, date);
     if (!existing?.checkInAt) {
@@ -310,12 +328,21 @@ export class AttendanceService {
       throw new ConflictError(MESSAGES.ATTENDANCE.ALREADY_CHECKED_OUT);
     }
 
-    const anomaly = this.detectAnomaly(geo);
+    const activity = input.activity?.trim() || undefined;
+    const isHadir = existing.status === AttendanceStatus.HADIR;
+    if (isHadir && (!activity || activity.length < 3)) {
+      throw new BadRequestError('Pelaksanaan kegiatan wajib diisi saat check-out');
+    }
+
+    const anomaly = this.detectAnomaly(input.geo);
     const record = await attendanceRepository.update(existing.id, {
       checkOutAt: new Date(),
-      checkOutLat: new Prisma.Decimal(geo.lat),
-      checkOutLong: new Prisma.Decimal(geo.long),
-      checkOutNote: geo.note ?? null,
+      checkOutLat: new Prisma.Decimal(input.geo.lat),
+      checkOutLong: new Prisma.Decimal(input.geo.long),
+      checkOutNote: input.geo.note ?? null,
+      checkOutAccuracy: toAccuracyMeters(input.geo.accuracy),
+      // Izin/Sakit sudah punya keterangannya sendiri dari check-in — jangan ditimpa.
+      ...(isHadir ? { activity } : {}),
       isAnomaly: existing.isAnomaly || anomaly.isAnomaly,
       anomalyNote: existing.anomalyNote ?? anomaly.note,
     });
@@ -325,7 +352,48 @@ export class AttendanceService {
       action: AUDIT_ACTIONS.CHECK_OUT,
       entityType: ENTITY_TYPES.ATTENDANCE,
       entityId: record.id,
-      metadata: { lat: geo.lat, long: geo.long },
+      metadata: {
+        lat: input.geo.lat,
+        long: input.geo.long,
+        accuracy: toAccuracyMeters(input.geo.accuracy),
+        ...(activity ? { activity: activity.slice(0, 200) } : {}),
+      },
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+    });
+
+    return record;
+  }
+
+  /**
+   * Susulan pelaksanaan kegiatan untuk hari yang ditutup otomatis oleh cron (lewat jam
+   * 17:00 tanpa absen keluar). Jam check-out sengaja tidak diubah — hanya uraiannya yang
+   * menyusul, dan hanya sekali.
+   */
+  async saveActivity(
+    userId: string,
+    activity: string,
+    ctx: { ipAddress?: string; userAgent?: string }
+  ): Promise<Attendance> {
+    const trimmed = activity.trim();
+    if (trimmed.length < 3) throw new BadRequestError('Pelaksanaan kegiatan minimal 3 karakter');
+
+    const existing = await attendanceRepository.findByUserAndDate(userId, startOfToday());
+    if (!existing?.checkInAt) throw new BadRequestError(MESSAGES.ATTENDANCE.NOT_CHECKED_IN);
+    if (existing.status !== AttendanceStatus.HADIR) {
+      throw new BadRequestError('Pelaksanaan kegiatan hanya dicatat untuk status Hadir');
+    }
+    if (!existing.checkOutAt) throw new BadRequestError('Pelaksanaan kegiatan diisi bersamaan saat check-out');
+    if (existing.activity?.trim()) throw new ConflictError('Pelaksanaan kegiatan hari ini sudah tercatat.');
+
+    const record = await attendanceRepository.update(existing.id, { activity: trimmed });
+
+    await auditService.record({
+      actorId: userId,
+      action: AUDIT_ACTIONS.CHECK_OUT,
+      entityType: ENTITY_TYPES.ATTENDANCE,
+      entityId: record.id,
+      metadata: { activity: trimmed.slice(0, 200), susulan: true },
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
     });
@@ -372,7 +440,7 @@ export class AttendanceService {
     },
     actor?: { id: string; role: string }
   ) {
-    const where: Prisma.AttendanceWhereInput = {
+    const baseWhere: Prisma.AttendanceWhereInput = {
       ...(params.userId ? { userId: params.userId } : {}),
       ...(params.status ? { status: params.status } : {}),
       ...(params.from || params.to
@@ -392,7 +460,18 @@ export class AttendanceService {
       } else if (ids.length === 0) {
         return { items: [], total: 0 };
       } else {
-        where.userId = { in: ids };
+        baseWhere.userId = { in: ids };
+      }
+    }
+
+    // Scope jurusan: ADMIN hanya absensi milik siswa dalam jurusan yang diawasi.
+    // (resolveScope hanya untuk ADMIN; scope kosong → `user.id in []` → tanpa hasil.)
+    let where: Prisma.AttendanceWhereInput = baseWhere;
+    if (actor && actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'user');
+      if (scoped) {
+        where = andWhere(baseWhere as Record<string, unknown>, scoped) as Prisma.AttendanceWhereInput;
       }
     }
 
@@ -425,7 +504,7 @@ export class AttendanceService {
     }>;
     total: number;
   }> {
-    const where: Prisma.AttendanceWhereInput = {
+    const baseWhere: Prisma.AttendanceWhereInput = {
       ...(params.status ? { status: params.status } : {}),
       ...(params.cohortId ? { user: { cohortId: params.cohortId } } : {}),
       ...(params.from || params.to
@@ -441,7 +520,17 @@ export class AttendanceService {
     if (actor && actor.role === Role.GURU_PEMBIMBING) {
       const ids = await this.supervisedStudentIds(actor.id);
       if (ids.length === 0) return { classes: [], total: 0 };
-      where.userId = { in: ids };
+      baseWhere.userId = { in: ids };
+    }
+
+    // Scope jurusan: ADMIN hanya monitoring siswa dalam jurusan yang diawasi.
+    let where: Prisma.AttendanceWhereInput = baseWhere;
+    if (actor && actor.role === Role.ADMIN) {
+      const scope = await resolveScope({ id: actor.id, role: Role.ADMIN });
+      const scoped = scopeUserWhere(scope, 'user');
+      if (scoped) {
+        where = andWhere(baseWhere as Record<string, unknown>, scoped) as Prisma.AttendanceWhereInput;
+      }
     }
 
     const rows = await prisma.attendance.findMany({

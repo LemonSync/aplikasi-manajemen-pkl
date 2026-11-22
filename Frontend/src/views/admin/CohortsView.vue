@@ -6,12 +6,12 @@ import Modal from '@/components/Modal.vue';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import SkeletonTable from '@/components/SkeletonTable.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import { confirmDialog } from '@/composables/useDialog';
+import { notify } from '@/composables/useNotify';
 
 const cohorts = ref<CohortRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
-const error = ref('');
-const success = ref('');
 
 const showForm = ref(false);
 const formName = ref('');
@@ -29,7 +29,7 @@ const load = async (): Promise<void> => {
     const { items } = await cohortService.list();
     cohorts.value = items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -43,21 +43,28 @@ const submit = async (): Promise<void> => {
   const willClose = isEdit && CLOSED_STATES.includes(formStatus.value);
 
   if (!wasClosed && willClose) {
-    const ok = confirm(
-      `Tutup gelombang "${formName.value}"?\n\n` +
+    const ok = await confirmDialog({
+      title: 'Tutup Gelombang',
+      message:
+        `Tutup gelombang "${formName.value}"?\n\n` +
         'Akun siswa, ketua, dan DUDI gelombang ini dinonaktifkan.\n' +
         'Data absensi, nilai, dokumen, dan surat tetap tersimpan.\n\n' +
-        'Bisa dibuka kembali — akun ikut dipulihkan.'
-    );
+        'Bisa dibuka kembali — akun ikut dipulihkan.',
+      confirmLabel: 'Tutup',
+      danger: true,
+    });
     if (!ok) return;
   } else if (wasClosed && !willClose) {
-    const ok = confirm(`Buka kembali gelombang "${formName.value}"? Akun yang dinonaktifkan akan dipulihkan.`);
+    const ok = await confirmDialog({
+      title: 'Buka Kembali Gelombang',
+      message: `Buka kembali gelombang "${formName.value}"? Akun yang dinonaktifkan akan dipulihkan.`,
+      confirmLabel: 'Buka kembali',
+    });
     if (!ok) return;
   }
 
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     if (editId.value) {
       const res = await cohortService.update(editId.value, {
@@ -67,20 +74,20 @@ const submit = async (): Promise<void> => {
         status: formStatus.value,
       });
       if (willClose) {
-        success.value = `Gelombang ditutup. ${res.deactivatedUsers ?? 0} akun dinonaktifkan.`;
+        notify.success(`Gelombang ditutup. ${res.deactivatedUsers ?? 0} akun dinonaktifkan.`);
       } else if (wasClosed) {
-        success.value = `Gelombang dibuka. ${res.restoredUsers ?? 0} akun dipulihkan.`;
+        notify.success(`Gelombang dibuka. ${res.restoredUsers ?? 0} akun dipulihkan.`);
       } else {
-        success.value = 'Gelombang diupdate.';
+        notify.success('Gelombang diupdate.');
       }
     } else {
       await cohortService.create({ name: formName.value, academicYear: formYear.value || null, description: formDesc.value || null });
-      success.value = 'Gelombang dibuat.';
+      notify.success('Gelombang dibuat.');
     }
     resetForm();
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -113,14 +120,13 @@ const openCreate = (): void => {
 
 /** Tetapkan gelombang aktif global — hanya untuk gelombang OPEN. */
 const setActive = async (c: CohortRecord): Promise<void> => {
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await cohortService.setActive(c.id);
-    success.value = `"${c.name}" kini menjadi gelombang aktif.`;
+    notify.success(`"${c.name}" kini menjadi gelombang aktif.`);
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -129,8 +135,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <div class="flex items-center justify-between">

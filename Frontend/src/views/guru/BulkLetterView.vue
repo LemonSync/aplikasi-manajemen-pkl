@@ -7,6 +7,7 @@ import {
   type LetterRecord,
   type UserRecord,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { useAuthStore } from '@/stores/auth.store';
 import { extractErrorMessage } from '@/services/http';
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
@@ -34,8 +35,6 @@ const form = ref<{ type: LetterType; number: string; subject: string; supervisor
 });
 const saving = ref(false);
 const result = ref<BulkLetterResult | null>(null);
-const error = ref('');
-const success = ref('');
 
 const teachers = ref<UserRecord[]>([]);
 const teachersLoading = ref(false);
@@ -52,7 +51,7 @@ const loadTeachers = async (): Promise<void> => {
     const res = await userManageService.list({ role: 'GURU_PEMBIMBING', perPage: 100 });
     teachers.value = res.items;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     teachersLoading.value = false;
   }
@@ -65,7 +64,7 @@ const loadLetters = async (): Promise<void> => {
       typeFilter.value ? { type: typeFilter.value } : undefined
     );
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     lettersLoading.value = false;
   }
@@ -73,8 +72,7 @@ const loadLetters = async (): Promise<void> => {
 
 const generate = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   result.value = null;
   try {
     const payload: {
@@ -90,23 +88,23 @@ const generate = async (): Promise<void> => {
     if (canPickSupervisor.value) payload.supervisorId = form.value.supervisorId;
 
     result.value = await phase4Service.generateBulkLetter(payload);
-    success.value = 'Surat berhasil digenerate.';
+    notify.success('Surat berhasil digenerate.');
     form.value.number = '';
     form.value.subject = '';
     await loadLetters();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
 };
 
 const downloadLetter = async (letter: LetterRecord): Promise<void> => {
-  error.value = '';
+  notify.clear();
   try {
     await phase4Service.downloadLetter(letter);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   }
 };
 
@@ -125,8 +123,6 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <!-- Generate surat bulk -->
     <div class="card">

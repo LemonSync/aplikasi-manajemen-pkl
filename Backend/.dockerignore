@@ -1,0 +1,6 @@
+node_modules
+dist
+storage/temp
+coverage
+*.log
+.git

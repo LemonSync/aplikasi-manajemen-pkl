@@ -23,9 +23,6 @@ export class TeacherRegistryController {
 
   /** POST /api/teacher-registry/import — import Excel + buat akun otomatis */
   importExcel = asyncHandler(async (req: Request, res: Response) => {
-    const cohortId = req.body.cohortId as string;
-    if (!cohortId) throw new BadRequestError('cohortId wajib diisi');
-
     const file = req.file as Express.Multer.File;
     if (!file) throw new BadRequestError('File Excel wajib diunggah');
 
@@ -38,7 +35,7 @@ export class TeacherRegistryController {
     const ctx = getRequestContext(req);
     const actor = { actorId: req.user!.sub, ipAddress: ctx.ipAddress, userAgent: ctx.userAgent };
     const parsed = teacherRegistryImportService.parseExcel(file.buffer, mapping);
-    const result = await teacherRegistryImportService.importData(parsed.rows, cohortId, parsed.errors, actor);
+    const result = await teacherRegistryImportService.importData(parsed.rows, parsed.errors, actor);
 
     const akunText = result.accounts.created.length
       ? `, ${result.accounts.created.length} akun dibuat otomatis`
@@ -52,10 +49,9 @@ export class TeacherRegistryController {
 
   /** POST /api/teacher-registry — tambah guru manual (akun dibuat otomatis) */
   create = asyncHandler(async (req: Request, res: Response) => {
-    const { cohortId, nip, fullName, majorCode } = req.body ?? {};
-    if (!cohortId) throw new BadRequestError('cohortId wajib diisi');
+    const { nip, fullName, majorCode } = req.body ?? {};
 
-    const result = await teacherRegistryService.create({ cohortId, nip, fullName, majorCode });
+    const result = await teacherRegistryService.create({ nip, fullName, majorCode });
     const akunText = result.account ? ' — akun dibuat otomatis' : '';
     return sendSuccess(
       res,
@@ -66,15 +62,12 @@ export class TeacherRegistryController {
     );
   });
 
-  /** GET /api/teacher-registry — daftar master guru */
+  /** GET /api/teacher-registry — daftar master guru (global, semua gelombang) */
   list = asyncHandler(async (req: Request, res: Response) => {
-    const cohortId = req.query.cohortId as string;
-    if (!cohortId) throw new BadRequestError('cohortId wajib');
     const search = (req.query.search as string | undefined)?.trim() || undefined;
 
     const { page, perPage } = parsePagination(req.query as Record<string, unknown>);
-    const { items, total } = await teacherRegistryRepository.findByCohort(
-      cohortId,
+    const { items, total } = await teacherRegistryRepository.findAll(
       (page - 1) * perPage,
       perPage,
       search
@@ -97,13 +90,11 @@ export class TeacherRegistryController {
     return sendSuccess(res, result, message);
   });
 
-  /** GET /api/teacher-registry/lookup/:nip — cari NIP */
+  /** GET /api/teacher-registry/lookup/:nip — cari NIP di master guru (global) */
   lookup = asyncHandler(async (req: Request, res: Response) => {
     const nip = req.params.nip as string;
-    const cohortId = req.query.cohortId as string;
-    if (!cohortId) throw new BadRequestError('cohortId wajib');
 
-    const teacher = await teacherRegistryRepository.findByNip(nip, cohortId);
+    const teacher = await teacherRegistryRepository.findByNip(nip);
     if (!teacher) {
       return sendSuccess(res, null, 'NIP tidak ditemukan');
     }

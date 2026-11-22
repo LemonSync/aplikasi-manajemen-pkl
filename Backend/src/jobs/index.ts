@@ -2,6 +2,7 @@ import { AttendanceStatus, Role, StudentPhase } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { logger } from '../config/logger';
 import { notificationService } from '../services/notification.service';
+import { runWaPhaseReminders } from '../services/wa/waReminder.service';
 
 /**
  * Cron job: auto-close absensi yang belum check-out.
@@ -81,8 +82,8 @@ export const autoArchiveCohorts = async (): Promise<void> => {
  * Cron job: catat Alpha otomatis untuk siswa yang tidak presensi.
  *
  * Aturan:
- *  - Siswa fase PKL_AKTIF (deletedAt null) dengan rentang tanggal dalam
- *    jadwal fase PKL (PhaseSchedule) gelombangnya.
+ *  - Siswa fase PKL_AKTIF dan PKL_SELESAI (deletedAt null) dengan rentang
+ *    tanggal gabungan jadwal masa PKL + pasca-PKL gelombangnya.
  *  - Hari Minggu dilewati (libur).
  *  - Lookback 7 hari agar server sempat mati pun tetap terisi.
  *  - Baris ALPHA dibuat dengan verifiedAt terisi (tercatat otomatis,
@@ -105,7 +106,12 @@ export const autoRecordMissedAttendance = async (): Promise<void> => {
     const oldestKey = dayKeys[dayKeys.length - 1];
 
     const students = await prisma.user.findMany({
-      where: { role: Role.SISWA, phase: StudentPhase.PKL_AKTIF, deletedAt: null, cohortId: { not: null } },
+      where: {
+        role: Role.SISWA,
+        phase: { in: [StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI] },
+        deletedAt: null,
+        cohortId: { not: null },
+      },
       select: {
         id: true,
         cohortId: true,
@@ -114,12 +120,25 @@ export const autoRecordMissedAttendance = async (): Promise<void> => {
     });
     if (students.length === 0) return;
 
-    // Rentang fase PKL per gelombang — hanya tanggal di dalam rentang yang diisi.
+    // Rentang presensi per gelombang: masa PKL disambung pasca-PKL, karena
+    // siswa tetap presensi sampai jadwal fase 4 berakhir.
     const schedules = await prisma.phaseSchedule.findMany({
-      where: { phase: StudentPhase.PKL_AKTIF },
-      select: { cohortId: true, startDate: true, endDate: true },
+      where: { phase: { in: [StudentPhase.PKL_AKTIF, StudentPhase.PKL_SELESAI] } },
+      select: { cohortId: true, phase: true, startDate: true, endDate: true },
     });
-    const schedByCohort = new Map(schedules.map((s) => [s.cohortId, s]));
+    const windowByCohort = new Map<string, { start: string | null; end: string | null }>();
+    for (const s of schedules) {
+      const win = windowByCohort.get(s.cohortId) ?? { start: null, end: null };
+      if (s.startDate) {
+        const k = s.startDate.toISOString().slice(0, 10);
+        if (!win.start || k < win.start) win.start = k;
+      }
+      if (s.endDate) {
+        const k = s.endDate.toISOString().slice(0, 10);
+        if (!win.end || k > win.end) win.end = k;
+      }
+      windowByCohort.set(s.cohortId, win);
+    }
 
     // Absensi yang sudah ada dalam rentang lookback.
     const existing = await prisma.attendance.findMany({
@@ -130,10 +149,10 @@ export const autoRecordMissedAttendance = async (): Promise<void> => {
 
     const missing: Array<{ userId: string; cohortId: string; fullName: string; dayKey: string }> = [];
     for (const s of students) {
-      const sched = s.cohortId ? schedByCohort.get(s.cohortId) : undefined;
+      const win = s.cohortId ? windowByCohort.get(s.cohortId) : undefined;
       for (const key of dayKeys) {
-        if (sched?.startDate && key < sched.startDate.toISOString().slice(0, 10)) continue;
-        if (sched?.endDate && key > sched.endDate.toISOString().slice(0, 10)) continue;
+        if (win?.start && key < win.start) continue;
+        if (win?.end && key > win.end) continue;
         if (existingSet.has(`${s.id}|${key}`)) continue;
         missing.push({ userId: s.id, cohortId: s.cohortId!, fullName: s.studentProfile?.fullName ?? 'Siswa', dayKey: key });
       }
@@ -207,4 +226,5 @@ export const runAllJobs = async (): Promise<void> => {
   await cleanupExpiredTokens();
   await autoArchiveCohorts();
   await autoRecordMissedAttendance();
+  await runWaPhaseReminders();
 };

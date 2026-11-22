@@ -8,6 +8,7 @@ import {
   type VisitRecord,
   type VisitStatus,
 } from '@/services/api.service';
+import { notify } from '@/composables/useNotify';
 import { extractErrorMessage } from '@/services/http';
 import Modal from '@/components/Modal.vue';
 
@@ -18,8 +19,6 @@ const visits = ref<VisitRecord[]>([]);
 const loading = ref(true);
 const saving = ref(false);
 const busyId = ref('');
-const error = ref('');
-const success = ref('');
 
 // Jadwal kunjungan per siswa (bukan kelompok)
 const form = ref({ studentId: '', scheduledAt: '', note: '' });
@@ -56,7 +55,7 @@ const studentName = (v: VisitRecord): string =>
 
 const load = async (): Promise<void> => {
   loading.value = true;
-  error.value = '';
+  notify.clear();
   try {
     const res = await supervisionService.list({ page: 1, perPage: 100 });
     students.value = res.items;
@@ -65,7 +64,7 @@ const load = async (): Promise<void> => {
       form.value.studentId = students.value[0].studentId;
     }
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     loading.value = false;
   }
@@ -78,20 +77,19 @@ const replaceVisit = (updated: VisitRecord): void => {
 
 const create = async (): Promise<void> => {
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     await visitService.create({
       studentId: form.value.studentId || null,
       scheduledAt: new Date(form.value.scheduledAt).toISOString(),
       note: form.value.note || null,
     });
-    success.value = 'Jadwal kunjungan dibuat.';
+    notify.success('Jadwal kunjungan dibuat.');
     form.value.note = '';
     form.value.scheduledAt = '';
     await load();
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -104,7 +102,7 @@ const openAction = (type: Action, visit: VisitRecord): void => {
   photoFile.value = null;
   newSchedule.value = '';
   actionNote.value = '';
-  error.value = '';
+  notify.clear();
 };
 
 const closeAction = (): void => {
@@ -118,45 +116,44 @@ const onPickPhoto = (e: Event): void => {
   const file = input.files?.[0] ?? null;
   if (file && !['image/jpeg', 'image/png'].includes(file.type)) {
     photoFile.value = null;
-    error.value = 'Foto bukti harus JPG atau PNG.';
+    notify.error('Foto bukti harus JPG atau PNG.');
     input.value = '';
     return;
   }
   photoFile.value = file;
-  error.value = '';
+  notify.clear();
 };
 
 const submitAction = async (): Promise<void> => {
   const visit = activeVisit.value;
   if (!visit || !action.value) return;
   saving.value = true;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     if (action.value === 'complete') {
       if (!photoFile.value) {
-        error.value = 'Foto bukti wajib dipilih.';
+        notify.error('Foto bukti wajib dipilih.');
         return;
       }
       const updated = await visitService.complete(visit.id, completeNote.value || undefined, photoFile.value);
       replaceVisit(updated);
-      success.value = 'Monitoring selesai — bukti foto tersimpan.';
+      notify.success('Monitoring selesai — bukti foto tersimpan.');
     } else if (action.value === 'postpone') {
       const updated = await visitService.postpone(visit.id, {
         scheduledAt: newSchedule.value ? new Date(newSchedule.value).toISOString() : undefined,
         note: actionNote.value || undefined,
       });
       replaceVisit(updated);
-      success.value = 'Kunjungan ditunda.';
+      notify.success('Kunjungan ditunda.');
     } else {
       const updated = await visitService.cancel(visit.id, actionNote.value || null);
       replaceVisit(updated);
-      success.value = 'Kunjungan dibatalkan.';
+      notify.success('Kunjungan dibatalkan.');
     }
     action.value = null;
     activeVisit.value = null;
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     saving.value = false;
   }
@@ -164,14 +161,13 @@ const submitAction = async (): Promise<void> => {
 
 const resume = async (id: string): Promise<void> => {
   busyId.value = id;
-  error.value = '';
-  success.value = '';
+  notify.clear();
   try {
     const updated = await visitService.resume(id);
     replaceVisit(updated);
-    success.value = 'Kunjungan dilanjutkan.';
+    notify.success('Kunjungan dilanjutkan.');
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     busyId.value = '';
   }
@@ -179,11 +175,11 @@ const resume = async (id: string): Promise<void> => {
 
 const viewPhoto = async (visit: VisitRecord): Promise<void> => {
   busyId.value = visit.id;
-  error.value = '';
+  notify.clear();
   try {
     await openFileInTab(`/visits/${visit.id}/photo`);
   } catch (e) {
-    error.value = extractErrorMessage(e);
+    notify.error(extractErrorMessage(e));
   } finally {
     busyId.value = '';
   }
@@ -194,8 +190,6 @@ onMounted(load);
 
 <template>
   <div class="space-y-6">
-    <div v-if="error" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
-    <div v-if="success" class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ success }}</div>
 
     <div class="card">
       <h2 class="mb-4 text-lg font-semibold text-gray-800">Jadwalkan Kunjungan</h2>
