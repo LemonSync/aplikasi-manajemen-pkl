@@ -12,8 +12,15 @@
   },
   "dependencies": {
     "@vueuse/core": "^10.11.1",
+<<<<<<< HEAD
     "axios": "^1.7.7",
     "pinia": "^4.0.3"
+=======
+    "axios": "^1.21.1",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0"
+>>>>>>> a06896afa8670a61a5944cf39b7331e95fc2ff26
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
@@ -28,9 +35,13 @@
     "prettier": "^3.3.3",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
+<<<<<<< HEAD
     "vite": "^5.4.9",
     "vue": "^3.5.44",
     "vue-router": "^4.6.4",
+=======
+    "vite": "^8.3.5",
+>>>>>>> a06896afa8670a61a5944cf39b7331e95fc2ff26
     "vue-tsc": "^2.1.6"
   },
   "allowScripts": {}
